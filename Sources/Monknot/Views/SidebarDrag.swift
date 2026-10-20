@@ -199,8 +199,8 @@ final class SidebarDragSession: NSObject, NSDraggingSource {
 
     // MARK: Keys
 
-    /// Esc cancels; Option copies while it is held. Every other key waits for the drag to end. The
-    /// button coming up reads the keys held then, before the gesture sees the event and drops.
+    /// Esc cancels; Option copies while it is held. Every other key is ignored while the drag lasts.
+    /// The button coming up reads the keys held then, before the gesture sees the event and drops.
     private func handleKey(_ event: NSEvent) -> Bool {
         guard isActive else { return false }
         if event.type == .flagsChanged || event.type == .leftMouseUp {

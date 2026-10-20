@@ -131,8 +131,10 @@ final class SidebarMenuHarness {
     }
 
     /// Waits until the tree shows its rows and its height holds still for a moment: the sidebar
-    /// opens its saved folders and reports row frames after it first appears.
-    func waitUntilLaidOut(timeout: TimeInterval = 3) async {
+    /// opens its saved folders and reports row frames after it first appears. False when it never
+    /// settled.
+    @discardableResult
+    func waitUntilLaidOut(timeout: TimeInterval = 3) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         var lastHeight: CGFloat = -1
         var stableChecks = 0
@@ -140,11 +142,12 @@ final class SidebarMenuHarness {
             let height = treeDocumentView?.bounds.height ?? 0
             if height > 0, rowCenter(0).flatMap(contextMenu(at:)) != nil {
                 stableChecks = height == lastHeight ? stableChecks + 1 : 0
-                if stableChecks >= 3 { return }
+                if stableChecks >= 3 { return true }
             }
             lastHeight = height
             try? await Task.sleep(nanoseconds: 30_000_000)
         }
+        return false
     }
 
     // MARK: Geometry
@@ -485,7 +488,8 @@ class FileOperationsTestCase: WorkspaceStoreTestCase {
 
     func harness(_ store: WorkspaceStore, _ root: URL) async -> SidebarMenuHarness {
         let harness = SidebarMenuHarness(store: store, root: root)
-        await harness.waitUntilLaidOut()
+        let laidOut = await harness.waitUntilLaidOut()
+        XCTAssertTrue(laidOut, "The sidebar never showed its rows")
         return harness
     }
 }

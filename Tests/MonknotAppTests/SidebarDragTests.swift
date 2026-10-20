@@ -79,14 +79,16 @@ final class SidebarDragTests: FileOperationsTestCase {
         try write("# x\n", "pack/inner/x.md", in: root)
         store.refresh()
         _ = await wait { self.doc(store, "pack/inner/x.md") != nil && !store.isBusy }
-        try? await Task.sleep(nanoseconds: 300_000_000)
+        _ = await wait { h.visibleRowPaths(maxRows: 40).contains("pack/inner") }
         let start = try rowCenter(h, "pack/inner")
         let target = try rowCenter(h, "docs")
 
         await press(h, from: start, to: target)
+        XCTAssertNotNil(dragCopy(of: h), "The drag started")
         try write("# new\n", "pack/new.md", in: root)
         store.refresh()
-        _ = await wait { self.doc(store, "pack/new.md") != nil && !store.isBusy }
+        let changed = await wait { self.doc(store, "pack/new.md") != nil && !store.isBusy }
+        XCTAssertTrue(changed, "The tree changed under the drag")
         send(.leftMouseDragged, h, at: target)
         try? await Task.sleep(nanoseconds: 60_000_000)
         send(.leftMouseUp, h, at: target)
@@ -122,6 +124,7 @@ final class SidebarDragTests: FileOperationsTestCase {
         let target = try rowCenter(h, "other")
 
         await press(h, from: source, to: target)
+        XCTAssertNotNil(dragCopy(of: h), "The drag started")
         let escape = try XCTUnwrap(NSEvent.keyEvent(
             with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: h.window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
@@ -147,10 +150,11 @@ final class SidebarDragTests: FileOperationsTestCase {
         // Its own folder's other file: the drop would change nothing.
         let ownFolder = try rowCenter(h, "docs/a.md")
         await press(h, from: source, to: ownFolder)
+        XCTAssertNotNil(dragCopy(of: h), "The drag started")
         send(.leftMouseUp, h, at: ownFolder)
-        try await Task.sleep(nanoseconds: 600_000_000)
+        let returned = await wait { self.dragCopy(of: h) == nil }
+        XCTAssertTrue(returned, "The copy glides back and goes")
         XCTAssertEqual(names("docs", in: root), ["a.md", "b.md"])
-        XCTAssertNil(dragCopy(of: h))
     }
 
     func testOptionCopiesEvenIntoTheFolderItIsIn() async throws {
@@ -184,12 +188,14 @@ final class SidebarDragTests: FileOperationsTestCase {
         let other = try rowCenter(h, "other")
         XCTAssertFalse(h.visibleRowPaths(maxRows: 40).contains("other/o.md"))
 
+        guard let delay = SidebarDragSession.springLoadingDelay else {
+            throw XCTSkip("Spring-loading is off in System Settings › Accessibility, so a resting drag opens nothing")
+        }
         await press(h, from: source, to: other)
-        let delay = SidebarDragSession.springLoadingDelay ?? 0.5
         try await Task.sleep(nanoseconds: UInt64((delay + 0.4) * 1_000_000_000))
         XCTAssertTrue(h.visibleRowPaths(maxRows: 40).contains("other/o.md"), "Resting on a closed folder opens it: \(h.visibleRowPaths(maxRows: 40))")
 
-        // Dropped back on the folder it came from (the root): it stays, and the folder closes again.
+        // Dropped on another folder: it lands there, and the folder the drag opened closes again.
         let docs = try rowCenter(h, "docs")
         for step in 1...6 {
             let fraction = CGFloat(step) / 6

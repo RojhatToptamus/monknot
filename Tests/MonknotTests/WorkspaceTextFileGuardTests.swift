@@ -81,6 +81,39 @@ final class WorkspaceTextFileGuardTests: XCTestCase {
         }
     }
 
+    /// A large binary under a source-like name is refused from its first bytes, and the cache
+    /// remembers why, with that reason, until the file changes; text past the first bytes still reads.
+    func testALargeBinaryIsRefusedFromItsFirstBytesAndRemembered() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = WorkspaceTextContentCache()
+        let binary = root.appendingPathComponent("libcore.out2")
+        let image = root.appendingPathComponent("scan.out2")
+        let text = root.appendingPathComponent("long.out2")
+        try (Data("ELF".utf8) + Data(repeating: 0, count: 64 * 1024)).write(to: binary)
+        try (Data([0x89, 0x50, 0x4E, 0x47]) + Data(repeating: 0x41, count: 64 * 1024)).write(to: image)
+        // Text whose 8 KB prefix ends inside a two-byte character.
+        try (String(repeating: "a", count: 8 * 1024 - 1) + String(repeating: "é", count: 8 * 1024)).write(to: text, atomically: true, encoding: .utf8)
+
+        for (url, expected) in [
+            (binary, WorkspaceTextFileGuard.Error.binaryContent(path: "libcore.out2")),
+            (image, .unreadableEncoding(path: "scan.out2")),
+        ] {
+            for _ in 0..<2 {
+                XCTAssertThrowsError(try WorkspaceTextFileGuard.readUTF8Text(from: url, cache: cache)) { error in
+                    XCTAssertEqual(error as? WorkspaceTextFileGuard.Error, expected)
+                }
+            }
+            XCTAssertEqual(cache.unreadableError(for: url), expected)
+        }
+        XCTAssertTrue(try WorkspaceTextFileGuard.readUTF8Text(from: text, cache: cache).hasSuffix("é"))
+        XCTAssertNil(cache.unreadableError(for: text))
+
+        try "now text".write(to: binary, atomically: true, encoding: .utf8)
+        XCTAssertNil(cache.unreadableError(for: binary), "A changed file is read again")
+        XCTAssertEqual(try WorkspaceTextFileGuard.readUTF8Text(from: binary, cache: cache), "now text")
+    }
+
     func testReadUTF8TextOpensAnEmptyFile() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

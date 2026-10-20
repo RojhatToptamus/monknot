@@ -218,7 +218,8 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
             XCTAssertFalse(document.hasPreviewMode, name)
         }
         for name in ["archive.zip", "report.docx", "sheet.xlsx", "clip.avi", "font.ttf", "tool.exe", "lib.dylib",
-                     "module.pyc", "cache.sqlite", "font.woff2", "weights.safetensors", "data.parquet"] {
+                     "module.pyc", "cache.sqlite", "font.woff2", "weights.safetensors", "data.parquet", "letter.rtf",
+                     "libcore.rlib"] {
             let document = WorkspaceDocument(url: root.appendingPathComponent(name), rootURL: root)
             XCTAssertEqual(document.kind, .unsupported, name)
             XCTAssertFalse(document.capabilities.canEditText, name)
@@ -241,6 +242,13 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         XCTAssertFalse(WorkspaceDocument(url: root.appendingPathComponent("data.json"), rootURL: root).capabilities.canPreviewNotebook)
     }
 
+    /// A kind an older build saved that no longer exists reads as a file that opens in its own
+    /// app, so the open tabs saved with it still load.
+    func testAKindSavedByAnOlderBuildStillDecodes() throws {
+        let decoded = try JSONDecoder().decode([WorkspaceDocumentKind].self, from: Data(#"["markdown","nativePreview"]"#.utf8))
+        XCTAssertEqual(decoded, [.markdown, .unsupported])
+    }
+
     /// Capabilities saved before notebooks existed (open tabs, Recents) still decode.
     func testCapabilitiesSavedWithoutTheNotebookFlagDecode() throws {
         let saved = Data(#"{"canPreview":true,"canEditText":true,"canSearchText":true,"canSearchPDF":false,"canExportPDF":false,"canShowOutline":false,"canPreviewHTML":true}"#.utf8)
@@ -254,12 +262,14 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         XCTAssertEqual(roundTrip, capabilities)
     }
 
-    func testAnExtensionNeedsALetter() {
-        for pathExtension in ["md", "lua", "mp3", "7z", "final"] {
-            XCTAssertTrue(WorkspaceDocumentSupport.readsAsFileExtension(pathExtension), pathExtension)
+    /// Only the extension of a known file type counts as one: version numbers, release tags and
+    /// names with a dot in them do not.
+    func testOnlyAKnownFileTypeCountsAsAnExtension() {
+        for pathExtension in ["md", "MD", "lua", "ipynb", "mp3", "7z", "docx", "plist", "rtf", "parquet"] {
+            XCTAssertTrue(WorkspaceDocumentSupport.isKnownFileExtension(pathExtension), pathExtension)
         }
-        for pathExtension in ["", "2", "10", "001"] {
-            XCTAssertFalse(WorkspaceDocumentSupport.readsAsFileExtension(pathExtension), pathExtension)
+        for pathExtension in ["", "2", "0-beta", "1a", "0rc1", "Smith", "final", "xyz"] {
+            XCTAssertFalse(WorkspaceDocumentSupport.isKnownFileExtension(pathExtension), pathExtension)
         }
     }
 

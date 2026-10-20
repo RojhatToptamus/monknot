@@ -8,12 +8,18 @@ public enum JupyterNotebookMarkdown {
     /// Lines of one text output shown before the rest is summarised, so a long log stays readable.
     public static let maximumOutputLines = 200
 
-    public static func markdown(fromNotebookText text: String) -> String {
+    /// What Preview shows for text that is not a notebook Monknot can read.
+    public static let unreadableMarkdown =
+        "> [!WARNING]\n> This file is not a notebook Monknot can read. Switch to Source to see its contents.\n"
+
+    /// The notebook's Markdown, or nil when `text` is not a notebook Monknot can read (invalid JSON,
+    /// as while its source is being edited, or JSON without cells).
+    public static func markdown(fromNotebookText text: String) -> String? {
         guard let data = text.data(using: .utf8),
               let notebook = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let cells = cells(of: notebook)
         else {
-            return "> [!WARNING]\n> This file is not a notebook Monknot can read. Switch to Source to see its contents.\n"
+            return nil
         }
 
         let language = language(of: notebook)
@@ -28,7 +34,7 @@ public enum JupyterNotebookMarkdown {
             case "markdown":
                 let markdown = replacingAttachments(in: source, attachments: cell["attachments"])
                 if !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    blocks.append(markdown.trimmingCharacters(in: .newlines))
+                    blocks.append(closingOpenFence(of: markdown.trimmingCharacters(in: .newlines)))
                 }
             case "code":
                 if !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -55,24 +61,50 @@ public enum JupyterNotebookMarkdown {
         return worksheets?.first?["cells"] as? [[String: Any]]
     }
 
+    /// The fence's info string for the notebook's language: what a fence may hold (`c#` becomes
+    /// `csharp`), so a kernel's name never breaks the fence.
     private static func language(of notebook: [String: Any]) -> String {
         let metadata = notebook["metadata"] as? [String: Any]
         let kernel = metadata?["kernelspec"] as? [String: Any]
         let info = metadata?["language_info"] as? [String: Any]
         let name = (kernel?["language"] as? String) ?? (info?["name"] as? String) ?? (metadata?["language"] as? String)
-        return name?.lowercased() ?? "python"
+        guard let name = name?.lowercased() else { return "python" }
+        let renamed = ["c#": "csharp", "f#": "fsharp", "q#": "qsharp"][name] ?? name
+        return String(renamed.filter { $0.isASCII && ($0.isLetter || $0.isNumber || "_.+-".contains($0)) })
+    }
+
+    /// A Markdown cell that opens a code fence and never closes it would run on into every cell
+    /// after it, which Jupyter renders apart: its fence is closed at its end.
+    private static func closingOpenFence(of markdown: String) -> String {
+        var openFence: String?
+        for line in markdown.components(separatedBy: "\n") {
+            let trimmed = line.drop { $0 == " " }
+            guard line.count - trimmed.count <= 3, let first = trimmed.first, first == "`" || first == "~" else { continue }
+            let marker = String(trimmed.prefix { $0 == first })
+            guard marker.count >= 3 else { continue }
+            if let open = openFence {
+                if marker.first == open.first, marker.count >= open.count,
+                   trimmed.dropFirst(marker.count).allSatisfy(\.isWhitespace) {
+                    openFence = nil
+                }
+            } else {
+                openFence = marker
+            }
+        }
+        guard let openFence else { return markdown }
+        return markdown + "\n" + openFence
     }
 
     private static func markdown(forOutput output: [String: Any]) -> String? {
         switch output["output_type"] as? String {
         case "stream":
-            return textOutput(joined(output["text"]))
+            return textOutput(terminalText(joined(output["text"])))
         case "error", "pyerr":
             let traceback = (output["traceback"] as? [String]).map { $0.joined(separator: "\n") }
             let summary = [output["ename"] as? String, output["evalue"] as? String]
                 .compactMap { $0 }
                 .joined(separator: ": ")
-            return textOutput(withoutTerminalEscapes(traceback ?? summary))
+            return textOutput(terminalText(traceback ?? summary))
         case "execute_result", "display_data", "pyout":
             // nbformat 4 keeps the representations in `data`; nbformat 3 on the output itself.
             let data = output["data"] as? [String: Any] ?? output
@@ -97,7 +129,7 @@ public enum JupyterNotebookMarkdown {
             return joined(markdown)
         }
         if let plain = data["text/plain"] ?? data["text"] {
-            return textOutput(joined(plain))
+            return textOutput(terminalText(joined(plain)))
         }
         if data["text/html"] != nil || data["html"] != nil {
             return "*This output is HTML, which Monknot does not show.*"
@@ -149,8 +181,15 @@ public enum JupyterNotebookMarkdown {
         return result
     }
 
-    /// Tracebacks carry terminal colour codes such as `ESC[0;31m`.
-    private static func withoutTerminalEscapes(_ text: String) -> String {
-        text.replacingOccurrences(of: "\u{1B}\\[[0-9;]*[A-Za-z]", with: "", options: .regularExpression)
+    /// Text as a terminal showed it: colour codes such as `ESC[0;31m` and backspaces left out, and
+    /// of a line a carriage return redrew (a progress bar), only what was drawn last.
+    private static func terminalText(_ text: String) -> String {
+        let plain = text
+            .replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[A-Za-z]", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "\u{8}", with: "")
+            .replacingOccurrences(of: "\r\n", with: "\n")
+        return plain.components(separatedBy: "\n").map { line in
+            line.components(separatedBy: "\r").last { !$0.isEmpty } ?? ""
+        }.joined(separator: "\n")
     }
 }

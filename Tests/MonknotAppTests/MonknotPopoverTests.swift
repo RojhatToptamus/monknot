@@ -510,6 +510,11 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         XCTAssertTrue(controller.handleForTesting(typed), "The shortcut is sent on to the window")
         XCTAssertFalse(controller.isOpen)
         XCTAssertTrue(probe.window.isKeyWindow || !NSApp.isActive)
+        // The shortcut waits at the head of the event queue, addressed to the window; taken off it
+        // here, it reaches no later test.
+        let reposted = NSApp.nextEvent(matching: .keyDown, until: Date(), inMode: .default, dequeue: true)
+        XCTAssertEqual(reposted?.windowNumber, probe.window.windowNumber)
+        XCTAssertEqual(reposted?.charactersIgnoringModifiers, "s")
     }
 
     func testPlainKeysStayWithThePopoversControls() async throws {
@@ -694,6 +699,7 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         await click(at: add, in: panel)
         let closed = await wait(timeout: 1) { !self.controller.isOpen }
         XCTAssertTrue(closed, "Choosing a row closes the switcher")
+        XCTAssertEqual(h.addWorkspaceCount, 1, "The click chose Add Workspace…")
     }
 
     func testAClickOnTheSidebarHeaderClosesAnOpenSwitcher() async throws {
@@ -829,7 +835,7 @@ final class MonknotPopoverTests: FileOperationsTestCase {
     }
 
     func testTypingInTheSwitcherHighlightsTheFirstRowThatStartsWithIt() async throws {
-        _ = try await openSwitcher(saving: ["Notes App", "Notes Site", "Archive"])
+        let h = try await openSwitcher(saving: ["Notes App", "Notes Site", "Archive"])
 
         try type("n")
         XCTAssertEqual(highlightedTitle, "Notes App", "The first row that starts with what was typed")
@@ -850,6 +856,8 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         try await Task.sleep(nanoseconds: 1_150_000_000)
         XCTAssertTrue(try press(49, " "))
         XCTAssertFalse(controller.isOpen, "After a pause, Space chooses the highlighted row")
+        let added = await wait(timeout: 1) { h.addWorkspaceCount == 1 }
+        XCTAssertTrue(added, "Space chose Add Workspace…")
     }
 
     func testReturnOrSpaceChoosesTheHighlightedRowAndClosesTheSwitcher() async throws {

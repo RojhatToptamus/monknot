@@ -213,7 +213,9 @@ final class SidebarMultipleSelectionTests: FileOperationsTestCase {
         XCTAssertFalse(names("", in: f.root).contains("c.md"))
     }
 
-    func testClosingTheFolderOfTheOnlySelectedItemSelectsTheFolder() async throws {
+    /// ⌘-click takes a folder out of the selection; closing a folder gives the items it hid to its
+    /// row.
+    func testClosingAFolderGivesTheSelectedItemsItHidToItsRow() async throws {
         let f = try await makeFixture()
         try await f.click("docs")
         try await f.click("docs/e.md", modifiers: .command)

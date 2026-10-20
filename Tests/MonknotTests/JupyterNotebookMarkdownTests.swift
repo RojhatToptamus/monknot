@@ -20,7 +20,7 @@ final class JupyterNotebookMarkdownTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            JupyterNotebookMarkdown.markdown(fromNotebookText: text),
+            try XCTUnwrap(JupyterNotebookMarkdown.markdown(fromNotebookText: text)),
             "# Sales\n\nQuarterly **totals**.\n\n```r\ntotals = df.groupby(\"q\").sum()\ntotals\n```\n\n```\nraw text\n```\n"
         )
     }
@@ -42,7 +42,7 @@ final class JupyterNotebookMarkdownTests: XCTestCase {
              ]],
         ])
 
-        let markdown = JupyterNotebookMarkdown.markdown(fromNotebookText: text)
+        let markdown = try XCTUnwrap(JupyterNotebookMarkdown.markdown(fromNotebookText: text))
 
         XCTAssertEqual(markdown, [
             "```python\nrun()\n```",
@@ -61,7 +61,7 @@ final class JupyterNotebookMarkdownTests: XCTestCase {
         ])
 
         XCTAssertEqual(
-            JupyterNotebookMarkdown.markdown(fromNotebookText: text),
+            try XCTUnwrap(JupyterNotebookMarkdown.markdown(fromNotebookText: text)),
             "````python\ndoc = \"\"\"\n```\nexample\n```\n\"\"\"\n````\n"
         )
     }
@@ -73,7 +73,7 @@ final class JupyterNotebookMarkdownTests: XCTestCase {
              "outputs": [["output_type": "stream", "name": "stdout", "text": lines]]],
         ])
 
-        let markdown = JupyterNotebookMarkdown.markdown(fromNotebookText: text)
+        let markdown = try XCTUnwrap(JupyterNotebookMarkdown.markdown(fromNotebookText: text))
 
         XCTAssertTrue(markdown.contains("line 200\n… 50 more lines\n```"), markdown.suffix(80).description)
         XCTAssertFalse(markdown.contains("line 201"))
@@ -88,8 +88,44 @@ final class JupyterNotebookMarkdownTests: XCTestCase {
         ])
 
         XCTAssertEqual(
-            JupyterNotebookMarkdown.markdown(fromNotebookText: text),
+            try XCTUnwrap(JupyterNotebookMarkdown.markdown(fromNotebookText: text)),
             "![plot](data:image/gif;base64,\(gif))\n"
+        )
+    }
+
+    /// A kernel's language becomes a name a fence can hold, so C# code stays code.
+    func testTheKernelsLanguageAlwaysMakesAFence() throws {
+        for (language, info) in [("C#", "csharp"), ("F#", "fsharp"), ("Wolfram Language", "wolframlanguage"), ("c++", "c++")] {
+            let text = try notebook(
+                cells: [["cell_type": "code", "metadata": [:], "outputs": [], "source": "x"]],
+                metadata: ["kernelspec": ["language": language]]
+            )
+            XCTAssertEqual(try XCTUnwrap(JupyterNotebookMarkdown.markdown(fromNotebookText: text)), "```\(info)\nx\n```\n", language)
+        }
+    }
+
+    /// Output shows as the terminal showed it: no colour codes, and a progress bar redrawn with a
+    /// carriage return shows only its last state.
+    func testTerminalOutputShowsWhatTheTerminalShowed() throws {
+        let text = try notebook(cells: [
+            ["cell_type": "code", "metadata": [:], "source": "",
+             "outputs": [["output_type": "stream", "name": "stderr",
+                          "text": "\u{1B}[32mok\u{1B}[0m\n 10%|#   \r 50%|#####\r100%|##########\n"]]],
+        ])
+
+        XCTAssertEqual(try XCTUnwrap(JupyterNotebookMarkdown.markdown(fromNotebookText: text)), "```output\nok\n100%|##########\n```\n")
+    }
+
+    /// A Markdown cell that leaves a code fence open does not swallow the cells after it.
+    func testAnOpenFenceStaysInsideItsCell() throws {
+        let text = try notebook(cells: [
+            ["cell_type": "markdown", "metadata": [:], "source": "Example:\n```python\nx = 1"],
+            ["cell_type": "markdown", "metadata": [:], "source": "## Next"],
+        ])
+
+        XCTAssertEqual(
+            try XCTUnwrap(JupyterNotebookMarkdown.markdown(fromNotebookText: text)),
+            "Example:\n```python\nx = 1\n```\n\n## Next\n"
         )
     }
 
@@ -106,18 +142,16 @@ final class JupyterNotebookMarkdownTests: XCTestCase {
         let text = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
 
         XCTAssertEqual(
-            JupyterNotebookMarkdown.markdown(fromNotebookText: text),
+            try XCTUnwrap(JupyterNotebookMarkdown.markdown(fromNotebookText: text)),
             "## Model\n\n```julia\nfit(x)\n```\n\n```output\n42\n```\n"
         )
     }
 
-    func testTextThatIsNotANotebookSaysSo() throws {
-        for text in ["", "not json", "[1, 2]", #"{"cells": 3}"#] {
-            XCTAssertTrue(
-                JupyterNotebookMarkdown.markdown(fromNotebookText: text).hasPrefix("> [!WARNING]"),
-                text
-            )
+    func testTextThatIsNotANotebookReadsAsNone() throws {
+        for text in ["", "not json", "[1, 2]", #"{"cells": 3}"#, #"{"cells": [{"cell_type": "markdown", "source": "half"#] {
+            XCTAssertNil(JupyterNotebookMarkdown.markdown(fromNotebookText: text), text)
         }
+        XCTAssertTrue(JupyterNotebookMarkdown.unreadableMarkdown.hasPrefix("> [!WARNING]"))
         XCTAssertEqual(
             JupyterNotebookMarkdown.markdown(fromNotebookText: try notebook(cells: [])),
             "*This notebook has no cells.*\n"

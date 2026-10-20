@@ -23,6 +23,9 @@ public final class WorkspaceTextContentCache: @unchecked Sendable {
 
     public let maxEntryCount: Int
     private var entries: [String: Entry] = [:]
+    /// Files found not to be text (binary data under a source-like name), by their signature then,
+    /// so search does not read them again until they change.
+    private var unreadable: [String: (modificationDate: Date?, fileSize: Int64?, error: WorkspaceTextFileGuard.Error)] = [:]
     private var pathRevisions: [String: Int] = [:]
     private var globalRevision = 0
     private var accessClock: UInt64 = 0
@@ -117,7 +120,33 @@ public final class WorkspaceTextContentCache: @unchecked Sendable {
         for path in paths {
             let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
             entries.removeValue(forKey: normalizedPath)
+            unreadable.removeValue(forKey: normalizedPath)
             pathRevisions[normalizedPath, default: 0] &+= 1
+        }
+        lock.unlock()
+    }
+
+    /// Why `url` is not text, when it was found so and has not changed since.
+    public func unreadableError(for url: URL) -> WorkspaceTextFileGuard.Error? {
+        let path = url.standardizedFileURL.path
+        lock.lock()
+        let known = unreadable[path]
+        lock.unlock()
+        guard let known else { return nil }
+        let signature = Self.signature(for: url)
+        guard known.modificationDate == signature.modificationDate, known.fileSize == signature.fileSize else {
+            return nil
+        }
+        return known.error
+    }
+
+    public func markUnreadable(_ url: URL, error: WorkspaceTextFileGuard.Error) {
+        let path = url.standardizedFileURL.path
+        let signature = Self.signature(for: url)
+        lock.lock()
+        unreadable[path] = (signature.modificationDate, signature.fileSize, error)
+        if unreadable.count > maxEntryCount * 8 {
+            unreadable.removeAll()
         }
         lock.unlock()
     }
@@ -125,6 +154,7 @@ public final class WorkspaceTextContentCache: @unchecked Sendable {
     public func invalidateAll() {
         lock.lock()
         entries.removeAll()
+        unreadable.removeAll()
         globalRevision &+= 1
         lock.unlock()
     }
@@ -136,11 +166,13 @@ public final class WorkspaceTextContentCache: @unchecked Sendable {
         return Revision(global: globalRevision, path: pathRevisions[path] ?? 0)
     }
 
+    /// The file's date and size as the disk has them now. A `URL` keeps the resource values it
+    /// read once, which would hide a change to a file read through the same URL again.
     private static func signature(for url: URL) -> (modificationDate: Date?, fileSize: Int64?) {
-        guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.standardizedFileURL.path) else {
             return (nil, nil)
         }
-        return (values.contentModificationDate, values.fileSize.map(Int64.init))
+        return (attributes[.modificationDate] as? Date, (attributes[.size] as? NSNumber)?.int64Value)
     }
 
     private static func makeSearchLines(from text: String) -> [SearchLine] {

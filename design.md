@@ -168,7 +168,7 @@ line2     = ink @ (dark ? 6%  : 8%)     in-container dividers only
 hover     = ink @ (dark ? 6%  : 5.5%)
 press     = ink @ (dark ? 11% : 10%)
 selected  = ink @ (dark ? 10% : 9%)     selected sidebar or Settings row, active terminal session, and
-                                        the highlighted row of every menu, native or in Preview (§10.10)
+                                        the highlighted row of every menu, in the chrome or in Preview (§10.10)
 on        = ink @ (dark ? 17% : 12%)    a format that is on, in the format bar (§5.1)
 track     = ink @ (dark ? 7% : 6%)      segmented track, pop-up, stepper, an off switch, Settings'
                                         groups; half of it under a disabled push button
@@ -531,7 +531,7 @@ only under the pointer or while its menu is open: at rest the callout reads as t
 
 ### 5.6a Cursor
 
-The arrow by default. With Settings › General › Use pointer cursors on, every click target in the
+The arrow by default. With Settings › General › Pointer cursor on controls on, every click target in the
 chrome and on Preview's page — buttons, tabs, rows, handles, the toggle's triangle, a callout's title,
 the code language label — shows the pointing hand (`monknotPointerCursor`, CSS
 `var(--interactive-cursor)`). Menu rows keep the arrow, as the system's menus do. Text keeps the
@@ -621,10 +621,13 @@ in it (§5.9).
 - **Keys:** ↑ ↓ (and ⌃P ⌃N) move over enabled rows without wrapping; Home and End jump; typing
   highlights the first row that starts with what was typed; ↩ or Space chooses; Esc closes. A list
   popover, the switcher, takes the same keys (§5.9).
-- **Pointer:** a click chooses on release over an enabled row; a right-press held onto a row and
-  released there chooses it; a quick right-click leaves the menu open.
+- **Pointer:** a click chooses on release over an enabled row; a right-press is chosen by letting go
+  as above; a quick right-click leaves the menu open. A press on the menu's shadow is a click
+  elsewhere.
 - **Closing:** a click elsewhere closes it and does nothing else; a right-click elsewhere opens that
-  place's menu; scrolling, another app, the window moving, resizing or losing focus close it.
+  place's menu (over an open popover it only closes); scrolling (not a trackpad's events around a
+  click, nor momentum from before it opened), Esc or ⌘., the menu bar, another app, the window
+  moving, resizing, minimizing or losing focus close it. Caps Lock changes none of its keys.
 - **What keeps the system's menu:** text in Source, Preview, a PDF and the terminal, and the media
   player. Their menus carry spelling, Writing Tools, Look Up, Translate and Services, which only the
   system's menu has. A menu with a submenu also stays the system's, and so
@@ -759,8 +762,8 @@ for them, because their extent, not their ink, is what reads: `plus`, back and f
 14 in a bar (an open stroke spans its whole box, so at the nominal it reads largest); whole-word
 search 12.5; `textformat` 13; `minus`, `ellipsis`, `checkmark`, the chevrons, single arrows and B I
 S at their nominal. Preview's editor glyphs come from the same function, so its menus and the
-chrome's are one set (`MarkdownEditorSymbolAssets`). `WorkspaceChromeMetricsTests` checks every
-picture in the menus, rows and bars lands on its target within half a point.
+chrome's are one set (`MarkdownEditorSymbolAssets`). `WorkspaceChromeMetricsTests` checks the
+menus' and bars' glyphs, by name, land on their target within half a point.
 
 Both scale by the zoom factor. Weight is `.regular` **everywhere** — `.medium` on a 15pt symbol
 reads as a different icon set two rows down.
@@ -1096,8 +1099,8 @@ audio, a preview) leaves focus in the tree, so ⌘C, ⌘X and ⌘V act on it. Ne
 selected folder, or the selected file's folder, or the root when nothing is selected; the empty tree's
 menu and files dropped from another app onto empty space act on the root. A created
 or pasted item is selected and its folder opens; files pasted or dropped in from elsewhere open their
-folder. The selection follows a rename or move, moves up to the nearest remaining folder when its one
-item is removed outside Monknot (of several, the rest stay), and clears when the workspace changes;
+folder. The selection follows a rename or move, clears when the items it holds are removed outside
+Monknot (of several, the rest stay), and clears when the workspace changes;
 open folders stay open when renamed or moved. Nothing is selected after the selection goes to the
 Trash, or after the open document leaves the workspace: the tab beside it shows, as when its tab
 closes, but the tree selects it only once the user picks it.
@@ -1277,7 +1280,7 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 | Context menu | width 232, up to 320 (at least its control's) · list inset 6 · row 30, 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · separator `line2` 4 inside the inset, 6 each side · no shortcuts · radius 12, `e2` · a control's menu 4 below it · a pop-up's check 11 `ink2` at the row's end, its values at most 380 tall, then scrolling under the 4 / 6 thumb in a 9 lane |
 | Popover | `surf2`, radius 12, `e2`, no arrow · 4 below its control (above where the screen ends) · list: the 6 inset, 6 outside its control · form: padding 12, rows 10 apart, controls 8 apart · switcher 340, Stroke Width 210, Text Style 248 |
 | Sidebar drag | start 4 · source row 35 % · copy 28 tall, ≤ 240, radius 8, `e2`, glyph and name · target region `accsoft`, radius 8 · auto-scroll zone one row, ≤ 12 rows/s · landing tint 900 ms |
-| Menus | popover 340 (switcher) · list inset 6 · row 30 (34 in an overlay), rows 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · detail 12 `ink3` · group header 12 `ink3` · separator `line2` 4 inside the inset · overlay header 44, footer 32 |
+| Menus | list inset 6 · row 30 (34 in an overlay), rows 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · detail 12 `ink3` · group header 12 `ink3` · separator `line2` 4 inside the inset · overlay header 44, footer 32 |
 | Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with an 11 `chevron.down`; a callout's title the same 11 `chevron.down` · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink3` keys, submenu chevron 11, at most 380 tall; a menu of plain names (languages) has no glyph column · handles: + 22×24 and grip 18×24, the + a 16 × 16 glyph and the grip 10 × 16 (§8.9), radius 6, 1 apart, `ink3` at rest, `hover` fill with `ink` on hover, `press` and `ink` held or while the block menu shows, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
 | Terminal | the bar (40) · session tabs 28, hugging glyph + number · Expand, New, Hide 28/17 |
 | PDF | the bar (40): navigator 28/17, page count 12 tabular · undo, redo · modes segmented · markup actions · style pop-up · zoom pop-up · save with the unsaved dot · navigator: header 40, segmented 28, rows 28, 14 per level |
@@ -1603,7 +1606,7 @@ in reverse, however it is closed.
   keyboard.
 - Never animate size, position, elevation, border or weight except for the pane transitions above,
   a switch's knob, the outline rail's widening, the toast's 4 pt rise, a disclosure chevron's turn,
-  Preview's grow-in and press (§10.10), a context menu's and a popover's grow-in (§5.8, §5.9) and a dragged row's copy
+  Preview's grow-in (§10.10), a context menu's and a popover's grow-in (§5.8, §5.9) and a dragged row's copy
   gliding back (§10.4).
 - Honour Reduce Motion: entrances become plain fades, side panes show and hide instantly, chevrons
   and switch knobs jump; colour transitions stay.
@@ -1753,7 +1756,8 @@ Before calling any UI work done:
       where WebKit would otherwise draw its own 17pt bar.
 - [ ] No chrome glyph draws more than 16 on its longest side; pictures sized by `MonknotSymbolOptics`,
       never a hand-picked point size (§8.2). No square button over 28 (§10.7).
-- [ ] Every metric derives from the workspace zoom through `MonknotMetrics` (§9.3). No `.scaleEffect`.
+- [ ] Every metric derives from the workspace zoom through `MonknotMetrics` (§9.3). No `.scaleEffect`
+      for zoom (§9.2); only a surface's grow-in scales.
       Nothing clamped but the UI-font factor.
 - [ ] Hairlines, shadows and focus rings do not scale.
 - [ ] Tabs hug to 220 and scroll; fades appear only where content actually overflows.

@@ -119,7 +119,9 @@ struct WorkspaceItemFingerprint: Equatable, Sendable {
         let isFolder = attributes[.type] as? FileAttributeType == .typeDirectory
         var entries = [entry("", attributes, isFolder: isFolder)]
         if isFolder, let subpaths = FileManager.default.subpaths(atPath: path) {
-            for subpath in subpaths.sorted() {
+            // Hidden files (a .DS_Store Finder writes on viewing the folder) are not the copy's
+            // content, so they never make an undo refuse.
+            for subpath in subpaths.sorted() where !subpath.split(separator: "/").contains(where: { $0.hasPrefix(".") }) {
                 let itemAttributes = (try? FileManager.default.attributesOfItem(atPath: path + "/" + subpath)) ?? [:]
                 entries.append(entry(subpath, itemAttributes, isFolder: itemAttributes[.type] as? FileAttributeType == .typeDirectory))
             }

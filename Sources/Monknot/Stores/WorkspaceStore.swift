@@ -385,7 +385,15 @@ final class WorkspaceStore: ObservableObject {
     func undoLastWorkspaceReplace() {
         guard ensureWritingToolsInactive(for: "undoing workspace replace") else { return }
         guard let snapshot = replaceUndoSnapshot, workspaceURL != nil else { return }
-        guard !isBusy else { return }
+        guard ensureNotBusy() else { return }
+        // Undo writes each note's earlier text back: a note edited since and not saved would lose
+        // the edit, so the undo waits for it, as the replace itself skipped unsaved notes.
+        if let unsaved = snapshot.previousTextsByDocumentID.keys.sorted()
+            .first(where: { !saveState(for: $0).isClean })
+            .flatMap(document(id:)) {
+            errorMessage = "Save \(unsaved.displayName) first: undoing the replace writes its earlier text."
+            return
+        }
 
         let restoreSnapshot = snapshot
         clearReplaceUndoSnapshot()
@@ -776,13 +784,13 @@ final class WorkspaceStore: ObservableObject {
         return removedDirtyDocuments.values.first { WorkspaceDocumentSupport.isPath($0.id, containedIn: path) }
     }
 
-    /// New files are Markdown: a name typed without an extension gets `.md`, as does one whose last
-    /// dot ends in digits ("Release 1.2"). A name with an extension is kept, and names refused
-    /// anyway (empty, dotfiles, paths) pass through unchanged.
+    /// New files are Markdown: a name typed without the extension of a known file type gets `.md`
+    /// ("Release 1.2", "John.Smith"). A name with one is kept, and names refused anyway (empty,
+    /// dotfiles, paths) pass through unchanged.
     nonisolated static func newFileName(_ proposedName: String) -> String {
         let name = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, !name.hasPrefix("."), !name.contains("/"), !name.contains(":"),
-              !WorkspaceDocumentSupport.readsAsFileExtension((name as NSString).pathExtension)
+              !WorkspaceDocumentSupport.isKnownFileExtension((name as NSString).pathExtension)
         else { return proposedName }
         return name + ".md"
     }
@@ -1087,7 +1095,8 @@ final class WorkspaceStore: ObservableObject {
     /// Cut when that is another window.
     private func paste(_ transfer: WorkspaceDocumentTransfer, cutIn owner: WorkspaceStore?, into directoryURL: URL?) {
         guard let workspaceURL else { return }
-        guard !isBusy, owner?.isBusy != true else {
+        guard ensureNotBusy() else { return }
+        guard owner?.isBusy != true, owner?.isSaving != true else {
             errorMessage = Self.busyMessage
             return
         }
@@ -1304,9 +1313,16 @@ final class WorkspaceStore: ObservableObject {
                         )))
                     } else {
                         try FileManager.default.copyItem(at: source.contentsURL ?? sourceURL, to: destinationURL)
-                        for (subpath, text) in copyTexts[sourceURL.path] ?? [] {
-                            let copiedURL = subpath.isEmpty ? destinationURL : destinationURL.appendingPathComponent(subpath)
-                            try await Self.writeText(text, to: copiedURL)
+                        // The copy exists from here on: it is recorded even when its unsaved text
+                        // cannot be written, so Undo can still take it back.
+                        var textError: Error?
+                        do {
+                            for (subpath, text) in copyTexts[sourceURL.path] ?? [] {
+                                let copiedURL = subpath.isEmpty ? destinationURL : destinationURL.appendingPathComponent(subpath)
+                                try await Self.writeText(text, to: copiedURL)
+                            }
+                        } catch {
+                            textError = error
                         }
                         undoSteps.append(.copy(WorkspaceFileCopyStep(
                             sourceURL: sourceURL,
@@ -1315,6 +1331,10 @@ final class WorkspaceStore: ObservableObject {
                             isDirectory: isFolder,
                             fingerprint: WorkspaceItemFingerprint.read(destinationURL)
                         )))
+                        if let textError {
+                            landedItems.append(WorkspaceLandedItem(url: destinationURL, isFolder: isFolder))
+                            throw textError
+                        }
                     }
                     landedItems.append(WorkspaceLandedItem(url: destinationURL, isFolder: isFolder))
                 }
@@ -1542,16 +1562,19 @@ final class WorkspaceStore: ObservableObject {
             guard destinationURL.standardizedFileURL != sourceURL else { continue }
 
             moveRun = run
-            if !requestMarkdownLinkAwareMove(
+            if requestMarkdownLinkAwareMove(
                 sourceURL: sourceURL,
                 destinationURL: destinationURL,
                 workspaceURL: workspaceURL,
                 failureMessage: "Could not move \(sourceURL.lastPathComponent)",
                 moveRunID: runID
             ) {
-                endMoveRun()
+                return
             }
-            return
+            // Refused before it started (a name a removed note's unsaved text holds): the run
+            // goes on, and its report says why this item stayed.
+            run.failures.append("\(sourceURL.lastPathComponent) wasn't moved: \(errorMessage ?? "it could not be moved.")")
+            errorMessage = nil
         }
 
         endMoveRun()
@@ -2318,8 +2341,16 @@ final class WorkspaceStore: ObservableObject {
                     generation: generation
                 ) ?? false
                 if !taken {
+                    // The store moved on (another workspace) or cannot show the result: the disk goes
+                    // back as it was, and a store still waiting on this step is told it ended.
                     made = nil
                     try disk.rollBack(applied, after: direction)
+                    await self?.finishFileOperationHistoryFailure(
+                        CancellationError(),
+                        direction: direction,
+                        message: failureMessage,
+                        generation: generation
+                    )
                 }
             } catch {
                 var finalError = error
@@ -2349,6 +2380,18 @@ final class WorkspaceStore: ObservableObject {
     ) -> String? {
         let doing = direction == .undo ? "undoing" : "redoing"
         for step in operation.steps {
+            // Nothing an undo or redo moves or makes may take the name of a removed note whose
+            // unsaved text is still open, as the operation itself could not.
+            let landing: URL? = switch (step, direction) {
+            case (.move(let move), .undo): move.sourceURL
+            case (.move(let move), .redo): move.destinationURL
+            case (.copy(let copy), .redo): copy.copyURL
+            case (.trash(let trash), .undo): trash.originalURL
+            default: nil
+            }
+            if let landing, let kept = keptUnsavedDocument(inItemAt: landing) {
+                return WorkspaceDocumentOperationError.keepsUnsavedText(kept.displayName).localizedDescription
+            }
             switch step {
             case .move(let move):
                 for rewrite in move.rewrittenFiles {
@@ -2370,9 +2413,6 @@ final class WorkspaceStore: ObservableObject {
             case .trash(let trash):
                 if direction == .redo, let unsaved = unsavedDocument(at: trash.originalURL) {
                     return "Save or close \(unsaved.displayName) first: redoing moves it to the Trash."
-                }
-                if direction == .undo, let kept = keptUnsavedDocument(inItemAt: trash.originalURL) {
-                    return WorkspaceDocumentOperationError.keepsUnsavedText(kept.displayName).localizedDescription
                 }
             }
         }
@@ -2546,6 +2586,12 @@ final class WorkspaceStore: ObservableObject {
         if !keepsOperation {
             fileOperationHistory.discardNext(direction)
             publishFileOperationUndoState()
+        }
+        if error is CancellationError {
+            // Put back unseen: nothing happened, so nothing is reported.
+            isBusy = false
+            setDocumentLoadingIfChanged(false)
+            return
         }
         finishWorkspaceFailure(error, generation: generation, message: message)
     }
@@ -2739,6 +2785,8 @@ final class WorkspaceStore: ObservableObject {
             errorMessage = "Open a workspace before exporting PDF annotations."
             return
         }
+        // Starting an export cancels the running operation, which would drop its undo step.
+        guard ensureNotBusy() else { return }
         guard document.kind == .pdf else {
             errorMessage = WorkspaceDocumentOperationError.unsupportedPDFAnnotationExport(document.displayName).localizedDescription
             return
@@ -2789,6 +2837,7 @@ final class WorkspaceStore: ObservableObject {
             errorMessage = "Open a workspace before exporting PDF annotations."
             return
         }
+        guard ensureNotBusy() else { return }
 
         let exportItems = documents
             .filter { $0.kind == .pdf }
@@ -2845,6 +2894,7 @@ final class WorkspaceStore: ObservableObject {
             errorMessage = "Open a workspace before exporting annotated PDF."
             return
         }
+        guard ensureNotBusy() else { return }
         guard document.kind == .pdf else {
             errorMessage = WorkspaceDocumentOperationError.unsupportedPDFAnnotationExport(document.displayName).localizedDescription
             return
@@ -5510,7 +5560,7 @@ final class WorkspaceStore: ObservableObject {
     /// Whether a file named with `pathExtension` holds the same kind of content as `sourceURL`:
     /// both are text that the editor opens, or both are the same file type (`.jpg` and `.jpeg`).
     nonisolated private static func isSameKindOfDocument(extension pathExtension: String, as sourceURL: URL) -> Bool {
-        guard WorkspaceDocumentSupport.readsAsFileExtension(pathExtension) else { return false }
+        guard WorkspaceDocumentSupport.isKnownFileExtension(pathExtension) else { return false }
         let typed = WorkspaceDocumentSupport.classification(for: URL(fileURLWithPath: "_.\(pathExtension)"))
         let source = WorkspaceDocumentSupport.classification(for: sourceURL)
         if typed.capabilities.canEditText && source.capabilities.canEditText {

@@ -280,6 +280,12 @@ struct MonknotMenuPresenter: NSViewRepresentable {
         }
     }
 
+    /// A menu never outlives its control: its commands would act on a view that is gone.
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        guard coordinator.isTracking else { return }
+        MonknotContextMenuController.shared.close(animated: false)
+    }
+
     @MainActor
     final class Coordinator {
         var parent: MonknotMenuPresenter

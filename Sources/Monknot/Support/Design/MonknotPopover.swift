@@ -659,7 +659,8 @@ final class MonknotPopoverController {
         switch event.type {
         case .keyDown:
             guard event.window === presentation.panel || event.window === presentation.window else { return false }
-            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            // Caps Lock changes no key's meaning here.
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock)
             if event.keyCode == 53, modifiers.subtracting([.function]).isEmpty {
                 close()
                 return true
@@ -692,7 +693,11 @@ final class MonknotPopoverController {
             if isInside {
                 return false
             }
-            close()
+            // Only the user scrolling closes it, not a trackpad's events around a click or momentum
+            // left over from before it opened.
+            if MonknotContextMenuController.isDeliberateScroll(event) {
+                close()
+            }
             return true
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             if isInside {
@@ -953,11 +958,17 @@ struct MonknotPopoverAnchor: NSViewRepresentable {
         }
     }
 
+    /// The popover closes with its control, and its binding goes back to false even though the
+    /// coordinator is released by the time the close runs, so the control never stays open.
     static func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
         if let id = coordinator.presentationID {
             coordinator.presentationID = nil
+            let isPresented = coordinator.parent.$isPresented
             DispatchQueue.main.async {
                 MonknotPopoverController.shared.close(id)
+                if isPresented.wrappedValue {
+                    isPresented.wrappedValue = false
+                }
             }
         }
     }

@@ -123,6 +123,7 @@ final class MonknotContextMenuModel: ObservableObject {
         didSet {
             if highlighted != oldValue {
                 onHighlight?(highlighted)
+                onHighlightForAccessibility?()
             }
         }
     }
@@ -137,6 +138,8 @@ final class MonknotContextMenuModel: ObservableObject {
     @Published var isThumbHovered = false
     /// Told when the highlight moves, so a pop-up can preview the value under it.
     var onHighlight: ((Int?) -> Void)?
+    /// Tells VoiceOver which row the highlight moved to.
+    var onHighlightForAccessibility: (() -> Void)?
 
     init(entries: [Entry]) {
         self.entries = entries
@@ -535,13 +538,22 @@ final class MonknotContextMenuInteractionView: NSView {
 private final class MonknotContextMenuAccessibilityRow: NSAccessibilityElement {
     let press: () -> Bool
 
-    init(title: String, isEnabled: Bool, isChecked: Bool, frame: NSRect, parent: NSView, press: @escaping () -> Bool) {
+    init(
+        title: String,
+        isEnabled: Bool,
+        isChecked: Bool,
+        isHighlighted: Bool,
+        frame: NSRect,
+        parent: NSView,
+        press: @escaping () -> Bool
+    ) {
         self.press = press
         super.init()
         setAccessibilityRole(.menuItem)
         setAccessibilityLabel(title)
+        setAccessibilityValue(isChecked ? "checked" : nil)
         setAccessibilityEnabled(isEnabled)
-        setAccessibilitySelected(isChecked)
+        setAccessibilitySelected(isHighlighted)
         setAccessibilityParent(parent)
         setAccessibilityFrame(frame)
     }
@@ -703,7 +715,7 @@ final class MonknotContextMenuController: ObservableObject {
         case .rightMouseDown:
             return true
         case .leftMouseDown:
-            return event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .control
+            return event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock) == .control
         default:
             return false
         }
@@ -711,6 +723,15 @@ final class MonknotContextMenuController: ObservableObject {
 
     private struct Handled {
         let passThrough: Bool
+    }
+
+    /// Whether a scroll event is the user scrolling: not the zero-length events a trackpad sends
+    /// around a two-finger click, nor momentum left over from a flick before the menu opened.
+    static func isDeliberateScroll(_ event: NSEvent) -> Bool {
+        guard event.momentumPhase.isEmpty,
+              !event.phase.contains(.mayBegin), !event.phase.contains(.cancelled)
+        else { return false }
+        return event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0
     }
 
     /// What an event does while a menu is open: nil when it should still go on to open a menu (a
@@ -736,7 +757,7 @@ final class MonknotContextMenuController: ObservableObject {
         case .scrollWheel:
             if isInPanel {
                 scroll(with: event)
-            } else {
+            } else if Self.isDeliberateScroll(event) {
                 close()
             }
             return Handled(passThrough: false)
@@ -745,8 +766,11 @@ final class MonknotContextMenuController: ObservableObject {
                 return Handled(passThrough: true)
             }
             close()
-            // A right-click elsewhere goes on to open that place's menu; any other click only closes.
-            return Self.isContextClick(event) ? nil : Handled(passThrough: false)
+            // A right-click elsewhere goes on to open that place's menu; any other click only
+            // closes, and over an open popover a right-click only closes too (§5.9).
+            return Self.isContextClick(event) && !MonknotPopoverController.shared.isOpen
+                ? nil
+                : Handled(passThrough: false)
         default:
             return Handled(passThrough: true)
         }
@@ -896,8 +920,12 @@ final class MonknotContextMenuController: ObservableObject {
             surface.origin.x = (flippedLeftTo ?? screenPoint.x) - size.width
             anchor = .topTrailing
         }
-        if surface.minY < visible.minY {
-            surface.origin.y = flippedAbove ?? screenPoint.y
+        // Where it does not fit below, it opens above when it fits there, or on whichever side has
+        // more room, moved in to stay on screen.
+        let aboveY = flippedAbove ?? screenPoint.y
+        if surface.minY < visible.minY,
+           aboveY + size.height <= visible.maxY || visible.maxY - aboveY > surface.maxY - visible.minY {
+            surface.origin.y = aboveY
             anchor = anchor == .topTrailing ? .bottomTrailing : .bottomLeading
         }
         surface.origin.x = min(max(surface.origin.x, visible.minX), max(visible.minX, visible.maxX - size.width))
@@ -936,6 +964,10 @@ final class MonknotContextMenuController: ObservableObject {
         let interaction = MonknotContextMenuInteractionView(frame: hosting.frame)
         interaction.autoresizingMask = [.width, .height]
         interaction.controller = self
+        model.onHighlightForAccessibility = { [weak interaction] in
+            guard let interaction else { return }
+            NSAccessibility.post(element: interaction, notification: .selectedChildrenChanged)
+        }
         let container = NSView(frame: NSRect(origin: .zero, size: panelFrame.size))
         container.addSubview(hosting)
         container.addSubview(interaction)
@@ -958,7 +990,11 @@ final class MonknotContextMenuController: ObservableObject {
         }
         window.addChildWindow(panel, ordered: .above)
         panel.orderFront(nil)
-        presentationID = id
+        // Only a right-click's menu belongs to the row under the pointer; a control's menu is shown
+        // open by its control.
+        if menu != nil {
+            presentationID = id
+        }
         observe(window)
 
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -985,6 +1021,8 @@ final class MonknotContextMenuController: ObservableObject {
             (NSWindow.didMoveNotification, window),
             (NSWindow.willEnterFullScreenNotification, window),
             (NSWindow.willExitFullScreenNotification, window),
+            (NSWindow.didMiniaturizeNotification, window),
+            (NSMenu.didBeginTrackingNotification, nil),
         ]
         observers = closeOn.map { name, object in
             center.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
@@ -1057,7 +1095,13 @@ final class MonknotContextMenuController: ObservableObject {
     }
 
     func pointerDown() {
-        guard let model = presentation?.model else { return }
+        guard let presentation else { return }
+        let model = presentation.model
+        // The panel reaches past the surface for its shadow; a press there is a click elsewhere.
+        guard presentation.surfaceFrame.contains(NSEvent.mouseLocation) else {
+            close()
+            return
+        }
         if pointerIsOverThumbLane {
             thumbDrag = (NSEvent.mouseLocation.y, model.scrollOffset)
             cancelThumbHide()
@@ -1164,7 +1208,8 @@ final class MonknotContextMenuController: ObservableObject {
                 setScrollOffset(presentation.layout.offset(revealing: after, from: model.scrollOffset))
             }
         }
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // Caps Lock changes no key's meaning here.
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock)
         let enabled = model.enabledIndices
         let control = modifiers == .control
         switch event.keyCode {
@@ -1184,12 +1229,17 @@ final class MonknotContextMenuController: ObservableObject {
             // A space inside a name being typed ("Helvetica Neue") goes on finding it.
             typeSelect(" ", modifiers: modifiers, model: model)
         case 36, 76, 49:
+            // The press that opened the menu from the keyboard, held past the repeat delay, is not
+            // a choice.
+            guard !event.isARepeat else { return }
             if let index = model.highlighted, model.isEnabled(index) {
                 choose(index)
             } else {
                 close()
             }
         case 53:
+            close()
+        case 47 where modifiers == .command:
             close()
         default:
             typeSelect(event.charactersIgnoringModifiers ?? "", modifiers: modifiers, model: model)
@@ -1301,11 +1351,13 @@ final class MonknotContextMenuController: ObservableObject {
                 title: item.title,
                 isEnabled: item.isEnabled,
                 isChecked: item.isChecked,
+                isHighlighted: presentation.model.highlighted == index,
                 frame: screenFrame,
                 parent: view
-            ) { [weak self] in
-                guard item.isEnabled else { return false }
-                self?.choose(index)
+            ) { [weak self, id = presentation.id] in
+                // A row VoiceOver kept from an earlier menu acts on nothing.
+                guard item.isEnabled, let self, self.presentation?.id == id else { return false }
+                self.choose(index)
                 return true
             }
         }

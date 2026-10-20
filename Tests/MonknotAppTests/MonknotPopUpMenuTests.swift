@@ -14,6 +14,19 @@ final class MonknotPopUpMenuTests: XCTestCase {
         .shared
     }
 
+    override func setUp() async throws {
+        try await super.setUp()
+        // A menu or popover an earlier test left open would take this suite's events.
+        MonknotPopoverController.shared.close(animated: false, restoresFocus: false)
+        controller.close(animated: false)
+    }
+
+    override func tearDown() async throws {
+        MonknotPopoverController.shared.close(animated: false, restoresFocus: false)
+        controller.close(animated: false)
+        try await super.tearDown()
+    }
+
     private static let zoomItems = [100, 120, 140, 160, 180, 200].map { MonknotPopUpItem(id: String($0), title: "\($0)%") }
 
     func testAPopUpOpensMonknotsMenuBelowItWithItsValueChecked() async throws {

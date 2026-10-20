@@ -13,6 +13,13 @@ public enum WorkspaceDocumentKind: String, Codable, Sendable {
     public var opensInPDFViewer: Bool {
         self == .pdf || self == .image
     }
+
+    /// A kind saved by an older build that no longer exists (open tabs, Recents) reads as a file
+    /// that opens in its own app, so the rest of what was saved still loads.
+    public init(from decoder: Decoder) throws {
+        let rawValue = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: rawValue) ?? .unsupported
+    }
 }
 
 public struct WorkspaceDocumentCapabilities: Codable, Hashable, Sendable {
@@ -149,7 +156,12 @@ public enum WorkspaceDocumentSupport {
         "sh", "bash", "zsh", "fish",
         "sql", "graphql", "gql", "proto", "dockerfile",
         "css", "scss", "sass", "less",
-        "json", "jsonc", "yaml", "yml", "xml", "csv", "tsv", "toml", "ini", "env", "plist"
+        "json", "jsonc", "yaml", "yml", "xml", "csv", "tsv", "toml", "ini", "env", "plist",
+        // Source and text formats the system does not declare.
+        "lua", "vue", "svelte", "astro", "dart", "scala", "kts", "groovy", "gradle", "r", "rmd", "qmd",
+        "jl", "hs", "ex", "exs", "erl", "clj", "cljs", "edn", "elm", "ml", "mli", "fs", "fsx", "nim",
+        "zig", "v", "sol", "tf", "hcl", "nix", "cmake", "mk", "bat", "ps1", "rst", "adoc", "org",
+        "tex", "bib", "sty", "cls", "lock", "conf", "cfg", "properties"
     ]
     /// Raster images ImageIO decodes. SVG stays a text document: its source is the file.
     public static let imageExtensions: Set<String> = [
@@ -166,17 +178,27 @@ public enum WorkspaceDocumentSupport {
         "dockerfile", "makefile", "procfile", "gemfile", "rakefile", "justfile",
         "license", "licence", "readme", "changelog", "authors", "contributors", "copying", "notice"
     ]
-    /// Binary formats common in projects that the system does not declare. Like other binary
-    /// files they are listed and open in their own app, never as text.
-    public static let binaryExtensions: Set<String> = [
-        "sqlite", "sqlite3", "db", "woff", "woff2", "wasm", "mkv", "ogg", "so",
-        "pkl", "npy", "npz", "parquet", "h5", "pt", "pth", "onnx", "safetensors"
+    /// Formats listed but opened in their own app, never as text: binary formats common in
+    /// projects that the system does not declare, and RTF, whose text is markup.
+    public static let ownAppExtensions: Set<String> = [
+        "sqlite", "sqlite3", "db", "woff", "woff2", "wasm", "mkv", "ogg", "so", "rlib", "rmeta",
+        "pkl", "npy", "npz", "parquet", "h5", "pt", "pth", "onnx", "safetensors", "gguf", "ckpt",
+        "rtf"
     ]
 
-    /// Whether the text after a name's last dot reads as a file extension: it holds a letter, so
-    /// "notes.lua" has one and "Release 1.2" does not.
-    public static func readsAsFileExtension(_ pathExtension: String) -> Bool {
-        pathExtension.contains(where: \.isLetter)
+    /// Whether the text after a name's last dot is the extension of a file type Monknot or the
+    /// system knows, so "notes.lua" and "Clip.mov" have one and "Release 1.2", "Release v1.0-beta"
+    /// and "John.Smith" do not: New File gives those `.md`, and Rename keeps the file's own.
+    public static func isKnownFileExtension(_ pathExtension: String) -> Bool {
+        let lowercased = pathExtension.lowercased()
+        guard !lowercased.isEmpty else { return false }
+        if markdownExtensions.contains(lowercased) || pdfExtensions.contains(lowercased)
+            || htmlExtensions.contains(lowercased) || notebookExtensions.contains(lowercased)
+            || textExtensions.contains(lowercased) || imageExtensions.contains(lowercased)
+            || mediaExtensions.contains(lowercased) || ownAppExtensions.contains(lowercased) {
+            return true
+        }
+        return UTType(filenameExtension: lowercased).map { !$0.isDynamic } ?? false
     }
 
     /// Whether a folder with this name is a package, such as `Release.app` or `Notes.rtfd`, which
@@ -201,8 +223,8 @@ public enum WorkspaceDocumentSupport {
     /// `name` in `directoryURL`, or when that is taken, the first free "name copy", "name copy 2", ….
     /// A file or package keeps its extension last ("photo copy.png"); a folder's name is used whole,
     /// so "v1.2" becomes "v1.2 copy". As in Finder, a name too long to take the suffix is shortened
-    /// at a character boundary to fit `maximumFileNameLength`. A path in `reservedPaths` (a removed
-    /// note whose unsaved text is still open) counts as taken.
+    /// at a character boundary to fit `maximumFileNameLength`. A name holding a path in `reservedPaths`
+    /// (a removed note whose unsaved text is still open), or that path itself, counts as taken.
     public static func availableCopyURL(
         named name: String,
         isDirectory: Bool,
@@ -211,7 +233,9 @@ public enum WorkspaceDocumentSupport {
         fileManager: FileManager = .default
     ) -> URL {
         func isTaken(_ url: URL) -> Bool {
-            fileManager.fileExists(atPath: url.path) || reservedPaths.contains(url.standardizedFileURL.path)
+            let path = url.standardizedFileURL.path
+            return fileManager.fileExists(atPath: path)
+                || reservedPaths.contains { isPath($0, containedIn: path) }
         }
         var candidate = directoryURL.appendingPathComponent(name)
         guard isTaken(candidate) else { return candidate }
@@ -326,10 +350,12 @@ public enum WorkspaceDocumentSupport {
         // A type the system does not know (most source formats, "LICENSE-MIT") opens as text; the
         // editor shows why when the bytes are not UTF-8 text (`WorkspaceTextFileGuard`).
         let isUnknownType = type == nil || type?.isDynamic == true
-        if type?.conforms(to: .text) == true ||
+        if !ownAppExtensions.contains(fileExtension) && (
+            type?.conforms(to: .text) == true ||
             type?.conforms(to: .plainText) == true ||
             type?.conforms(to: .sourceCode) == true ||
-            (isUnknownType && !binaryExtensions.contains(fileExtension)) {
+            isUnknownType
+        ) {
             return Classification(
                 kind: .text,
                 contentTypeIdentifier: contentTypeIdentifier,

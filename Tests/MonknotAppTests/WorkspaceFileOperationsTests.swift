@@ -124,7 +124,6 @@ final class WorkspaceFileOperationsTests: FileOperationsTestCase {
         XCTAssertEqual(names(in: root), ["Docs", "Note.md"])
     }
 
-    /// A folder name the scanner hides ("dist", "node_modules", dot-folders) would never appear.
     /// A folder the sidebar would hide (an ignored or hidden name) is refused before it is made.
     func testCreatingAFolderTheSidebarWouldHideIsRefused() async throws {
         let root = try makeRoot()
@@ -202,12 +201,12 @@ final class WorkspaceFileOperationsTests: FileOperationsTestCase {
             XCTAssertEqual(store.documentText, "# Keep\n")
         }
 
-        for name in ["init.lua", "data.xyz"] {
+        for (name, created, kind) in [("init.lua", "init.lua", WorkspaceDocumentKind.text), ("John.Smith", "John.Smith.md", .markdown)] {
             store.createFile(named: name)
             await idle(store)
             XCTAssertNil(store.errorMessage, name)
-            XCTAssertEqual(doc(store, name)?.kind, .text, name)
-            XCTAssertEqual(store.selectedDocument?.url.lastPathComponent, name)
+            XCTAssertEqual(doc(store, created)?.kind, kind, name)
+            XCTAssertEqual(store.selectedDocument?.url.lastPathComponent, created)
         }
     }
 
@@ -223,6 +222,8 @@ final class WorkspaceFileOperationsTests: FileOperationsTestCase {
         XCTAssertEqual(WorkspaceStore.newFileName(".env"), ".env")
         XCTAssertEqual(WorkspaceStore.newFileName("init.lua"), "init.lua")
         XCTAssertEqual(WorkspaceStore.newFileName("Release 1.2"), "Release 1.2.md", "A version number is not an extension")
+        XCTAssertEqual(WorkspaceStore.newFileName("Release v1.0-beta"), "Release v1.0-beta.md")
+        XCTAssertEqual(WorkspaceStore.newFileName("Q3.final"), "Q3.final.md", "Nor is a word after a dot")
         store.createFile(named: "Meeting notes")
         await idle(store)
         XCTAssertNil(store.errorMessage)
@@ -249,7 +250,7 @@ final class WorkspaceFileOperationsTests: FileOperationsTestCase {
                 name.debugDescription
             )
         }
-        XCTAssertNil(store.validationMessage(forNewItemNamed: "data.xyz", in: sub, isDirectory: false))
+        XCTAssertNil(store.validationMessage(forNewItemNamed: "data.xyz", in: sub, isDirectory: false), "Created as data.xyz.md")
         let outside = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotFileOpsOutside")
         XCTAssertNotNil(store.validationMessage(forNewItemNamed: "x.md", in: outside, isDirectory: false))
 
@@ -290,6 +291,8 @@ final class WorkspaceFileOperationsTests: FileOperationsTestCase {
             ("Back.md", "Back.md"),
             ("  Trimmed  ", "Trimmed.md"),
             ("Meeting 10.30", "Meeting 10.30.md"),
+            ("Release v1.0-beta", "Release v1.0-beta.md"),
+            ("John.Smith", "John.Smith.md"),
         ] {
             let current = try XCTUnwrap(store.documents.first)
             store.renameDocument(id: current.id, to: proposed)
@@ -1229,7 +1232,8 @@ final class WorkspaceFileOperationsTests: FileOperationsTestCase {
 
         try FileManager.default.removeItem(at: keep.url)
         store.refresh()
-        _ = await wait { self.doc(store, "keep.txt") == nil }
+        let removed = await wait { self.doc(store, "keep.txt") == nil }
+        XCTAssertTrue(removed)
         XCTAssertEqual(store.selectedDocumentID, keep.id)
         XCTAssertEqual(store.documentText, "two\n")
         XCTAssertTrue(store.removedDirtyOpenDocumentIDs.contains(keep.id))

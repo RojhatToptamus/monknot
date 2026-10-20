@@ -250,7 +250,6 @@ final class FileOperationsScenarioTests: FileOperationsTestCase {
         XCTAssertEqual(store.documentText, "# N\n[a](a.md)\n")
     }
 
-    /// A moved note's own relative links change with it, unsaved ones too.
     /// A move that would leave a relative link in a note's unsaved text pointing nowhere waits
     /// for a save; the same note with no such link moves, its unsaved text with it.
     func testMovingANoteIsRefusedOnlyWhileItsUnsavedTextHasALinkTheMoveChanges() async throws {
@@ -880,7 +879,7 @@ final class FileOperationsScenarioTests: FileOperationsTestCase {
         pasteboard.writeObjects(["archive.zip", "report.docx", ".env", "dist", "shown.md"].map { outside.appendingPathComponent($0) as NSURL })
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: nil))
         await idle(store)
-        XCTAssertEqual(names("", in: root), ["archive.zip", "report.docx", ".env", "dist", "shown.md"], "Not copied in")
+        XCTAssertEqual(names("", in: root), ["archive.zip", "report.docx", ".env", "dist", "shown.md"], "Every item is copied in")
         XCTAssertEqual(store.rootNode?.children?.map(\.name) ?? [], ["archive.zip", "report.docx", "shown.md"])
         XCTAssertEqual(doc(store, "report.docx")?.kind, .unsupported)
         let message = try XCTUnwrap(store.errorMessage)

@@ -113,8 +113,6 @@ enum MonknotMetrics {
     }
 }
 
-/// Optical corrections for SF Symbols whose visible bounds are materially
-/// larger than adjacent symbols at the same nominal point size.
 /// Every SF Symbol's point size (design.md §8.2). Symbols differ widely in how much of their box
 /// they fill — at one point size `pencil` draws an 11 pt mark and `folder.badge.plus` a 20 pt one —
 /// so a list of glyphs at one size reads ragged. Pictures are therefore sized by what they draw:

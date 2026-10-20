@@ -59,6 +59,7 @@ final class UndoKeyRoutingTests: FileOperationsTestCase {
             window.orderOut(nil)
             window.contentView = nil
             UserDefaults.standard.removeObject(forKey: WorkspaceTreeExpansionPersistence().key(for: root))
+            WorkspaceTabStatePersistence().remove(for: root)
         }
 
         let note = root.appendingPathComponent("note.md")
@@ -87,7 +88,10 @@ final class UndoKeyRoutingTests: FileOperationsTestCase {
         XCTAssertFalse(MonknotNativeUndoCommand.canUndo, "The text has nothing to undo")
 
         pressCommandZ(in: window)
-        try await Task.sleep(nanoseconds: 400_000_000)
+        // ⌘Z's routing is synchronous: an undo it started would be running now.
+        XCTAssertFalse(store.isBusy, "Typing's ⌘Z started no file operation")
+        XCTAssertTrue(store.canUndoWorkspaceReplace)
+        XCTAssertTrue(store.canUndoFileOperation)
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("a.md"), encoding: .utf8), "alpha gamma\n", "The older Replace waits for the newer move")
         XCTAssertTrue(names("Archive", in: root).contains("other.md"), "Typing's ⌘Z never moves a file")
 

@@ -708,8 +708,11 @@ struct SidebarView: View {
         let shownIDs = shownItemIDs(in: nodes)
         let shown = selection.filtered { shownIDs.contains($0) }
         guard shown != selection else { return }
+        // The nearest folder row holding the lead: the deepest of the open folders above it.
         if shown.isEmpty, let leadID = selection.leadID,
-           let row = nodes.first(where: { WorkspaceDocumentSupport.isPath(leadID, containedIn: $0.node.id) }) {
+           let row = nodes
+            .filter({ WorkspaceDocumentSupport.isPath(leadID, containedIn: $0.node.id) })
+            .max(by: { $0.dropTargetNode.id.count < $1.dropTargetNode.id.count }) {
             store.selectSidebarItems(SidebarSelection(single: row.dropTargetNode.id))
         } else {
             store.selectSidebarItems(shown)
@@ -884,11 +887,15 @@ struct SidebarView: View {
 
     /// The items a row's menu acts on: every selected item when the row is one of several selected,
     /// otherwise the row's own.
+    /// A row inside another selected folder acts on itself alone, as its drag image shows, so a
+    /// menu, a drag and an Option-drag of that row never reach the folder around it.
     private func menuTargets(for url: URL) -> [URL] {
         let path = url.standardizedFileURL.path
         let selectedIDs = store.sidebarSelectionIDs
         guard selectedIDs.count > 1, selectedIDs.contains(path) else { return [url] }
-        return store.sidebarSelectionURLs
+        let targets = store.sidebarSelectionURLs
+        guard targets.contains(where: { $0.standardizedFileURL.path == path }) else { return [url] }
+        return targets
     }
 
     private func refreshRecentDocuments() {

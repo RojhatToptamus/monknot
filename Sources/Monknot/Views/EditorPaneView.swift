@@ -1,6 +1,7 @@
 import AppKit
 import MonknotCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum EditorFlowEligibility {
     static func sourceMode(for document: WorkspaceDocument) -> FlowSourceMode? {
@@ -468,7 +469,7 @@ struct EditorPaneView: View {
     private func notebookPreviewPane(for selectedDocument: WorkspaceDocument) -> some View {
         MarkdownPreviewView(
             documentID: selectedDocument.id,
-            markdown: notebookMarkdown.markdown(forNotebookText: store.documentText),
+            markdown: notebookMarkdown.markdown(forNotebookText: store.documentText, documentID: selectedDocument.id),
             baseURL: URL(fileURLWithPath: selectedDocument.id).deletingLastPathComponent(),
             resourceRoot: store.workspaceURL,
             theme: theme,
@@ -731,16 +732,26 @@ struct EditorPaneView: View {
 }
 
 /// The Markdown of the last notebook text the preview showed, so the view's other updates (a
-/// scroll, a theme change) do not parse the notebook again.
+/// scroll, a theme change) do not parse the notebook again. While the JSON is invalid, as it is
+/// part way through an edit in split view, the notebook's last readable cells stay shown.
 @MainActor
 private final class NotebookMarkdownCache {
+    private var documentID: String?
     private var text: String?
     private var markdown = ""
+    private var isReadable = false
 
-    func markdown(forNotebookText text: String) -> String {
-        if text != self.text {
-            self.text = text
-            markdown = JupyterNotebookMarkdown.markdown(fromNotebookText: text)
+    func markdown(forNotebookText text: String, documentID: String) -> String {
+        guard text != self.text || documentID != self.documentID else { return markdown }
+        let keepsLastReadable = documentID == self.documentID && isReadable
+        self.documentID = documentID
+        self.text = text
+        if let parsed = JupyterNotebookMarkdown.markdown(fromNotebookText: text) {
+            markdown = parsed
+            isReadable = true
+        } else if !keepsLastReadable {
+            markdown = JupyterNotebookMarkdown.unreadableMarkdown
+            isReadable = false
         }
         return markdown
     }
@@ -754,9 +765,16 @@ private struct UnsupportedDocumentView: View {
     let theme: AppTheme
     let zoomScale: Double
 
-    /// The name of the app macOS opens the file with, or nil when none is set.
+    /// The name of the app macOS opens the file with, or nil when none is set. A program is never
+    /// offered (opening it runs it), and neither is Monknot itself, which has just failed to show it.
     private var defaultApplicationName: String? {
-        guard let applicationURL = NSWorkspace.shared.urlForApplication(toOpen: document.url) else { return nil }
+        let contentType = try? document.url.resourceValues(forKeys: [.contentTypeKey]).contentType
+        guard contentType?.conforms(to: .executable) != true,
+              !FileManager.default.isExecutableFile(atPath: document.url.path),
+              let applicationURL = NSWorkspace.shared.urlForApplication(toOpen: document.url),
+              applicationURL.standardizedFileURL != Bundle.main.bundleURL.standardizedFileURL,
+              Bundle(url: applicationURL)?.bundleIdentifier != Bundle.main.bundleIdentifier
+        else { return nil }
         let name = FileManager.default.displayName(atPath: applicationURL.path)
         return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
     }

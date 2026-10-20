@@ -13,6 +13,13 @@ final class MonknotContextMenuTests: FileOperationsTestCase {
         .shared
     }
 
+    override func setUp() async throws {
+        try await super.setUp()
+        // A menu or popover an earlier test left open would take this suite's events.
+        MonknotPopoverController.shared.close(animated: false, restoresFocus: false)
+        controller.close(animated: false)
+    }
+
     /// docs/{a.md,b.md}, top.md; docs/a.md selected, its window reporting its appearance.
     private func makeFixture(theme: AppTheme = .defaultDark, zoomScale: Double = 1) async throws -> (URL, WorkspaceStore, SidebarMenuHarness) {
         let root = try makeRoot()
@@ -21,7 +28,8 @@ final class MonknotContextMenuTests: FileOperationsTestCase {
         try write("# top\n", "top.md", in: root)
         let store = try await openStore(root, selecting: "docs/a.md")
         let h = SidebarMenuHarness(store: store, root: root, theme: theme)
-        await h.waitUntilLaidOut()
+        let laidOut = await h.waitUntilLaidOut()
+        XCTAssertTrue(laidOut, "The sidebar never showed its rows")
         controller.setAppearance(theme: theme, zoomScale: zoomScale, for: h.window)
         addTeardownBlock { @MainActor in
             MonknotContextMenuController.shared.close(animated: false)

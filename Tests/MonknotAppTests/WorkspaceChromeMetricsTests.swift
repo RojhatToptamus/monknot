@@ -293,7 +293,14 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         ]
         for (nominal, names) in sets {
             let target = MonknotSymbolOptics.targetOpticalSize(nominal: nominal)
-            for name in Set(names) where MonknotSymbolOptics.markCeiling(for: name) == nil {
+            let pictures = Set(names).filter { MonknotSymbolOptics.markCeiling(for: $0) == nil }
+            var compared = 0
+            defer {
+                // The column and the range hold back only the odd glyph; a rule that held them all
+                // would compare nothing.
+                XCTAssertGreaterThanOrEqual(Double(compared), Double(pictures.count) * 0.6, "Only \(compared) of \(pictures.count) pictures at \(nominal) were sized to the optical size")
+            }
+            for name in pictures {
                 let metrics = try XCTUnwrap(SymbolInkMetrics.metrics(for: name), "\(name) was not measured")
                 let size = MonknotSymbolOptics.pointSizeBase(for: name, nominal: nominal)
                 let optical = metrics.opticalSizePerPoint * size
@@ -303,6 +310,7 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
                     || abs(size - nominal * MonknotSymbolOptics.scaleRange.upperBound) < 0.01
                     || size < nominal * MonknotSymbolOptics.scaleRange.lowerBound
                 if !heldByColumn && !heldByRange {
+                    compared += 1
                     XCTAssertEqual(optical, target, accuracy: 0.5, "\(name) at \(nominal) reads \(optical), not \(target)")
                 }
                 XCTAssertLessThanOrEqual(longest, MonknotSymbolOptics.longestSide(nominal: nominal) + 0.01, "\(name) spills out of its column")

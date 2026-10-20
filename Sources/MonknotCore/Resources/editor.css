@@ -907,14 +907,6 @@
   color: var(--mk-ink);
 }
 
-.mk-editing .callout-title.mk-open {
-  background: color-mix(in srgb, var(--callout-tint) 12%, transparent);
-}
-
-.mk-editing .callout-title.mk-open::after {
-  opacity: 0.8;
-}
-
 .mk-tool:disabled {
   background: transparent;
   color: var(--mk-ink4);
