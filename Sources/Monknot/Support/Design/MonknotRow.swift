@@ -201,12 +201,18 @@ struct MonknotMenuRowButtonStyle: ButtonStyle {
     let theme: AppTheme
     let zoomScale: Double
     var isSelected = false
+    /// The menu decides which row has the one highlight — in a popover's list, the row the keys chose,
+    /// the pointer moved onto or keyboard focus is on, whichever moved last (design.md §5.9) — and the
+    /// row adds no hover of its own, so a row the pointer rests on never shows a second highlight. Nil
+    /// leaves the highlight to the pointer over the row. The row should disable the system's focus ring.
+    var isHighlighted: Bool?
 
     func makeBody(configuration: Configuration) -> some View {
         MonknotMenuRowButtonStyleBody(
             configuration: configuration,
             theme: theme,
             isSelected: isSelected,
+            menuHighlight: isHighlighted,
             cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
         )
     }
@@ -215,13 +221,18 @@ struct MonknotMenuRowButtonStyle: ButtonStyle {
         let configuration: Configuration
         let theme: AppTheme
         let isSelected: Bool
+        let menuHighlight: Bool?
         let cornerRadius: CGFloat
         @Environment(\.isEnabled) private var isEnabled
         @State private var isHovered = false
 
+        private var isHighlighted: Bool {
+            menuHighlight ?? isHovered
+        }
+
         var body: some View {
             configuration.label
-                .environment(\.monknotRowIsHighlighted, isEnabled && (isHovered || configuration.isPressed))
+                .environment(\.monknotRowIsHighlighted, isEnabled && (isHighlighted || configuration.isPressed))
                 .background {
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .fill(fill)
@@ -239,7 +250,7 @@ struct MonknotMenuRowButtonStyle: ButtonStyle {
             if configuration.isPressed {
                 return theme.pressedFillColor
             }
-            return isHovered ? theme.chromeSelectedFillColor : .clear
+            return isHighlighted ? theme.chromeSelectedFillColor : .clear
         }
     }
 }

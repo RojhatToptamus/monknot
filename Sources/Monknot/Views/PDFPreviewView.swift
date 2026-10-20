@@ -518,8 +518,8 @@ struct PDFFreeTextFormatting: Equatable {
     }
 }
 
-/// The text box style popover: 248 wide, 12 padding, rows 10 apart, the app's 28 controls 8 apart. The
-/// font pop-up takes what the colour well leaves of the first row.
+/// The text box style popover (design.md §5.9, a form popover): 248 wide, 12 padding, rows 10 apart, the
+/// app's 28 controls 8 apart. The font pop-up takes what the colour well leaves of the first row.
 struct PDFFreeTextPopoverMetrics: Equatable {
     static let baseWidth: CGFloat = 248
 
@@ -569,9 +569,46 @@ private struct PDFFreeTextFormattingCommand {
     let formatting: PDFFreeTextFormatting
 }
 
+/// The drawing tool's stroke width (design.md §10.7a), a form popover (§5.9): its title and value, then
+/// the shared slider, 210 wide with 12 padding.
+struct PDFStrokeWidthPopover: View {
+    @Binding var strokeWidth: Double
+    let theme: AppTheme
+    let zoomScale: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale)) {
+            HStack {
+                Text("Stroke Width")
+                    .font(MonknotTypography.panelTitle(theme: theme, zoomScale: zoomScale))
+                    .foregroundStyle(theme.foregroundColor)
+
+                Spacer(minLength: MonknotMetrics.interfaceDensity(12, theme: theme, zoomScale: zoomScale))
+
+                Text("\(Int(strokeWidth)) pt")
+                    .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+                    .monospacedDigit()
+                    .foregroundStyle(theme.tertiaryForegroundColor)
+            }
+
+            MonknotSlider(
+                title: "Stroke Width",
+                value: $strokeWidth,
+                range: 1...10,
+                step: 1,
+                valueDescription: "\(Int(strokeWidth)) points",
+                theme: theme,
+                zoomScale: zoomScale
+            )
+        }
+        .padding(MonknotMetrics.interfaceDensity(12, theme: theme, zoomScale: zoomScale))
+        .frame(width: MonknotMetrics.interfaceDensity(210, theme: theme, zoomScale: zoomScale))
+    }
+}
+
 /// A text box's style (design.md §10.7a): font and colour, size and emphasis, alignment, each the
-/// app's shared control.
-private struct PDFFreeTextFormattingPopover: View {
+/// app's shared control, in a form popover (§5.9).
+struct PDFFreeTextFormattingPopover: View {
     let formatting: PDFFreeTextFormatting
     let fontFamilies: [String]
     let theme: AppTheme
@@ -645,7 +682,6 @@ private struct PDFFreeTextFormattingPopover: View {
         }
         .padding(metrics.padding)
         .frame(width: metrics.width)
-        .background(theme.elevatedSurfaceColor)
     }
 
     /// Bold and Italic: the segmented control's two independent toggles on one track.
@@ -1008,7 +1044,9 @@ private struct PDFAnnotationToolbar: View {
                 : [],
             theme: theme,
             zoomScale: zoomScale,
-            leadingPaddingBase: 8
+            leadingPaddingBase: 8,
+            // Holds `press` while Stroke Width shows, as while its menu does (design.md §5.1).
+            isOpen: offersStrokeWidth && strokeWidthPopoverLayout == layout
         ) { shown in
             MonknotColorSwatch(
                 color: (PDFAnnotationPaletteColor.all.first { $0.id == shown } ?? selectedColor).color,
@@ -1019,7 +1057,12 @@ private struct PDFAnnotationToolbar: View {
         .accessibilityValue(
             offersStrokeWidth ? "\(selectedColor.name), \(Int(strokeWidth)) point stroke" : selectedColor.name
         )
-        .popover(isPresented: strokeWidthPopoverBinding(for: layout), arrowEdge: .top) {
+        .monknotPopover(
+            isPresented: strokeWidthPopoverBinding(for: layout),
+            label: "Stroke Width",
+            theme: theme,
+            zoomScale: zoomScale
+        ) {
             strokeWidthPopoverContent
         }
     }
@@ -1036,33 +1079,7 @@ private struct PDFAnnotationToolbar: View {
     }
 
     private var strokeWidthPopoverContent: some View {
-        VStack(alignment: .leading, spacing: MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale)) {
-            HStack {
-                Text("Stroke Width")
-                    .font(MonknotTypography.panelTitle(theme: theme, zoomScale: zoomScale))
-                    .foregroundStyle(theme.foregroundColor)
-
-                Spacer(minLength: MonknotMetrics.interfaceDensity(12, theme: theme, zoomScale: zoomScale))
-
-                Text("\(Int(strokeWidth)) pt")
-                    .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
-                    .monospacedDigit()
-                    .foregroundStyle(theme.tertiaryForegroundColor)
-            }
-
-            MonknotSlider(
-                title: "Stroke Width",
-                value: $strokeWidth,
-                range: 1...10,
-                step: 1,
-                valueDescription: "\(Int(strokeWidth)) points",
-                theme: theme,
-                zoomScale: zoomScale
-            )
-        }
-        .padding(MonknotMetrics.interfaceDensity(12, theme: theme, zoomScale: zoomScale))
-        .frame(width: MonknotMetrics.interfaceDensity(210, theme: theme, zoomScale: zoomScale))
-        .background(theme.elevatedSurfaceColor)
+        PDFStrokeWidthPopover(strokeWidth: $strokeWidth, theme: theme, zoomScale: zoomScale)
     }
 
     /// Opens the text box's style; its popover shows as the button's open state (design.md §5.1).
@@ -1077,7 +1094,12 @@ private struct PDFAnnotationToolbar: View {
             toggleFreeTextFormatting()
         }
         .accessibilityAddTraits(isFreeTextFormattingPresented ? .isSelected : [])
-        .popover(isPresented: $isFreeTextFormattingPresented, arrowEdge: .top) {
+        .monknotPopover(
+            isPresented: $isFreeTextFormattingPresented,
+            label: "Text Style",
+            theme: theme,
+            zoomScale: zoomScale
+        ) {
             if let selectedFreeTextFormatting {
                 PDFFreeTextFormattingPopover(
                     formatting: selectedFreeTextFormatting,

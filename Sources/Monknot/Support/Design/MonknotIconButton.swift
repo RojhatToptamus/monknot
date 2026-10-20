@@ -56,6 +56,9 @@ struct MonknotIconButton: View {
     var focusRingPlacement: FocusRingPlacement = .outside
     /// The unsaved dot on the glyph's corner (a Save button with changes to save).
     var showsDirtyDot = false
+    /// Told when the button takes or loses keyboard focus (a switcher row keeps its Remove showing
+    /// while Remove has focus).
+    var onFocusChange: ((Bool) -> Void)?
     let action: () -> Void
 
     @State private var isHovered = false
@@ -195,6 +198,9 @@ struct MonknotIconButton: View {
         .focusable(!disabled && NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
+        .onChange(of: isFocused) { _, focused in
+            onFocusChange?(focused)
+        }
         .disabled(isDisabled)
         .onHover { isHovered = $0 }
         .help(label)

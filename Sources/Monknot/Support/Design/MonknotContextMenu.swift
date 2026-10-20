@@ -684,8 +684,15 @@ final class MonknotContextMenuController: ObservableObject {
 
     /// Whether the menu takes `event` for itself, so the window never sees it.
     private func consumes(_ event: NSEvent) -> Bool {
+        // An open menu is the topmost surface, over a popover too (a pop-up inside one): it takes
+        // the keys and clicks first.
         if let presentation, let handled = handleWhileOpen(event, presentation: presentation) {
             return !handled.passThrough
+        }
+        // An open popover takes every click outside it (design.md §5.9), right-clicks included, so
+        // no context menu opens over it.
+        if MonknotPopoverController.shared.isOpen {
+            return false
         }
         guard Self.isContextClick(event) else { return false }
         return openMenu(for: event)

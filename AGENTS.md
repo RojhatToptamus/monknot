@@ -419,7 +419,8 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
   `View.monknotField`, `MonknotStepper`, `MonknotSlider`, `MonknotColorWell`, `MonknotListRowLabel`
   with `MonknotListRowButtonStyle` (sidebar and its header, Recents, Find in Workspace's results,
   Links, Settings' sections), `MonknotMenuRowLabel` with
-  `MonknotMenuRowButtonStyle` (popovers and overlays), `MonknotDocumentGlyph` (a file's glyph with its
+  `MonknotMenuRowButtonStyle` (popovers and overlays), `View.monknotPopover` (every popover, on
+  `MonknotPopoverController`'s floating surface), `MonknotDocumentGlyph` (a file's glyph with its
   save state), and `MonknotTypography`'s three styles (label 13/400, title 13/600, secondary 12/400).
   Every component, Settings' included, takes `zoomScale`. `danger` comes from `dangerColor` /
   `dangerSoftFillColor`, never `semanticColors.diffRemoved`.
@@ -459,6 +460,23 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
   `MonknotPopUpButton`'s values (the current one checked with `MonknotMenuRowCheck`, a colour's
   `MonknotColorSwatch` or a tool's glyph in the glyph column, past 380 tall scrolling under the
   chrome thumb). Never show a system `NSMenu` from a chrome control.
+- Popovers in the chrome are Monknot's own too (design.md §5.9): a control attaches
+  `View.monknotPopover(isPresented:label:contentKind:listRows:theme:zoomScale:content:)`
+  (`Support/Design/MonknotPopover.swift`) and holds its open state while the binding is true.
+  `MonknotPopoverController` shows one at a time, on the context menu's surface, in a
+  `MonknotPopoverPanel`: a child panel that becomes key (its controls take focus) but never main (the
+  window keeps its active chrome). It places the surface with `MonknotPopoverPlacement`, follows the
+  content's size, closes on a click outside (which does nothing else), Esc, scrolling outside, the
+  window moving, resizing or closing, another window or app, the menu bar and the control going away,
+  sends a ⌘ shortcut on to the window, and gives focus back to what had it. The workspace switcher
+  (`.list`) and the PDF bar's Stroke Width and Text Style (`.form`) use it; no `NSPopover` or
+  SwiftUI `.popover` remains in the chrome. While a popover is open the context-menu controller
+  steps aside. A list passes `listRows`; its event monitor then gives the list a context menu's keys
+  (↑ ↓ ⌃P ⌃N, Home/End, typing, ↩/Space, ⌫ for a row's `remove`) without Full Keyboard Access, while
+  Tab and a form's keys stay with the focused control. `MonknotPopoverListModel`, in the content's
+  environment, owns the list's one highlight: rows report the pointer
+  (`monknotPopoverListHover`) and keyboard focus to it and draw it with
+  `MonknotMenuRowButtonStyle(isHighlighted:)`.
 - Glyph sizes come from `MonknotSymbolOptics` (`Support/Design/MonknotMetrics.swift`): pictures are
   sized by their measured ink (`SymbolInkMetrics`) to one optical size, marks (open strokes,
   lettering) keep their nominal; never hand-pick a point size for one glyph (design.md §8.2). Every
@@ -560,6 +578,7 @@ Current XCTest coverage focuses on `MonknotCore`:
 - `MarkdownEditorMenuTests` (app target): the Preview editor's menus in real WebKit: one menu at a time, the table menu and bar, the code language, the link card, Turn Into's timing and every surface following a moved column.
 - `MonknotPopUpMenuTests` (app target): a real `MonknotPopUpButton` clicked open: Monknot's menu below it (above it at the screen's bottom) with the value checked and highlighted, ↓ and ↩ choosing, Esc choosing nothing, a value missing from the list, a 300-item list scrolling with Home, End and type-select keeping the row in view and the thumb fading, Settings-style previews restored on Esc, a menu button's commands, and a pop-up inside a popover leaving the popover open. With `MONKNOT_POPUP_MENU_SNAPSHOT_DIR` set, renders the zoom, colour, tool and long font menus off screen.
 - `MonknotContextMenuTests` (app target): real right-clicks over the real sidebar open Monknot's menu with the row's items, Control-click too; choosing acts on the clicked row; a quick release over a row only highlights it and a release never runs Move to Trash; the keys (↑↓, ⌃N ⌃P, Home/End, type-select, ↩, Esc); a click elsewhere only closes; a right-click elsewhere opens there; scrolling and losing key close it; text views and unreported windows keep the system's menu; layout at every zoom; placement and flipping; every command's glyph. With `MONKNOT_CONTEXT_MENU_SNAPSHOT_DIR` set, renders the surface off screen and captures it on screen.
+- `MonknotPopoverTests` (app target): real clicks on real controls open the shared popover surface 4 below the control at zoom 0.8, 1 and 2 (a list 6 outside, above where the screen ends, moved in only where it would leave the screen); the panel takes key but never main and moves with its window; controls inside take clicks and the surface follows its content; Esc and `cancelOperation` close it and give focus back; a ⌘ shortcut goes on to the window; a click outside (its own control included) only closes; a right-click outside opens no menu; scrolling, the window moving, resizing or closing, another window or app, its control going away and its binding close it; a window it opened keeps it open; one at a time; the real switcher opens below the sidebar header with its rows on the header's edges; on the real sidebar with saved workspaces, its keys move one highlight over the enabled rows without wrapping (Home/End, ⌃P/⌃N, typing with a pause starting over and a space continuing a name), ↩, Enter and Space choose and close it, ⌫ removes the highlighted workspace once and keeps it open, the pointer's row and the keys' row are one highlight, keyboard focus is that highlight and Space goes to a focused Remove, and past seven rows the keys' row stays in view (the Full Keyboard Access Tab test skips with it off). With `MONKNOT_POPOVER_SNAPSHOT_DIR` set, renders the PDF popovers off screen and captures the switcher and the PDF popovers on screen.
 - `UndoKeyRoutingTests` (app target): ⌘Z through a hosted `ContentView`'s key handling with real focus in Source and in Preview with nothing to undo: an older workspace Replace waits for a newer move, the sidebar undoes the move, then the Replace undoes from the text.
 - `SidebarSelectionTests`: ranges, toggles, arrow moves, Home/End, select all, following moves, and type-to-select.
 - `SidebarMultipleSelectionTests` (app target): real clicks and keys over the hosted sidebar: ⇧- and ⌘-click without opening, arrows and ⇧-arrows, ←/→ and ⌥/⌘ variants, type-to-select, ⌘↓, ⌘D and ⌘⌫ on several items (and refusal with unsaved text), row menus acting on the selection (and a row outside it on that row alone), a collapse handing a hidden selection to the folder's row, dragging and Option-dragging several rows, multi-item Copy/Cut/Paste as one undo step, and the selection following moves. With `MONKNOT_SIDEBAR_SELECTION_SNAPSHOT_DIR` set, captures a selection in both themes.

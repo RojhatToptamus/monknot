@@ -40,6 +40,9 @@ struct MonknotPopUpButton<Value: View>: View {
     var previewsSelection = false
     var onPreviewSelection: ((String) -> Void)?
     var onCancelPreview: (() -> Void)?
+    /// Something the button opened is showing (Stroke Width's popover): it holds `press`, as while its
+    /// menu shows (design.md §5.1).
+    var isOpen = false
     /// The button's value, given the id it shows (the previewed value while the menu tracks).
     @ViewBuilder let value: (String) -> Value
 
@@ -58,7 +61,7 @@ struct MonknotPopUpButton<Value: View>: View {
                 theme: theme,
                 zoomScale: zoomScale,
                 isHovered: isHovered,
-                isOpen: isMenuPresented || isPressed,
+                isOpen: isMenuPresented || isPressed || isOpen,
                 leadingPaddingBase: leadingPaddingBase
             ) {
                 value(previewedSelection ?? selection)

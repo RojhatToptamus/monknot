@@ -164,7 +164,8 @@ final class MonknotPopUpMenuTests: XCTestCase {
     }
 
     /// The Text Style popover holds the font pop-up: pressing in the pop-up's menu, which floats in a
-    /// window of its own, must leave the popover open, and the chosen font lands in it.
+    /// window of its own over Monknot's popover, must leave the popover open, the chosen font lands
+    /// in it, and Esc closes the menu alone.
     func testAPopUpInsideAPopoverKeepsThePopoverOpenWhileItsMenuIsUsed() async throws {
         let recorder = Recorder(selection: "Helvetica")
         let host = NSHostingView(rootView: PopoverHostView(recorder: recorder))
@@ -226,6 +227,22 @@ final class MonknotPopUpMenuTests: XCTestCase {
         XCTAssertTrue(chosen, "End and Return choose the last font")
         try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertTrue(popover.isVisible, "Choosing a font leaves the popover open")
+
+        // The menu is the topmost surface: Esc, delivered as the app delivers it, closes the menu
+        // and leaves the popover open.
+        try await reopen(in: popover, at: center)
+        XCTAssertTrue(controller.isOpen)
+        let escape = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: popover.windowNumber, context: nil, characters: "\u{1B}", charactersIgnoringModifiers: "\u{1B}",
+            isARepeat: false, keyCode: 53
+        ))
+        NSApp.sendEvent(escape)
+        let menuClosed = await waitUntil { !self.controller.isOpen }
+        XCTAssertTrue(menuClosed, "Esc closes the menu")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertTrue(popover.isVisible, "and only the menu")
+        XCTAssertEqual(recorder.selection, "Menlo", "Esc chose nothing")
     }
 
     private func reopen(in window: NSWindow, at point: NSPoint) async throws {
@@ -259,7 +276,7 @@ final class MonknotPopUpMenuTests: XCTestCase {
         var body: some View {
             Color.clear
                 .frame(width: 300, height: 80)
-                .popover(isPresented: $isShown, arrowEdge: .bottom) {
+                .monknotPopover(isPresented: $isShown, label: "Text Style", theme: .defaultLight, zoomScale: 1) {
                     MonknotPopUpButton(
                         label: "Font Family",
                         selection: $recorder.selection,
