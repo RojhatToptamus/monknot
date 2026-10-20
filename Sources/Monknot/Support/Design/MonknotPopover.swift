@@ -73,6 +73,184 @@ struct MonknotPopoverPlacement: Equatable {
     }
 }
 
+// MARK: - List
+
+/// A row of a list popover that the keys move over (design.md §5.9), in the order it shows.
+struct MonknotPopoverListRow {
+    let id: String
+    /// What typing matches, from its start.
+    let title: String
+    var isEnabled = true
+    let choose: () -> Void
+    /// What ⌫ does while the row is highlighted (a saved workspace's Remove); nil where it does nothing.
+    var remove: (() -> Void)?
+}
+
+/// A list popover's one highlight (design.md §5.6, §5.9): the row the keys chose, the row the pointer
+/// moved onto, or the row with keyboard focus, whichever moved last. Its rows draw it through
+/// `MonknotMenuRowButtonStyle(isHighlighted:)`, so no row adds a hover of its own.
+@MainActor
+final class MonknotPopoverListModel: ObservableObject {
+    /// What has keyboard focus in the list (Full Keyboard Access): a row, or a control inside one.
+    enum Focus: Equatable {
+        case row(String)
+        case control
+    }
+
+    /// Set by the popover's control each time it draws.
+    var rows: [MonknotPopoverListRow] = [] {
+        didSet {
+            if let highlighted, !isEnabled(highlighted) {
+                self.highlighted = nil
+            }
+        }
+    }
+
+    @Published private(set) var highlighted: String?
+    /// The row the pointer last moved onto, enabled or not: a workspace row shows Remove there.
+    @Published private(set) var pointerRow: String?
+    /// Counts the keys' and keyboard focus's moves, so the list scrolls the highlighted row into view
+    /// and moves keyboard focus with it.
+    @Published private(set) var keyboardMoves = 0
+    private(set) var focus: Focus?
+    /// Where the pointer was when the keys last moved the highlight, or the list opened: rows that
+    /// scroll or appear under a pointer that holds still do not take the highlight from the keys.
+    private var heldPointer: CGPoint?
+    /// What a typed name can hold; Tab, the arrows and the function keys are not part of one.
+    private static let nameCharacters = CharacterSet.alphanumerics.union(.punctuationCharacters).union(.symbols)
+    private var typeSelection = ""
+    private var typeSelectionTime: TimeInterval = 0
+
+    var enabledRows: [MonknotPopoverListRow] {
+        rows.filter(\.isEnabled)
+    }
+
+    func isEnabled(_ id: String) -> Bool {
+        rows.contains { $0.id == id && $0.isEnabled }
+    }
+
+    var highlightedRow: MonknotPopoverListRow? {
+        highlighted.flatMap { id in rows.first { $0.id == id && $0.isEnabled } }
+    }
+
+    private var focusedRowID: String? {
+        if case .row(let id) = focus, isEnabled(id) {
+            return id
+        }
+        return nil
+    }
+
+    /// The list opened under the pointer at `location`: it takes no row until it moves.
+    func holdPointer(at location: CGPoint = NSEvent.mouseLocation) {
+        heldPointer = location
+    }
+
+    /// Whether the pointer has moved since the keys last moved the highlight.
+    private func pointerHasMoved(to location: CGPoint) -> Bool {
+        guard let held = heldPointer else { return true }
+        guard location != held else { return false }
+        heldPointer = nil
+        return true
+    }
+
+    /// The pointer moved over the row `id`: it takes the highlight, or clears it over a row that cannot
+    /// be chosen, as in a context menu.
+    func pointerMoved(onto id: String, at location: CGPoint = NSEvent.mouseLocation) {
+        guard pointerHasMoved(to: location) else { return }
+        if pointerRow != id {
+            pointerRow = id
+        }
+        let target = isEnabled(id) ? id : nil
+        if highlighted != target {
+            highlighted = target
+        }
+    }
+
+    /// The pointer left the row `id`: the highlight goes back to the row with keyboard focus, if any.
+    func pointerLeft(_ id: String, at location: CGPoint = NSEvent.mouseLocation) {
+        guard pointerHasMoved(to: location), pointerRow == id else { return }
+        pointerRow = nil
+        let fallback = focusedRowID
+        if highlighted != fallback {
+            highlighted = fallback
+        }
+    }
+
+    /// Keyboard focus moved in the list: a focused row takes the highlight and scrolls into view. A
+    /// control inside the highlighted row (Remove) leaves it there.
+    func focusMoved(to focus: Focus?) {
+        guard self.focus != focus else { return }
+        self.focus = focus
+        if case .row(let id) = focus, isEnabled(id) {
+            highlightFromKeyboard(id)
+        }
+    }
+
+    private func highlightFromKeyboard(_ id: String?) {
+        heldPointer = NSEvent.mouseLocation
+        if pointerRow != nil {
+            pointerRow = nil
+        }
+        if highlighted != id {
+            highlighted = id
+        }
+        keyboardMoves += 1
+    }
+
+    /// ↓ or ↑: the next or previous enabled row, without wrapping; from no highlight, the first or last.
+    func moveHighlight(forward: Bool) {
+        let enabled = enabledRows.map(\.id)
+        guard !enabled.isEmpty else { return }
+        guard let current = highlighted, let index = enabled.firstIndex(of: current) else {
+            highlightFromKeyboard(forward ? enabled.first : enabled.last)
+            return
+        }
+        highlightFromKeyboard(enabled[forward ? min(index + 1, enabled.count - 1) : max(index - 1, 0)])
+    }
+
+    /// Home or End: the first or last enabled row.
+    func highlightEnd(last: Bool) {
+        let enabled = enabledRows.map(\.id)
+        guard !enabled.isEmpty else { return }
+        highlightFromKeyboard(last ? enabled.last : enabled.first)
+    }
+
+    /// Whether a name is being typed, its last character less than a second ago, so a space extends it
+    /// instead of choosing.
+    func isTypeSelecting(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        !typeSelection.isEmpty && time - typeSelectionTime <= 1
+    }
+
+    /// Typing highlights the first enabled row whose title starts with what was typed; a pause of a
+    /// second starts over. False for characters that cannot start a name.
+    func typeSelect(_ characters: String, at time: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard let scalar = characters.unicodeScalars.first,
+              characters == " " || Self.nameCharacters.contains(scalar)
+        else { return false }
+        if time - typeSelectionTime > 1 {
+            typeSelection = ""
+        }
+        typeSelectionTime = time
+        typeSelection += characters.lowercased()
+        if let match = enabledRows.first(where: { $0.title.lowercased().hasPrefix(typeSelection) }) {
+            highlightFromKeyboard(match.id)
+        }
+        return true
+    }
+
+    /// ⌫ on the highlighted row: removes it, and the highlight moves to the row that takes its place.
+    func removeHighlighted() {
+        guard let row = highlightedRow, let remove = row.remove else { return }
+        let enabled = enabledRows.map(\.id)
+        let index = enabled.firstIndex(of: row.id)
+        let successor = index.flatMap { index in
+            index + 1 < enabled.count ? enabled[index + 1] : (index > 0 ? enabled[index - 1] : nil)
+        }
+        remove()
+        highlightFromKeyboard(successor)
+    }
+}
+
 // MARK: - Surface
 
 /// What the popover's surface draws: its content, and whether it has grown in yet.
@@ -84,6 +262,8 @@ final class MonknotPopoverModel: ObservableObject {
     @Published var growAnchor: UnitPoint = .topLeading
     /// False until the surface has been drawn once, so it grows in from its control.
     @Published var isShown = false
+    /// A list's rows and its one highlight, which the content reads from its environment.
+    let list = MonknotPopoverListModel()
 
     init(content: AnyView, theme: AppTheme, zoomScale: Double) {
         self.content = content
@@ -112,6 +292,7 @@ struct MonknotPopoverSurface: View {
             .opacity(model.isShown ? 1 : 0)
             .padding(MonknotPopoverController.shadowMargin)
             .environment(\.colorScheme, theme.isDark ? .dark : .light)
+            .environmentObject(model.list)
     }
 }
 
@@ -214,13 +395,14 @@ final class MonknotPopoverController {
 
     /// Shows `content` below `anchor` (above it where the screen ends) and gives it keyboard focus.
     /// Opened from the keyboard it appears at once; otherwise it grows in from the control over
-    /// 150 ms. Nil when `anchor` is not in a window.
+    /// 150 ms. A list's `listRows` are what its keys move over. Nil when `anchor` is not in a window.
     @discardableResult
     func present(
         _ content: AnyView,
         label: String,
         from anchor: NSView,
         contentKind: MonknotPopoverContentKind,
+        listRows: [MonknotPopoverListRow] = [],
         theme: AppTheme,
         zoomScale: Double,
         opensFromKeyboard: Bool = false,
@@ -231,6 +413,8 @@ final class MonknotPopoverController {
         MonknotContextMenuController.shared.close(animated: false)
 
         let model = MonknotPopoverModel(content: content, theme: theme, zoomScale: zoomScale)
+        model.list.rows = listRows
+        model.list.holdPointer()
         let hosting = MonknotPopoverHostingView(rootView: MonknotPopoverSurface(model: model))
         let margin = Self.shadowMargin
         let panelSize = hosting.fittingSize
@@ -310,10 +494,11 @@ final class MonknotPopoverController {
         return id
     }
 
-    /// The content, theme and zoom of the popover `id` as its control draws now.
-    func update(_ id: UUID, content: AnyView, theme: AppTheme, zoomScale: Double) {
+    /// The content, list rows, theme and zoom of the popover `id` as its control draws now.
+    func update(_ id: UUID, content: AnyView, listRows: [MonknotPopoverListRow] = [], theme: AppTheme, zoomScale: Double) {
         guard let presentation, presentation.id == id else { return }
         presentation.model.content = content
+        presentation.model.list.rows = listRows
         if presentation.model.theme != theme {
             presentation.model.theme = theme
         }
@@ -492,6 +677,11 @@ final class MonknotPopoverController {
                 }
                 return false
             }
+            // A list takes the menu keys; a form's keys, and text being edited, stay with their control.
+            let list = presentation.model.list
+            if event.window === presentation.panel, !list.rows.isEmpty, !(presentation.panel.firstResponder is NSText) {
+                return handleListKey(event, modifiers: modifiers, list: list)
+            }
             return false
         case .scrollWheel:
             if isInside {
@@ -509,6 +699,54 @@ final class MonknotPopoverController {
         default:
             return false
         }
+    }
+
+    /// A list's keys are a context menu's (design.md §5.8, §5.9): ↑ ↓ and ⌃P ⌃N move the one highlight
+    /// over its enabled rows without wrapping, Home and End jump, typing highlights the first row that
+    /// starts with what was typed, ↩ or Space chooses, and ⌫ removes a highlighted row that can be
+    /// removed. False leaves the key to the focused control: Tab, and Space while a control inside a
+    /// row (Remove) has focus.
+    private func handleListKey(_ event: NSEvent, modifiers: NSEvent.ModifierFlags, list: MonknotPopoverListModel) -> Bool {
+        let plain = modifiers.subtracting([.function, .numericPad]).isEmpty
+        let control = modifiers == .control
+        switch event.keyCode {
+        case 125 where plain, 45 where control:
+            list.moveHighlight(forward: true)
+        case 126 where plain, 35 where control:
+            list.moveHighlight(forward: false)
+        case 115 where plain, 116 where plain:
+            list.highlightEnd(last: false)
+        case 119 where plain, 121 where plain:
+            list.highlightEnd(last: true)
+        case 49 where plain && list.isTypeSelecting():
+            // A space in a name being typed.
+            _ = list.typeSelect(" ")
+        case 49 where plain && list.focus == .control:
+            return false
+        case 36 where plain, 76 where plain, 49 where plain:
+            guard let row = list.highlightedRow else {
+                // Nothing highlighted: the focused control's key, or, as in a context menu, it closes.
+                if list.focus != nil {
+                    return false
+                }
+                close()
+                return true
+            }
+            close()
+            // The action runs once the popover has started to leave, as a context menu's does.
+            DispatchQueue.main.async {
+                row.choose()
+            }
+        case 51 where plain:
+            // Held down, it removes one row, not each one the highlight moves to.
+            if !event.isARepeat {
+                list.removeHighlighted()
+            }
+        default:
+            guard modifiers.subtracting(.shift).isEmpty else { return false }
+            return list.typeSelect(event.charactersIgnoringModifiers ?? "")
+        }
+        return true
     }
 
     private func repost(_ event: NSEvent, to window: NSWindow) {
@@ -619,11 +857,13 @@ final class MonknotPopoverController {
 extension View {
     /// Shows `content` on Monknot's popover surface below this control while `isPresented` is true
     /// (design.md §5.9), and sets it back to false when the popover closes. The control should show its
-    /// open state (`press`) while it is true.
+    /// open state (`press`) while it is true. A list passes the rows its keys move over, which its
+    /// content highlights through the `MonknotPopoverListModel` in its environment.
     func monknotPopover<Content: View>(
         isPresented: Binding<Bool>,
         label: String,
         contentKind: MonknotPopoverContentKind = .form,
+        listRows: [MonknotPopoverListRow] = [],
         theme: AppTheme,
         zoomScale: Double,
         @ViewBuilder content: @escaping () -> Content
@@ -633,6 +873,7 @@ extension View {
                 isPresented: isPresented,
                 label: label,
                 contentKind: contentKind,
+                listRows: listRows,
                 theme: theme,
                 zoomScale: zoomScale,
                 content: { AnyView(content()) }
@@ -641,6 +882,19 @@ extension View {
             .accessibilityHidden(true)
         )
     }
+
+    /// Tells a list popover when the pointer moves over this row `id` and off it, so the row takes the
+    /// list's one highlight as the pointer moves (design.md §5.9).
+    func monknotPopoverListHover(_ id: String, in list: MonknotPopoverListModel) -> some View {
+        onContinuousHover { phase in
+            switch phase {
+            case .active:
+                list.pointerMoved(onto: id)
+            case .ended:
+                list.pointerLeft(id)
+            }
+        }
+    }
 }
 
 /// The control's frame, as AppKit sees it: the popover opens beside it and closes with it.
@@ -648,6 +902,7 @@ struct MonknotPopoverAnchor: NSViewRepresentable {
     @Binding var isPresented: Bool
     let label: String
     let contentKind: MonknotPopoverContentKind
+    let listRows: [MonknotPopoverListRow]
     let theme: AppTheme
     let zoomScale: Double
     let content: () -> AnyView
@@ -666,7 +921,7 @@ struct MonknotPopoverAnchor: NSViewRepresentable {
         let controller = MonknotPopoverController.shared
         if isPresented {
             if let id = coordinator.presentationID, controller.isPresenting(id) {
-                controller.update(id, content: content(), theme: theme, zoomScale: zoomScale)
+                controller.update(id, content: content(), listRows: listRows, theme: theme, zoomScale: zoomScale)
             } else if !coordinator.isPresentationScheduled {
                 // Presented on the next turn, so the control draws its open fill first and no window
                 // changes inside a view update.
@@ -719,6 +974,7 @@ struct MonknotPopoverAnchor: NSViewRepresentable {
                 label: parent.label,
                 from: view,
                 contentKind: parent.contentKind,
+                listRows: parent.listRows,
                 theme: parent.theme,
                 zoomScale: parent.zoomScale,
                 opensFromKeyboard: opensFromKeyboard,

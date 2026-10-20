@@ -22,17 +22,38 @@ final class SidebarMenuHarness {
     var copiedRelativePaths: [URL] = []
     var exportedPDFs: [String] = []
     var openedDocumentIDs: [String] = []
+    /// The saved workspaces the header's switcher lists.
+    let library: WorkspaceLibraryStore
+    /// What the switcher's rows did: the workspaces chosen and removed, Add Workspace… and Manage
+    /// Workspaces….
+    var switchedWorkspaces: [SavedWorkspaceEntry] = []
+    var removedWorkspaces: [SavedWorkspaceEntry] = []
+    var addWorkspaceCount = 0
+    var manageWorkspacesCount = 0
 
-    init(store: WorkspaceStore, root: URL, theme: AppTheme = .defaultDark) {
+    private enum SwitcherAction {
+        case switched(SavedWorkspaceEntry)
+        case removed(SavedWorkspaceEntry)
+        case add
+        case manage
+    }
+
+    /// `savedWorkspaces` go into the library in order; a removed one leaves it, as in the app.
+    init(store: WorkspaceStore, root: URL, theme: AppTheme = .defaultDark, savedWorkspaces: [URL] = []) {
         self.store = store
         self.root = root
         let defaults = UserDefaults(suiteName: "Monknot.SidebarTests.\(UUID().uuidString)")!
         let library = WorkspaceLibraryStore(userDefaults: defaults)
+        for url in savedWorkspaces {
+            library.add(url)
+        }
+        self.library = library
         let search = WorkspaceSearchState()
         var copiedPathsSink: (URL) -> Void = { _ in }
         var copiedRelativeSink: (URL) -> Void = { _ in }
         var exportSink: (WorkspaceDocument) -> Void = { _ in }
         var openSink: (String) -> Void = { _ in }
+        var switcherSink: (SwitcherAction) -> Void = { _ in }
         let view = SidebarView(
             store: store,
             workspaceLibrary: library,
@@ -40,10 +61,10 @@ final class SidebarMenuHarness {
             searchOptions: .constant(MonknotSearchOptions()),
             theme: theme,
             zoomScale: 1,
-            openFolder: {},
-            switchWorkspace: { _ in },
-            removeWorkspace: { _ in },
-            manageWorkspaces: {},
+            openFolder: { switcherSink(.add) },
+            switchWorkspace: { switcherSink(.switched($0)) },
+            removeWorkspace: { switcherSink(.removed($0)) },
+            manageWorkspaces: { switcherSink(.manage) },
             newMarkdown: {},
             exportPDF: { exportSink($0) },
             openDocument: { id in openSink(id) },
@@ -78,6 +99,20 @@ final class SidebarMenuHarness {
         openSink = { [weak self] id in
             self?.openedDocumentIDs.append(id)
             _ = store.selectDocument(id: id)
+        }
+        switcherSink = { [weak self] action in
+            guard let self else { return }
+            switch action {
+            case .switched(let entry):
+                self.switchedWorkspaces.append(entry)
+            case .removed(let entry):
+                self.removedWorkspaces.append(entry)
+                _ = library.remove(id: entry.id)
+            case .add:
+                self.addWorkspaceCount += 1
+            case .manage:
+                self.manageWorkspacesCount += 1
+            }
         }
     }
 

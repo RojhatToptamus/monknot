@@ -498,9 +498,11 @@ smaller than it is.
 panel, Quick Open and the other overlays, Preview's menus — the row under the pointer and the row the
 keys chose are **one highlight**: the `selected` fill and `ink`, applied at once, never faded, so it
 never trails the pointer (`MonknotMenuRowButtonStyle`, `MonknotCommandOverlayResults`). In a popover's
-list the row with keyboard focus (Full Keyboard Access) is that highlight too, and gives it up to a row
-under the pointer (`MonknotMenuRowButtonStyle(highlightsFocus:)`), so Tab moves the one highlight. A row
-scrolling under a pointer that holds still does not take the highlight from the keys. A current item
+list the row with keyboard focus (Full Keyboard Access) is that highlight too: the list owns it
+(`MonknotPopoverListModel`) and its rows draw only that (`MonknotMenuRowButtonStyle(isHighlighted:)`),
+so whichever moved last — the keys, the pointer or Tab — has it, and a row the pointer rests on never
+keeps a second fill. A row scrolling or appearing under a pointer that holds still does not take the
+highlight from the keys. A current item
 (the open workspace, the heading in view) is marked by its glyph or ink, never by a second fill.
 
 **Which state wins.** Disabled over everything; then selected (a selected row right-clicked keeps its
@@ -593,7 +595,8 @@ switcher, so a menu looks the same wherever it opens (`MonknotContextMenuControl
   `cubic-bezier(0.23, 1, 0.32, 1)`; leaves in a 90 ms fade, a chosen row's action running as it starts.
   With Reduce Motion it fades in over 120 ms.
 - **Keys:** ↑ ↓ (and ⌃P ⌃N) move over enabled rows without wrapping; Home and End jump; typing
-  highlights the first row that starts with what was typed; ↩ or Space chooses; Esc closes.
+  highlights the first row that starts with what was typed; ↩ or Space chooses; Esc closes. A list
+  popover, the switcher, takes the same keys (§5.9).
 - **Pointer:** a click chooses on release over an enabled row; a right-press held onto a row and
   released there chooses it; a quick right-click leaves the menu open.
 - **Closing:** a click elsewhere closes it and does nothing else; a right-click elsewhere opens that
@@ -630,10 +633,20 @@ material, another radius and shadow, and a spring beside Monknot's menus read as
   window keeps its active titlebar and chrome (a text selection behind it draws inactive, as behind
   any key panel). With Full Keyboard Access, focus starts on its first control and Tab and ⇧Tab move
   through them; in a list the focused row is the one highlight (§5.6), and a workspace row's Remove
-  shows while the row or Remove has focus, so Tab reaches it. Closing gives focus back to the window
-  and to what had it.
+  shows while the row is highlighted or Remove has focus, so Tab reaches it; Remove focused, its row
+  keeps the highlight. Closing gives focus back to the window and to what had it.
 - **Keys:** Esc and ⌘. close it. A ⌘ shortcut closes it and goes on to the window, as though it were
-  not open. Every other key belongs to its focused control: ← → step the slider.
+  not open. A **list** takes a context menu's keys (§5.8) whether or not Full Keyboard Access is on:
+  ↑ ↓ (and ⌃P ⌃N) move the one highlight over its enabled rows — in the switcher, the saved
+  workspaces other than the open one, Add Workspace… and Manage Workspaces… — without wrapping, from
+  no highlight to the first or last; Home and End (Page Up and Page Down) jump; typing highlights the
+  first row whose name starts with what was typed, a space included while a name is being typed, and
+  a second's pause starts over; ↩ or Space chooses, and closes it, or with nothing highlighted only
+  closes it; ⌫ removes a highlighted workspace, once however long it is held, the highlight moving to
+  the row that takes its place and the switcher staying open. Past seven rows the list scrolls to keep
+  the keys' row in view, and keyboard focus follows the keys, so Tab goes on from the highlighted row.
+  Tab, and Space while a row's Remove has focus, stay with the focused control. A form's keys all
+  belong to its focused control, ← → step the slider, and text being edited keeps every key.
 - **Closing:** a click outside closes it and does nothing else, so a click on its own control closes it
   rather than opening it again, and a right-click outside opens no menu. Scrolling outside, the window
   moving, resizing, entering or leaving full screen or closing, another window or app taking focus,
@@ -1043,9 +1056,12 @@ the controls from the results.
 **The workspace switcher** is a list popover (§5.9), 340 wide, 4 below the header row and 6 outside it,
 so its folders sit on the monogram's column: a group header, then menu rows — each
 workspace with its path in 12 `ink3` and its ⌃⌘ number (Remove, a small button, replaces the number
-under the pointer), the open one the current row with the `accent` `folder.fill` — a separator, Add
-Workspace… and Manage Workspaces…. Labels are `ink`, glyphs `ink2`, as in the editor's menus. Find in
-Workspace's Replace scope is a pop-up (§5.3).
+on the highlighted row and under the pointer), the open one the current row with the `accent`
+`folder.fill` — a separator, Add Workspace… and Manage Workspaces…. Labels are `ink`, glyphs `ink2`,
+as in the editor's menus. It opens with no row highlighted (with Full Keyboard Access, on the first
+it can open); ↑ ↓, typing a name and ↩ open another workspace from the keyboard, and ⌫ removes the
+highlighted one (§5.9). Past seven workspaces the list scrolls. Find in Workspace's Replace scope is a
+pop-up (§5.3).
 
 **Selection.** The tree's selection is the items it picked — a clicked folder, or files and folders
 picked with the keys, ⇧ or ⌘ — or else the open document. Clicking a
@@ -1726,7 +1742,8 @@ Before calling any UI work done:
 - [ ] A right-click in the chrome opens Monknot's menu (§5.8), its commands from `MonknotMenuCommand`;
       only text, media and value pop-ups keep the system's.
 - [ ] A popover is Monknot's surface (§5.9): no arrow, 4 below its control, which shows open; Esc and
-      a click outside close it, and focus goes back where it was.
+      a click outside close it, and focus goes back where it was. A list takes the menu keys with Full
+      Keyboard Access off.
 - [ ] A drag shows where it lands with a fill (`accsoft`), never an outline; Esc and a drop on no
       target return the item; the result is shown where it landed.
 - [ ] Every menu has one highlight, moved by the pointer and the keys, at once (§5.6); a current item

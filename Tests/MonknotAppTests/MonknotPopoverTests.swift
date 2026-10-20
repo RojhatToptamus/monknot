@@ -139,7 +139,13 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         )
     }
 
-    private func key(_ keyCode: UInt16, _ characters: String = "", modifiers: NSEvent.ModifierFlags = [], in window: NSWindow) -> NSEvent? {
+    private func key(
+        _ keyCode: UInt16,
+        _ characters: String = "",
+        modifiers: NSEvent.ModifierFlags = [],
+        isARepeat: Bool = false,
+        in window: NSWindow
+    ) -> NSEvent? {
         NSEvent.keyEvent(
             with: .keyDown,
             location: .zero,
@@ -149,7 +155,7 @@ final class MonknotPopoverTests: FileOperationsTestCase {
             context: nil,
             characters: characters,
             charactersIgnoringModifiers: characters,
-            isARepeat: false,
+            isARepeat: isARepeat,
             keyCode: keyCode
         )
     }
@@ -510,7 +516,9 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         let probe = await makeProbe()
         try await open(probe)
         let panel = try XCTUnwrap(controller.openPanel)
-        for (code, characters) in [(UInt16(48), "\t"), (124, ""), (49, " ")] {
+        // A form has no rows, so even the list's keys stay with its controls.
+        let keys: [(UInt16, String)] = [(48, "\t"), (124, ""), (49, " "), (125, ""), (126, ""), (115, ""), (36, "\r"), (51, "\u{7f}"), (0, "a")]
+        for (code, characters) in keys {
             XCTAssertFalse(controller.handleForTesting(try XCTUnwrap(key(code, characters, in: panel))), "Key \(code) belongs to the focused control")
         }
         XCTAssertTrue(controller.isOpen)
@@ -705,6 +713,392 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         XCTAssertFalse(controller.isOpen, "A click on the header closes the switcher instead of reopening it")
     }
 
+    // MARK: - The switcher's keys
+
+    /// The real sidebar over a workspace, with that workspace and then a folder for each of `names`
+    /// saved in its library, and its switcher opened by a click on the header.
+    private func openSwitcher(saving names: [String]) async throws -> SidebarMenuHarness {
+        MonknotPopoverController.fullKeyboardAccessOverride = false
+        addTeardownBlock { @MainActor in MonknotPopoverController.fullKeyboardAccessOverride = nil }
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        let folders = try makeRoot()
+        var saved = [root]
+        for name in names {
+            try mkdir(name, in: folders)
+            saved.append(folders.appendingPathComponent(name).standardizedFileURL)
+        }
+        let store = try await openStore(root, selecting: "a.md")
+        let h = SidebarMenuHarness(store: store, root: root, savedWorkspaces: saved)
+        addTeardownBlock { @MainActor in h.close() }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        try await reopenSwitcher(h)
+        return h
+    }
+
+    private func reopenSwitcher(_ h: SidebarMenuHarness) async throws {
+        let height = try XCTUnwrap(h.window.contentView).bounds.height
+        await click(at: NSPoint(x: 60, y: height - 20), in: h.window)
+        let opened = await wait(timeout: 2) { self.controller.isOpen && !(self.controller.openModel?.list.rows.isEmpty ?? true) }
+        XCTAssertTrue(opened, "Clicking the sidebar header did not open the switcher with its rows")
+        try await Task.sleep(nanoseconds: 150_000_000)
+    }
+
+    private var switcherList: MonknotPopoverListModel? {
+        controller.openModel?.list
+    }
+
+    private var highlightedTitle: String? {
+        switcherList?.highlightedRow?.title
+    }
+
+    private func rowID(_ title: String) throws -> String {
+        try XCTUnwrap(switcherList?.rows.first { $0.title == title }?.id, "No row titled \(title)")
+    }
+
+    /// A key pressed in the open popover, as its event monitor sees it: true when the popover took it.
+    @discardableResult
+    private func press(
+        _ keyCode: UInt16,
+        _ characters: String = "",
+        modifiers: NSEvent.ModifierFlags = [],
+        isARepeat: Bool = false
+    ) throws -> Bool {
+        let panel = try XCTUnwrap(controller.openPanel, "The switcher is not open")
+        let event = try XCTUnwrap(key(keyCode, characters, modifiers: modifiers, isARepeat: isARepeat, in: panel))
+        return controller.handleForTesting(event)
+    }
+
+    private static let arrow: NSEvent.ModifierFlags = [.function, .numericPad]
+
+    private func down() throws { XCTAssertTrue(try press(125, "\u{F701}", modifiers: Self.arrow), "↓ belongs to the list") }
+    private func up() throws { XCTAssertTrue(try press(126, "\u{F700}", modifiers: Self.arrow), "↑ belongs to the list") }
+
+    private func type(_ text: String) throws {
+        for character in text {
+            let code: UInt16 = character == " " ? 49 : 0
+            XCTAssertTrue(try press(code, String(character)), "Typing \(character) belongs to the list")
+        }
+    }
+
+    func testTheSwitchersKeysMoveOneHighlightOverItsEnabledRowsWithoutWrapping() async throws {
+        let h = try await openSwitcher(saving: ["Alpha", "Beta", "Gamma"])
+        let list = try XCTUnwrap(switcherList)
+        XCTAssertEqual(
+            list.rows.map(\.title),
+            [h.root.lastPathComponent, "Alpha", "Beta", "Gamma", "Add Workspace…", "Manage Workspaces…"]
+        )
+        XCTAssertEqual(
+            list.enabledRows.map(\.title),
+            ["Alpha", "Beta", "Gamma", "Add Workspace…", "Manage Workspaces…"],
+            "The open workspace cannot be chosen, so the keys skip it"
+        )
+        XCTAssertNil(list.highlighted, "Without Full Keyboard Access no row is highlighted until a key or the pointer moves")
+
+        try down()
+        XCTAssertEqual(highlightedTitle, "Alpha", "↓ from no highlight starts on the first row that can be chosen")
+        for expected in ["Beta", "Gamma", "Add Workspace…", "Manage Workspaces…", "Manage Workspaces…"] {
+            try down()
+            XCTAssertEqual(highlightedTitle, expected, "↓ moves on without wrapping")
+        }
+        for expected in ["Add Workspace…", "Gamma", "Beta", "Alpha", "Alpha"] {
+            try up()
+            XCTAssertEqual(highlightedTitle, expected, "↑ moves back without wrapping or reaching the open workspace")
+        }
+
+        XCTAssertTrue(try press(45, "n", modifiers: .control))
+        XCTAssertEqual(highlightedTitle, "Beta", "⌃N moves down")
+        XCTAssertTrue(try press(35, "p", modifiers: .control))
+        XCTAssertEqual(highlightedTitle, "Alpha", "⌃P moves up")
+
+        XCTAssertTrue(try press(119, "\u{F72B}", modifiers: .function))
+        XCTAssertEqual(highlightedTitle, "Manage Workspaces…", "End jumps to the last row")
+        XCTAssertTrue(try press(115, "\u{F729}", modifiers: .function))
+        XCTAssertEqual(highlightedTitle, "Alpha", "Home jumps to the first row")
+        XCTAssertTrue(try press(121, "\u{F72D}", modifiers: .function))
+        XCTAssertEqual(highlightedTitle, "Manage Workspaces…", "Page Down jumps to the last row")
+        XCTAssertTrue(try press(116, "\u{F72C}", modifiers: .function))
+        XCTAssertEqual(highlightedTitle, "Alpha", "Page Up jumps to the first row")
+
+        XCTAssertFalse(try press(48, "\t"), "Tab goes on to the focused control, as Full Keyboard Access moves it")
+        XCTAssertFalse(try press(124, "\u{F703}", modifiers: Self.arrow), "→ is not the list's")
+        XCTAssertFalse(try press(125, "\u{F701}", modifiers: Self.arrow.union(.option)), "⌥↓ is not the list's")
+        XCTAssertTrue(controller.isOpen, "Moving the highlight keeps the switcher open")
+        XCTAssertEqual(highlightedTitle, "Alpha")
+        XCTAssertTrue(h.switchedWorkspaces.isEmpty && h.removedWorkspaces.isEmpty, "Moving the highlight chose or removed something")
+    }
+
+    func testTypingInTheSwitcherHighlightsTheFirstRowThatStartsWithIt() async throws {
+        _ = try await openSwitcher(saving: ["Notes App", "Notes Site", "Archive"])
+
+        try type("n")
+        XCTAssertEqual(highlightedTitle, "Notes App", "The first row that starts with what was typed")
+        try type("otes s")
+        XCTAssertEqual(highlightedTitle, "Notes Site", "A space typed in a name goes on matching instead of choosing")
+        XCTAssertTrue(controller.isOpen)
+        try type("z")
+        XCTAssertEqual(highlightedTitle, "Notes Site", "Typing that matches nothing leaves the highlight")
+
+        try await Task.sleep(nanoseconds: 1_150_000_000)
+        try type("a")
+        XCTAssertEqual(highlightedTitle, "Archive", "A pause of a second starts over")
+        try type("d")
+        XCTAssertEqual(highlightedTitle, "Add Workspace…", "Typed fast, the letters build one name")
+        try type("D")
+        XCTAssertEqual(highlightedTitle, "Add Workspace…", "Matching ignores case")
+
+        try await Task.sleep(nanoseconds: 1_150_000_000)
+        XCTAssertTrue(try press(49, " "))
+        XCTAssertFalse(controller.isOpen, "After a pause, Space chooses the highlighted row")
+    }
+
+    func testReturnOrSpaceChoosesTheHighlightedRowAndClosesTheSwitcher() async throws {
+        let h = try await openSwitcher(saving: ["Alpha", "Beta"])
+        try down()
+        try down()
+        XCTAssertEqual(highlightedTitle, "Beta")
+        XCTAssertTrue(try press(36, "\r"))
+        XCTAssertFalse(controller.isOpen, "↩ closes the switcher")
+        let switched = await wait(timeout: 1) { h.switchedWorkspaces.map(\.displayName) == ["Beta"] }
+        XCTAssertTrue(switched, "↩ did not open the highlighted workspace: \(h.switchedWorkspaces.map(\.displayName))")
+        XCTAssertTrue(h.window.isKeyWindow || !NSApp.isActive, "The window gets keyboard focus back")
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+        try await reopenSwitcher(h)
+        XCTAssertNil(switcherList?.highlighted, "Each opening starts with no highlight")
+        try up()
+        XCTAssertEqual(highlightedTitle, "Manage Workspaces…", "↑ from no highlight starts on the last row")
+        XCTAssertTrue(try press(49, " "))
+        let managed = await wait(timeout: 1) { h.manageWorkspacesCount == 1 }
+        XCTAssertTrue(managed, "Space did not choose Manage Workspaces…")
+        XCTAssertFalse(controller.isOpen)
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+        try await reopenSwitcher(h)
+        try type("add")
+        XCTAssertTrue(try press(76, "\u{3}", modifiers: .numericPad), "Enter on the keypad chooses too")
+        let added = await wait(timeout: 1) { h.addWorkspaceCount == 1 }
+        XCTAssertTrue(added, "Enter did not choose Add Workspace…")
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+        try await reopenSwitcher(h)
+        XCTAssertTrue(try press(36, "\r"))
+        XCTAssertFalse(controller.isOpen, "↩ with nothing highlighted closes it, as in a context menu")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(h.switchedWorkspaces.count, 1, "↩ with nothing highlighted chose a row")
+        XCTAssertEqual(h.addWorkspaceCount + h.manageWorkspacesCount, 2)
+    }
+
+    func testDeleteRemovesTheHighlightedWorkspaceAndTheSwitcherStaysOpen() async throws {
+        let h = try await openSwitcher(saving: ["Alpha", "Beta", "Gamma"])
+        let before = try XCTUnwrap(controller.openSurfaceFrame)
+        try down()
+        try down()
+        XCTAssertEqual(highlightedTitle, "Beta")
+
+        XCTAssertTrue(try press(51, "\u{7f}"))
+        XCTAssertEqual(h.removedWorkspaces.map(\.displayName), ["Beta"], "⌫ removes the highlighted workspace")
+        XCTAssertTrue(controller.isOpen, "Removing a workspace keeps the switcher open, as Remove does")
+        XCTAssertEqual(highlightedTitle, "Gamma", "The highlight moves to the row that takes its place")
+        let updated = await wait(timeout: 1) { !(self.switcherList?.rows.contains { $0.title == "Beta" } ?? true) }
+        XCTAssertTrue(updated, "The switcher still lists the removed workspace")
+        XCTAssertEqual(highlightedTitle, "Gamma")
+        let shrank = await wait(timeout: 1) { (self.controller.openSurfaceFrame?.height ?? 0) < before.height - 20 }
+        XCTAssertTrue(shrank, "The surface did not follow its rows: \(String(describing: controller.openSurfaceFrame)) from \(before)")
+
+        XCTAssertTrue(try press(51, "\u{7f}", isARepeat: true))
+        XCTAssertEqual(h.removedWorkspaces.count, 1, "Held down, ⌫ removes one workspace, not each one the highlight reaches")
+
+        XCTAssertTrue(try press(51, "\u{7f}"))
+        XCTAssertEqual(h.removedWorkspaces.map(\.displayName), ["Beta", "Gamma"])
+        XCTAssertEqual(highlightedTitle, "Add Workspace…", "After the last workspace the highlight moves on to Add Workspace…")
+        _ = await wait(timeout: 1) { !(self.switcherList?.rows.contains { $0.title == "Gamma" } ?? true) }
+        XCTAssertTrue(try press(51, "\u{7f}"))
+        XCTAssertEqual(h.removedWorkspaces.count, 2, "⌫ on Add Workspace… removes nothing")
+        XCTAssertTrue(try press(115, "\u{F729}", modifiers: .function))
+        XCTAssertEqual(highlightedTitle, "Alpha")
+        XCTAssertTrue(h.library.entries.contains { $0.path == h.root.standardizedFileURL.path }, "The open workspace can never be removed from the keys")
+        XCTAssertTrue(controller.isOpen)
+    }
+
+    /// The pointer moves the highlight through the same entry point the rows' hover reports to.
+    func testThePointersRowAndTheKeysRowAreOneHighlight() async throws {
+        let h = try await openSwitcher(saving: ["Alpha", "Beta", "Gamma"])
+        let list = try XCTUnwrap(switcherList)
+        let alpha = try rowID("Alpha")
+        let beta = try rowID("Beta")
+        let gamma = try rowID("Gamma")
+        let open = try rowID(h.root.lastPathComponent)
+        // Points the pointer moves to: never where it rests now.
+        let rest = NSEvent.mouseLocation
+        func moved(_ step: CGFloat) -> CGPoint {
+            CGPoint(x: rest.x + 0.25 * step, y: rest.y + step)
+        }
+
+        list.pointerMoved(onto: open, at: rest)
+        XCTAssertNil(list.pointerRow, "A row that appears under a pointer holding still does not take the highlight")
+
+        list.pointerMoved(onto: alpha, at: moved(1))
+        XCTAssertEqual(list.highlighted, alpha, "The pointer's row takes the highlight")
+        XCTAssertEqual(list.pointerRow, alpha)
+
+        try down()
+        XCTAssertEqual(list.highlighted, beta, "The keys move on from the pointer's row")
+        XCTAssertNil(list.pointerRow, "The row under the pointer gives up its highlight and its Remove to the keys' row")
+
+        // Rows scrolling under a pointer that holds still do not take it back.
+        list.pointerMoved(onto: gamma, at: NSEvent.mouseLocation)
+        list.pointerLeft(alpha, at: NSEvent.mouseLocation)
+        XCTAssertEqual(list.highlighted, beta)
+        XCTAssertNil(list.pointerRow)
+
+        list.pointerMoved(onto: alpha, at: moved(2))
+        XCTAssertEqual(list.highlighted, alpha, "Moving the pointer takes the highlight back")
+
+        list.pointerMoved(onto: open, at: moved(3))
+        XCTAssertNil(list.highlighted, "Over the open workspace, which cannot be chosen, nothing is highlighted")
+        XCTAssertEqual(list.pointerRow, open, "…but its Remove shows under the pointer")
+        XCTAssertTrue(try press(36, "\r"))
+        XCTAssertFalse(controller.isOpen, "↩ with nothing highlighted closes it")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertTrue(h.switchedWorkspaces.isEmpty, "↩ over the open workspace opened something")
+
+        try await reopenSwitcher(h)
+        let reopened = try XCTUnwrap(switcherList)
+        reopened.pointerMoved(onto: try rowID("Gamma"), at: moved(4))
+        reopened.pointerLeft(try rowID("Gamma"), at: moved(5))
+        XCTAssertNil(reopened.highlighted, "Off the rows, nothing is highlighted, as in a context menu")
+    }
+
+    /// Full Keyboard Access's focus and the keys move the same highlight; Space goes to a focused Remove.
+    func testKeyboardFocusIsTheHighlightAndSpaceGoesToAFocusedRemove() async throws {
+        let h = try await openSwitcher(saving: ["Alpha", "Beta", "Gamma"])
+        let list = try XCTUnwrap(switcherList)
+        let beta = try rowID("Beta")
+
+        try down()
+        XCTAssertEqual(highlightedTitle, "Alpha")
+        // Tab onto the highlighted row's Remove: the row keeps the highlight, Space presses Remove.
+        list.focusMoved(to: .control)
+        XCTAssertEqual(highlightedTitle, "Alpha")
+        XCTAssertFalse(try press(49, " "), "Space belongs to the focused Remove")
+        XCTAssertTrue(controller.isOpen)
+        XCTAssertTrue(try press(51, "\u{7f}"), "⌫ still removes the highlighted row")
+        XCTAssertEqual(h.removedWorkspaces.map(\.displayName), ["Alpha"])
+        _ = await wait(timeout: 1) { !(self.switcherList?.rows.contains { $0.title == "Alpha" } ?? true) }
+
+        // Tab onto another row: it takes the highlight, and the list scrolls to it.
+        let moves = list.keyboardMoves
+        list.focusMoved(to: .row(beta))
+        XCTAssertEqual(list.highlighted, beta, "The focused row takes the highlight")
+        XCTAssertGreaterThan(list.keyboardMoves, moves, "A focus move scrolls its row into view")
+        XCTAssertTrue(try press(49, " "), "Space on a focused row chooses the highlighted row")
+        let switched = await wait(timeout: 1) { h.switchedWorkspaces.map(\.displayName) == ["Beta"] }
+        XCTAssertTrue(switched)
+    }
+
+    func testWithFullKeyboardAccessTheSwitchersFocusAndKeysMoveOneHighlight() async throws {
+        let app = NSApplication.shared
+        let previousPolicy = app.activationPolicy()
+        _ = app.setActivationPolicy(.regular)
+        app.activate(ignoringOtherApps: true)
+        defer { _ = app.setActivationPolicy(previousPolicy) }
+        MonknotPopoverController.fullKeyboardAccessOverride = true
+        defer { MonknotPopoverController.fullKeyboardAccessOverride = nil }
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        let folders = try makeRoot()
+        var saved = [root]
+        for name in ["Alpha", "Beta", "Gamma"] {
+            try mkdir(name, in: folders)
+            saved.append(folders.appendingPathComponent(name).standardizedFileURL)
+        }
+        let store = try await openStore(root, selecting: "a.md")
+        let h = SidebarMenuHarness(store: store, root: root, savedWorkspaces: saved)
+        addTeardownBlock { @MainActor in h.close() }
+        h.window.makeKeyAndOrderFront(nil)
+        try XCTSkipUnless(NSApp.isFullKeyboardAccessEnabled, "Buttons take keyboard focus only with Full Keyboard Access on in System Settings")
+        let active = await wait(timeout: 2) { NSApp.isActive && h.window.isKeyWindow }
+        try XCTSkipUnless(active, "SwiftUI moves focus only in a key window of an active app, and the test app could not become active")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        try await reopenSwitcher(h)
+        let list = try XCTUnwrap(switcherList)
+        let panel = try XCTUnwrap(controller.openPanel)
+        let alpha = try rowID("Alpha")
+        let beta = try rowID("Beta")
+        let gamma = try rowID("Gamma")
+
+        let first = await wait(timeout: 1) { list.focus == .row(alpha) }
+        XCTAssertTrue(first, "Focus starts on the first row that can be chosen: \(String(describing: list.focus))")
+        XCTAssertEqual(list.highlighted, alpha, "The focused row is the highlight")
+
+        func tab() {
+            if let tab = key(48, "\t", in: panel) {
+                panel.sendEvent(tab)
+            }
+        }
+        tab()
+        let onRemove = await wait(timeout: 1) { list.focus == .control }
+        XCTAssertTrue(onRemove, "Tab reaches the highlighted row's Remove: \(String(describing: list.focus))")
+        XCTAssertEqual(list.highlighted, alpha, "The row keeps the highlight while its Remove has focus")
+        tab()
+        let onBeta = await wait(timeout: 1) { list.focus == .row(beta) }
+        XCTAssertTrue(onBeta, "Tab moves on to the next row: \(String(describing: list.focus))")
+        XCTAssertEqual(list.highlighted, beta, "Tab moves the one highlight")
+
+        try down()
+        XCTAssertEqual(list.highlighted, gamma)
+        let followed = await wait(timeout: 1) { list.focus == .row(gamma) }
+        XCTAssertTrue(followed, "Keyboard focus follows the keys' highlight: \(String(describing: list.focus))")
+    }
+
+    func testTheKeysKeepTheirRowInViewPastSevenRows() async throws {
+        let names = (1...12).map { String(format: "Folder %02d", $0) }
+        _ = try await openSwitcher(saving: names)
+        let scroll = try XCTUnwrap(scrollView(in: try XCTUnwrap(controller.openPanel?.contentView)), "The switcher's list does not scroll")
+        let rowPitch: CGFloat = 30 + 1
+
+        /// The row at `index` among the workspace rows (the open workspace is 0), in the visible part
+        /// of the list, measured from the list's top.
+        func isVisible(_ index: Int) -> Bool {
+            guard let document = scroll.documentView else { return false }
+            let visible = scroll.documentVisibleRect
+            let top = document.isFlipped ? visible.minY : document.bounds.height - visible.maxY
+            let rowTop = CGFloat(index) * rowPitch
+            return rowTop >= top - 0.5 && rowTop + 30 <= top + visible.height + 0.5
+        }
+
+        XCTAssertTrue(isVisible(0) && !isVisible(12), "Seven rows show, the list starting at its top")
+        try up()
+        try up()
+        try up()
+        XCTAssertEqual(highlightedTitle, "Folder 12")
+        let scrolledDown = await wait(timeout: 1) { isVisible(12) }
+        XCTAssertTrue(scrolledDown, "The keys' row was left out of view: \(scroll.documentVisibleRect)")
+
+        XCTAssertTrue(try press(115, "\u{F729}", modifiers: .function))
+        XCTAssertEqual(highlightedTitle, "Folder 01")
+        let scrolledUp = await wait(timeout: 1) { isVisible(1) }
+        XCTAssertTrue(scrolledUp, "Home did not bring its row back into view: \(scroll.documentVisibleRect)")
+
+        try type("folder 09")
+        XCTAssertEqual(highlightedTitle, "Folder 09")
+        let typedInView = await wait(timeout: 1) { isVisible(9) }
+        XCTAssertTrue(typedInView, "The typed row was left out of view: \(scroll.documentVisibleRect)")
+    }
+
+    private func scrollView(in view: NSView) -> NSScrollView? {
+        if let scroll = view as? NSScrollView, scroll.documentView != nil {
+            return scroll
+        }
+        for subview in view.subviews {
+            if let found = scrollView(in: subview) {
+                return found
+            }
+        }
+        return nil
+    }
+
     // MARK: - Snapshots
 
     /// With `MONKNOT_POPOVER_SNAPSHOT_DIR` set, renders every popover on its surface off screen (no
@@ -753,24 +1147,43 @@ final class MonknotPopoverTests: FileOperationsTestCase {
     }
 
     /// With `MONKNOT_POPOVER_SNAPSHOT_DIR` set, captures the real switcher open in the sidebar, light
-    /// and dark: the window with the popover's panel drawn where it opens. Needs an unlocked screen.
+    /// and dark: the window with the popover's panel drawn where it opens, then with ↓ ↓ highlighting a
+    /// row, and with the keys past its seventh row. Needs an unlocked screen.
     func testCaptureTheSwitcher() async throws {
         guard let path = ProcessInfo.processInfo.environment["MONKNOT_POPOVER_SNAPSHOT_DIR"] else {
             throw XCTSkip("Set MONKNOT_POPOVER_SNAPSHOT_DIR to capture the switcher")
         }
         let directory = URL(fileURLWithPath: path)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        MonknotPopoverController.fullKeyboardAccessOverride = false
+        defer { MonknotPopoverController.fullKeyboardAccessOverride = nil }
+        let names = ["Design Notes", "Field Research", "Monknot Site", "Reading", "Recipes", "Taxes 2026", "Thesis", "Travel", "Website"]
         for (themeName, theme) in [("light", AppTheme.defaultLight), ("dark", AppTheme.defaultDark)] {
             let root = try makeRoot()
             try write("# a\n", "a.md", in: root)
+            let folders = try makeRoot()
+            var saved = [root]
+            for name in names {
+                try mkdir(name, in: folders)
+                saved.append(folders.appendingPathComponent(name).standardizedFileURL)
+            }
             let store = try await openStore(root, selecting: "a.md")
-            let h = SidebarMenuHarness(store: store, root: root, theme: theme)
+            let h = SidebarMenuHarness(store: store, root: root, theme: theme, savedWorkspaces: saved)
             try await Task.sleep(nanoseconds: 500_000_000)
             let height = try XCTUnwrap(h.window.contentView).bounds.height
             await click(at: NSPoint(x: 60, y: height - 20), in: h.window)
             _ = await wait(timeout: 2) { self.controller.isOpen }
             try await Task.sleep(nanoseconds: 600_000_000)
             try capture(h.window, controller.openPanel, name: "switcher-\(themeName)", into: directory)
+            try down()
+            try down()
+            try await Task.sleep(nanoseconds: 300_000_000)
+            try capture(h.window, controller.openPanel, name: "switcher-keys-\(themeName)", into: directory)
+            XCTAssertTrue(try press(119, "\u{F72B}", modifiers: .function))
+            try up()
+            try up()
+            try await Task.sleep(nanoseconds: 300_000_000)
+            try capture(h.window, controller.openPanel, name: "switcher-keys-scrolled-\(themeName)", into: directory)
             controller.close(animated: false)
             h.close()
         }
