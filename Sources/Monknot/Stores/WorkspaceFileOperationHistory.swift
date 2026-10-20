@@ -6,7 +6,7 @@ import MonknotCore
 struct WorkspaceFileOperation: Sendable {
     let verb: WorkspaceFileOperationVerb
     /// In the order they were made.
-    let steps: [WorkspaceFileOperationStep]
+    var steps: [WorkspaceFileOperationStep]
     let workspaceURL: URL
     /// Orders the operation against the workspace Replace's undo: the newer goes first.
     var serial: Int
@@ -85,6 +85,44 @@ struct WorkspaceFileCopyStep: Sendable {
     let contentsURL: URL?
     let copyURL: URL
     let isDirectory: Bool
+    /// The copy as it was made, so undoing it refuses once it has been edited since.
+    var fingerprint: WorkspaceItemFingerprint?
+}
+
+/// What a file or folder holds, as far as an undo needs to know whether it changed: each file's
+/// size and modification date, and each item's path inside a folder.
+struct WorkspaceItemFingerprint: Equatable, Sendable {
+    private let entries: [Entry]
+
+    private struct Entry: Equatable, Sendable {
+        let subpath: String
+        let size: Int?
+        let modified: Date?
+    }
+
+    /// Nil when the item cannot be read. Reads the disk each time: a `URL` keeps the resource values
+    /// it read once, which would hide a change.
+    static func read(_ url: URL) -> WorkspaceItemFingerprint? {
+        let path = url.standardizedFileURL.path
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else { return nil }
+        let isFolder = attributes[.type] as? FileAttributeType == .typeDirectory
+        var entries = [entry("", attributes, isFolder: isFolder)]
+        if isFolder, let subpaths = FileManager.default.subpaths(atPath: path) {
+            for subpath in subpaths.sorted() {
+                let itemAttributes = (try? FileManager.default.attributesOfItem(atPath: path + "/" + subpath)) ?? [:]
+                entries.append(entry(subpath, itemAttributes, isFolder: itemAttributes[.type] as? FileAttributeType == .typeDirectory))
+            }
+        }
+        return WorkspaceItemFingerprint(entries: entries)
+    }
+
+    private static func entry(_ subpath: String, _ attributes: [FileAttributeKey: Any], isFolder: Bool) -> Entry {
+        Entry(
+            subpath: subpath,
+            size: isFolder ? nil : (attributes[.size] as? NSNumber)?.intValue,
+            modified: isFolder ? nil : attributes[.modificationDate] as? Date
+        )
+    }
 }
 
 enum WorkspaceFileOperationDirection: Sendable {
@@ -100,8 +138,8 @@ enum WorkspaceFileOperationDirection: Sendable {
 struct WorkspaceFileOperationUndoState: Equatable, Sendable {
     var undoActionName: String?
     var redoActionName: String?
-    /// Whether the operation to undo is newer than the workspace Replace that can be undone.
-    var undoPrecedesWorkspaceReplace = true
+    /// Whether there is an operation to undo newer than the workspace Replace that can be undone.
+    var undoPrecedesWorkspaceReplace = false
 }
 
 /// The undo and redo stacks of file operations. They hold paths and the text of rewritten notes,
@@ -117,14 +155,19 @@ struct WorkspaceFileOperationHistory {
     var nextRedo: WorkspaceFileOperation? { redoStack.last }
 
     /// A new action goes on top of Undo and ends what Redo held. The oldest operations go once the
-    /// stacks pass their bounds; the newest always stays.
+    /// stacks pass their bounds. An operation that alone keeps more text than the bound is not
+    /// kept, and nothing older is either: Undo can never step past an operation it cannot undo.
     mutating func record(_ operation: WorkspaceFileOperation) {
-        undoStack.append(operation)
         redoStack.removeAll()
-        while undoStack.count > 1,
-              undoStack.count > Self.maximumOperationCount
-                || undoStack.reduce(0, { $0 + $1.retainedTextByteCount }) > Self.maximumRetainedTextBytes {
-            undoStack.removeFirst()
+        var retainedBytes = operation.retainedTextByteCount
+        guard retainedBytes <= Self.maximumRetainedTextBytes else {
+            undoStack.removeAll()
+            return
+        }
+        undoStack.append(operation)
+        retainedBytes = undoStack.reduce(0) { $0 + $1.retainedTextByteCount }
+        while undoStack.count > Self.maximumOperationCount || retainedBytes > Self.maximumRetainedTextBytes {
+            retainedBytes -= undoStack.removeFirst().retainedTextByteCount
         }
     }
 
@@ -133,9 +176,11 @@ struct WorkspaceFileOperationHistory {
         redoStack.append(operation)
     }
 
-    /// The redone operation is the newest action again, with `serial`.
-    mutating func didRedo(serial: Int) {
-        guard var operation = redoStack.popLast() else { return }
+    /// The redone operation is the newest action again, with `serial`, as `redone` made it (a copy
+    /// made again is a new copy).
+    mutating func didRedo(serial: Int, redone: WorkspaceFileOperation) {
+        guard redoStack.popLast() != nil else { return }
+        var operation = redone
         operation.serial = serial
         undoStack.append(operation)
     }
@@ -161,7 +206,16 @@ enum WorkspaceFileOperationError: LocalizedError, Equatable {
     case folderMissing(String)
     case linksChanged(String)
     case outsideWorkspace(String)
+    case copyChanged(String)
+    /// A note with unsaved changes links to what the step moves: the step waits until it is saved.
+    case unsavedLinks(note: String, undoing: Bool)
     case rollbackFailed(operation: String, rollback: String)
+
+    /// The operation still matches the disk, so it stays to be undone or redone later.
+    var keepsOperation: Bool {
+        if case .unsavedLinks = self { return true }
+        return false
+    }
 
     var errorDescription: String? {
         switch self {
@@ -175,6 +229,10 @@ enum WorkspaceFileOperationError: LocalizedError, Equatable {
             "“\(name)” changed after the move updated its links."
         case .outsideWorkspace(let name):
             "“\(name)” is no longer safely inside the workspace."
+        case .copyChanged(let name):
+            "“\(name)” changed after it was made."
+        case .unsavedLinks(let note, let undoing):
+            "Save \(note) first: its unsaved links would no longer lead where they do after \(undoing ? "undoing" : "redoing") this move."
         case .rollbackFailed(let operation, let rollback):
             operation.isEmpty
                 ? "Putting things back was incomplete (\(rollback))."
@@ -194,19 +252,57 @@ struct WorkspaceFileOperationDisk: Sendable {
     /// The unsaved text a copy made again carries, by the copied item's path: its own ("" subpath)
     /// and that of each document inside it, as Duplicate copies it.
     var unsavedCopyTexts: [String: [WorkspaceUnsavedCopyText]] = [:]
+    /// The Markdown notes with unsaved changes, and the workspace's documents, which a move checks
+    /// before it changes anything, as the move itself did.
+    var unsavedMarkdown: [WorkspaceUnsavedMarkdown] = []
+    var documents: [WorkspaceDocument] = []
 
-    func apply(_ operation: WorkspaceFileOperation, _ direction: WorkspaceFileOperationDirection) throws {
+    /// Makes the steps and returns the operation as made: a copy made again carries the new copy's
+    /// fingerprint.
+    @discardableResult
+    func apply(_ operation: WorkspaceFileOperation, _ direction: WorkspaceFileOperationDirection) throws -> WorkspaceFileOperation {
         let steps = direction == .undo ? Array(operation.steps.reversed()) : operation.steps
+        try checkUnsavedLinks(steps, direction)
         var made: [WorkspaceFileOperationStep] = []
         do {
             for step in steps {
                 try Task.checkCancellation()
-                try apply(step, direction)
-                made.append(step)
+                made.append(try apply(step, direction))
             }
         } catch {
             try putBack(made, after: direction, failure: error)
             throw error
+        }
+        var applied = operation
+        applied.steps = direction == .undo ? made.reversed() : made
+        return applied
+    }
+
+    /// A move would leave a link in unsaved text pointing where the item no longer is: the move
+    /// refused that, and its undo and redo do too.
+    private func checkUnsavedLinks(_ steps: [WorkspaceFileOperationStep], _ direction: WorkspaceFileOperationDirection) throws {
+        guard !unsavedMarkdown.isEmpty else { return }
+        let planner = MarkdownLinkMovePlanner()
+        for case .move(let move) in steps {
+            let (fromURL, toURL) = direction == .undo
+                ? (move.destinationURL, move.sourceURL)
+                : (move.sourceURL, move.destinationURL)
+            guard WorkspaceDocumentSupport.isURL(fromURL, containedIn: workspaceURL),
+                  WorkspaceDocumentSupport.isURL(toURL, containedIn: workspaceURL)
+            else { continue }
+            for unsaved in unsavedMarkdown {
+                let rewrites = try? planner.rewrites(
+                    in: unsaved.text,
+                    of: unsaved.document,
+                    moving: fromURL,
+                    to: toURL,
+                    workspaceRootURL: workspaceURL,
+                    documents: documents
+                )
+                if rewrites?.isEmpty != true {
+                    throw WorkspaceFileOperationError.unsavedLinks(note: unsaved.document.displayName, undoing: direction == .undo)
+                }
+            }
         }
     }
 
@@ -229,7 +325,7 @@ struct WorkspaceFileOperationDisk: Sendable {
         var failures: [String] = []
         for step in made.reversed() {
             do {
-                try apply(step, direction.opposite)
+                _ = try apply(step, direction.opposite)
             } catch {
                 failures.append("\(step.itemName): \(error.localizedDescription)")
             }
@@ -242,7 +338,7 @@ struct WorkspaceFileOperationDisk: Sendable {
         }
     }
 
-    private func apply(_ step: WorkspaceFileOperationStep, _ direction: WorkspaceFileOperationDirection) throws {
+    private func apply(_ step: WorkspaceFileOperationStep, _ direction: WorkspaceFileOperationDirection) throws -> WorkspaceFileOperationStep {
         switch (step, direction) {
         case (.move(let move), .undo):
             try moveBack(move)
@@ -251,10 +347,14 @@ struct WorkspaceFileOperationDisk: Sendable {
         case (.copy(let copy), .undo):
             try checkItem(at: copy.copyURL, isDirectory: copy.isDirectory)
             try checkContainment(of: copy.copyURL)
+            if let fingerprint = copy.fingerprint, WorkspaceItemFingerprint.read(copy.copyURL) != fingerprint {
+                throw WorkspaceFileOperationError.copyChanged(copy.copyURL.lastPathComponent)
+            }
             try moveItemToTrash(copy.copyURL)
         case (.copy(let copy), .redo):
-            try copyAgain(copy)
+            return .copy(try copyAgain(copy))
         }
+        return step
     }
 
     /// Puts each rewritten note's links back, then the item where it was.
@@ -340,26 +440,30 @@ struct WorkspaceFileOperationDisk: Sendable {
         }
     }
 
-    /// Copies the item again to the name its copy had, from the pasted snapshot while it exists.
-    private func copyAgain(_ copy: WorkspaceFileCopyStep) throws {
+    /// Copies the item again to the name its copy had, from the pasted snapshot while it exists, and
+    /// returns the step with the new copy's fingerprint.
+    private func copyAgain(_ copy: WorkspaceFileCopyStep) throws -> WorkspaceFileCopyStep {
         try checkItem(at: copy.sourceURL, isDirectory: copy.isDirectory)
         try checkTarget(copy.copyURL, isFree: true)
         try checkContainment(of: copy.copyURL)
 
         if let contentsURL = copy.contentsURL, FileManager.default.fileExists(atPath: contentsURL.path) {
             try FileManager.default.copyItem(at: contentsURL, to: copy.copyURL)
-            return
-        }
-        try FileManager.default.copyItem(at: copy.sourceURL, to: copy.copyURL)
-        do {
-            for unsaved in unsavedCopyTexts[copy.sourceURL.standardizedFileURL.path] ?? [] {
-                let url = unsaved.subpath.isEmpty ? copy.copyURL : copy.copyURL.appendingPathComponent(unsaved.subpath)
-                try WorkspaceTextFileGuard.writeUTF8Text(unsaved.text, to: url)
+        } else {
+            try FileManager.default.copyItem(at: copy.sourceURL, to: copy.copyURL)
+            do {
+                for unsaved in unsavedCopyTexts[copy.sourceURL.standardizedFileURL.path] ?? [] {
+                    let url = unsaved.subpath.isEmpty ? copy.copyURL : copy.copyURL.appendingPathComponent(unsaved.subpath)
+                    try WorkspaceTextFileGuard.writeUTF8Text(unsaved.text, to: url)
+                }
+            } catch {
+                try? moveItemToTrash(copy.copyURL)
+                throw error
             }
-        } catch {
-            try? moveItemToTrash(copy.copyURL)
-            throw error
         }
+        var made = copy
+        made.fingerprint = WorkspaceItemFingerprint.read(copy.copyURL)
+        return made
     }
 
     // MARK: Checks
@@ -437,5 +541,11 @@ struct WorkspaceFileOperationDisk: Sendable {
 /// document's inside a copied folder.
 struct WorkspaceUnsavedCopyText: Sendable {
     let subpath: String
+    let text: String
+}
+
+/// A Markdown note's unsaved text.
+struct WorkspaceUnsavedMarkdown: Sendable {
+    let document: WorkspaceDocument
     let text: String
 }

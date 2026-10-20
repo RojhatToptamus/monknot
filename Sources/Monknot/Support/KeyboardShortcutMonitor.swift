@@ -193,9 +193,16 @@ extension NSEvent {
 
 }
 
+/// The window whose keyboard focus the Edit menu's Undo, Redo and clipboard commands read: the key
+/// window. A test stands in a window of its own, as a test process cannot always become the active
+/// app, and restores this afterwards.
+enum MonknotKeyFocus {
+    nonisolated(unsafe) static var window: () -> NSWindow? = { NSApp.keyWindow }
+}
+
 enum MonknotNativePasteboardCommand {
     static var hasNativeEditingFocus: Bool {
-        guard let target = NSApp.keyWindow?.firstResponder else { return false }
+        guard let target = MonknotKeyFocus.window()?.firstResponder else { return false }
         return monknotIsNativeTextTarget(target)
     }
 
@@ -269,12 +276,12 @@ enum MonknotNativeUndoCommand {
     static var canRedo: Bool { currentUndoManager?.canRedo == true }
 
     @MainActor static var terminalHasFocus: Bool {
-        TerminalFocusRestorer.firstResponder(in: NSApp.keyWindow, isInside: .monknotTerminalFocusRegion)
+        TerminalFocusRestorer.firstResponder(in: MonknotKeyFocus.window(), isInside: .monknotTerminalFocusRegion)
     }
 
     /// A document view (a PDF, an image, a player) has focus, so its own undo takes ⌘Z.
     @MainActor static var documentViewHasFocus: Bool {
-        TerminalFocusRestorer.firstResponder(in: NSApp.keyWindow, isInside: .monknotDocumentFocusTarget)
+        TerminalFocusRestorer.firstResponder(in: MonknotKeyFocus.window(), isInside: .monknotDocumentFocusTarget)
     }
 
     static func performUndoIfAvailable() -> Bool {
@@ -290,6 +297,7 @@ enum MonknotNativeUndoCommand {
     }
 
     private static var currentUndoManager: UndoManager? {
-        NSApp.keyWindow?.firstResponder?.undoManager ?? NSApp.keyWindow?.undoManager
+        let window = MonknotKeyFocus.window()
+        return window?.firstResponder?.undoManager ?? window?.undoManager
     }
 }

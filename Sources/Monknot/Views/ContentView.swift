@@ -2402,7 +2402,7 @@ struct ContentView: View {
             canPerformNative: redo ? MonknotNativeUndoCommand.canRedo : MonknotNativeUndoCommand.canUndo,
             canPerformWorkspaceReplace: !redo && canUndoWorkspaceReplace,
             canPerformFileOperation: redo ? store.canRedoFileOperation : store.canUndoFileOperation,
-            fileOperationIsNewer: redo || store.fileOperationUndo.undoPrecedesWorkspaceReplace,
+            fileOperationIsNewer: !redo && store.fileOperationUndo.undoPrecedesWorkspaceReplace,
             canPerformPDF: isPDFViewerDocumentSelected && (redo ? canRedoPDFAnnotation : canUndoPDFAnnotation)
         )
     }

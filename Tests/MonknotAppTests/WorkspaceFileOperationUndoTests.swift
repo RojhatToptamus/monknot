@@ -427,9 +427,356 @@ final class WorkspaceFileOperationUndoTests: FileOperationsTestCase {
         XCTAssertEqual(text("a.md", in: root), "alpha beta\n")
     }
 
+    func testMovingANoteAReplaceChangedEndsTheReplacesUndo() async throws {
+        let root = try makeRoot()
+        try write("alpha beta\n", "a.md", in: root)
+        try write("other text\n", "b.md", in: root)
+        try write("# untouched\n", "c.md", in: root)
+        try mkdir("Archive", in: root)
+        let store = try await openStore(root)
+
+        store.replaceInWorkspace(find: "beta", replacement: "gamma")
+        _ = await wait { !store.isBusy && store.canUndoWorkspaceReplace }
+        store.moveItem(id: url("c.md", in: root).path, toDirectory: url("Archive", in: root))
+        await settle(store)
+        XCTAssertTrue(store.canUndoWorkspaceReplace, "A move of a note the Replace left alone keeps its undo")
+        XCTAssertTrue(store.fileOperationUndo.undoPrecedesWorkspaceReplace)
+
+        // Rename a.md away and b.md into its name: the Replace's undo would write the old a.md over b.
+        store.renameDocument(id: try XCTUnwrap(doc(store, "a.md")).id, to: "moved.md")
+        await settle(store)
+        XCTAssertFalse(store.canUndoWorkspaceReplace, "Renaming a note the Replace changed ends its undo")
+        store.renameDocument(id: try XCTUnwrap(doc(store, "b.md")).id, to: "a.md")
+        await settle(store)
+        store.undoLastWorkspaceReplace()
+        await idle(store)
+        XCTAssertEqual(text("a.md", in: root), "other text\n", "Nothing is written over the note now named a.md")
+        XCTAssertEqual(text("moved.md", in: root), "alpha gamma\n")
+    }
+
+    func testTrashingANoteAReplaceChangedEndsTheReplacesUndo() async throws {
+        let root = try makeRoot()
+        try write("alpha beta\n", "a.md", in: root)
+        try write("# b\n", "b.md", in: root)
+        let store = try await openStore(root)
+        store.replaceInWorkspace(find: "beta", replacement: "gamma")
+        _ = await wait { !store.isBusy && store.canUndoWorkspaceReplace }
+
+        store.deleteDocument(try XCTUnwrap(doc(store, "a.md")))
+        await idle(store)
+        XCTAssertFalse(store.canUndoWorkspaceReplace)
+    }
+
+    // MARK: - Unsaved text
+
+    func testUndoWaitsWhileAnUnsavedNoteLinksToTheMovedItem() async throws {
+        let root = try makeRoot()
+        try write("# Index\n", "Index.md", in: root)
+        try write("# a\n", "a.md", in: root)
+        try mkdir("Archive", in: root)
+        let store = try await openStore(root)
+        store.moveItem(id: url("a.md", in: root).path, toDirectory: url("Archive", in: root))
+        await settle(store)
+
+        _ = store.selectDocument(id: url("Index.md", in: root).path)
+        _ = await wait { store.documentText == "# Index\n" }
+        store.setDocumentText("# Index\n[a](Archive/a.md)\n")
+        store.undoFileOperation()
+        await idle(store)
+
+        XCTAssertEqual(
+            store.errorMessage,
+            "Could not undo Move “a.md”: Save Index.md first: its unsaved links would no longer lead where they do after undoing this move."
+        )
+        XCTAssertTrue(exists("Archive/a.md", in: root))
+        XCTAssertTrue(store.canUndoFileOperation, "Saving lets the undo go ahead")
+    }
+
+    func testAFolderMovedWithAnUnsavedNoteInsideGoesBackWithIt() async throws {
+        let root = try makeRoot()
+        try write("# e\n", "docs/e.md", in: root)
+        try mkdir("Archive", in: root)
+        let store = try await openStore(root, selecting: "docs/e.md")
+        _ = await wait { store.documentText == "# e\n" }
+        store.setDocumentText("# e, unsaved\n")
+        let original = url("docs/e.md", in: root).path
+
+        store.moveItem(id: url("docs", in: root).path, toDirectory: url("Archive", in: root))
+        await settle(store)
+        XCTAssertEqual(store.selectedDocumentID, url("Archive/docs/e.md", in: root).path)
+        store.undoFileOperation()
+        await idle(store)
+
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(store.selectedDocumentID, original)
+        XCTAssertEqual(store.documentText, "# e, unsaved\n")
+        XCTAssertFalse(store.saveState(for: original).isClean)
+        XCTAssertEqual(text("docs/e.md", in: root), "# e\n")
+    }
+
+    // MARK: - Failures part way
+
+    func testAMultiStepUndoThatFailsPartWayPutsBackWhatItDid() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        try write("# b\n", "b.md", in: root)
+        try mkdir("Archive", in: root)
+        let store = try await openStore(root)
+        store.dropFileURLs([url("a.md", in: root), url("b.md", in: root)], into: url("Archive", in: root))
+        _ = await wait { !store.isBusy && store.canUndoFileOperation }
+
+        // Undo takes b back first, then a, whose name is taken now.
+        try write("a newer a\n", "a.md", in: root)
+        store.undoFileOperation()
+        await idle(store)
+
+        XCTAssertEqual(store.errorMessage, "Could not undo Move 2 Items: Another item is now named “a.md” in “\(root.lastPathComponent)”.")
+        XCTAssertEqual(names("Archive", in: root), ["a.md", "b.md"], "b went back into Archive when a could not follow")
+        XCTAssertFalse(exists("b.md", in: root))
+        XCTAssertEqual(text("a.md", in: root), "a newer a\n")
+    }
+
+    func testAWorkspaceChangeDuringAnUndoPutsTheDiskBack() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        try mkdir("Archive", in: root)
+        let other = try makeRoot()
+        try write("# o\n", "o.md", in: other)
+        let scanner = GatedWorkspaceScanner()
+        let store = try await openStore(root, scanner: scanner)
+        store.moveItem(id: url("a.md", in: root).path, toDirectory: url("Archive", in: root))
+        await settle(store)
+
+        scanner.hold()
+        store.undoFileOperation()
+        let undoneOnDisk = await wait { self.exists("a.md", in: root) && scanner.waitingScanCount > 0 }
+        XCTAssertTrue(undoneOnDisk, "The undo moved the file, and its rescan waits")
+        store.openWorkspace(other)
+        scanner.release()
+        _ = await wait { !store.isBusy && store.workspaceURL == other.standardizedFileURL }
+        let putBack = await wait { self.exists("Archive/a.md", in: root) }
+        XCTAssertTrue(putBack, "An undo the window never took is put back")
+        XCTAssertFalse(exists("a.md", in: root))
+    }
+
+    func testAPartlyFailedDuplicateCanStillUndoWhatItMade() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        // After a.md in path order, so a.md is copied before the copy fails.
+        try write("secret\n", "zLocked/secret.md", in: root)
+        let secret = url("zLocked/secret.md", in: root)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: secret.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: secret.path) }
+        let store = try await openStore(root)
+
+        store.duplicateItems(at: [url("a.md", in: root), url("zLocked", in: root)])
+        await idle(store)
+        XCTAssertNotNil(store.errorMessage, "zLocked can't be copied")
+        XCTAssertTrue(exists("a copy.md", in: root))
+        XCTAssertEqual(store.fileOperationUndo.undoActionName, "Duplicate “a.md”", "What was made can be undone")
+
+        store.undoFileOperation()
+        await idle(store)
+        XCTAssertFalse(exists("a copy.md", in: root))
+    }
+
+    func testAPartlyFailedCutFromAnotherWorkspaceEndsTheCut() async throws {
+        let first = try makeRoot()
+        try write("# a\n", "a.md", in: first)
+        // After a.md in path order, so a moves before b fails.
+        try write("# b\n", "zLocked/b.md", in: first)
+        let locked = url("zLocked", in: first)
+        let second = try makeRoot()
+        let cutting = try await openStore(first)
+        let pasting = try await openStore(second)
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+
+        cutting.putItemsOnPasteboard(at: [url("a.md", in: first), url("zLocked/b.md", in: first)], cutting: true, pasteboard: pasteboard)
+        let stamp = try XCTUnwrap(cutting.pendingTransferPasteboardStamp)
+        // b cannot leave its folder: the move fails after a has moved.
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+        XCTAssertTrue(pasting.pasteFromPasteboard(pasteboard, into: nil))
+        await idle(pasting)
+
+        XCTAssertNotNil(pasting.errorMessage)
+        XCTAssertTrue(names("", in: second).contains("a.md"))
+        XCTAssertTrue(names("zLocked", in: first).contains("b.md"))
+        XCTAssertFalse(WorkspacePasteboardExportService.holdsTransfer(stamp, on: pasteboard), "The Cut ends, so a second Paste does not try a again")
+        XCTAssertEqual(pasting.fileOperationUndo.undoActionName, "Move “a.md”")
+    }
+
+    // MARK: - Copies that changed, redo and the selection
+
+    func testUndoRefusesToTrashACopyEditedSinceItWasMade() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        let store = try await openStore(root)
+        store.duplicateItem(at: url("a.md", in: root))
+        await idle(store)
+
+        try write("# a, edited in the copy and saved\n", "a copy.md", in: root)
+        store.undoFileOperation()
+        await idle(store)
+        XCTAssertEqual(store.errorMessage, "Could not undo Duplicate “a.md”: “a copy.md” changed after it was made.")
+        XCTAssertTrue(exists("a copy.md", in: root))
+    }
+
+    func testACopyMadeAgainCanBeUndoneAgain() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        let store = try await openStore(root, selecting: "a.md")
+        _ = await wait { store.documentText == "# a\n" }
+        // The copy carries the unsaved text, so it is written after it is made.
+        store.setDocumentText("# a, unsaved\n")
+        store.duplicateItem(at: url("a.md", in: root))
+        await idle(store)
+        store.undoFileOperation()
+        await idle(store)
+        try await Task.sleep(nanoseconds: 20_000_000)
+        store.redoFileOperation()
+        await idle(store)
+        XCTAssertEqual(text("a copy.md", in: root), "# a, unsaved\n")
+
+        store.undoFileOperation()
+        await idle(store)
+        XCTAssertNil(store.errorMessage, "The copy made again is the one undo knows")
+        XCTAssertFalse(exists("a copy.md", in: root))
+    }
+
+    func testRedoOfSeveralCopiesSelectsThemAllAndOpensNone() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        try write("# b\n", "b.md", in: root)
+        let store = try await openStore(root, selecting: "a.md")
+        store.duplicateItems(at: [url("a.md", in: root), url("b.md", in: root)])
+        await idle(store)
+        let copies = [url("a copy.md", in: root).path, url("b copy.md", in: root).path]
+        XCTAssertEqual(store.sidebarSelectionIDs.sorted(), copies)
+        XCTAssertEqual(store.selectedDocumentID, url("a.md", in: root).path)
+
+        store.undoFileOperation()
+        await idle(store)
+        store.redoFileOperation()
+        await idle(store)
+        XCTAssertEqual(store.sidebarSelectionIDs.sorted(), copies, "As the copy did: every copy selected")
+        XCTAssertEqual(store.selectedDocumentID, url("a.md", in: root).path, "None opened")
+    }
+
+    func testUndoKeepsTheSelectedItemsThatStay() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        try write("# b\n", "b.md", in: root)
+        let store = try await openStore(root)
+        store.duplicateItems(at: [url("a.md", in: root), url("b.md", in: root)])
+        await idle(store)
+        let a = url("a.md", in: root).path
+        // The lead, b copy, goes with the undo; a stays.
+        store.selectSidebarItems(.items([a, url("a copy.md", in: root).path, url("b copy.md", in: root).path]))
+
+        store.undoFileOperation()
+        await idle(store)
+        XCTAssertEqual(store.sidebarSelectionIDs, [a])
+    }
+
+    func testCaseOnlyRenameIsUndone() async throws {
+        let fixtureRoot = try makeRoot()
+        try write("# t\n", "Target.md", in: fixtureRoot)
+        guard WorkspaceFileIdentity.isCaseOnlyRename(from: url("Target.md", in: fixtureRoot), to: url("target.md", in: fixtureRoot)) else {
+            throw XCTSkip("The test volume is case-sensitive.")
+        }
+        let store = try await openStore(fixtureRoot)
+        store.renameDocument(id: try XCTUnwrap(doc(store, "Target.md")).id, to: "target.md")
+        await settle(store)
+        XCTAssertEqual(names("", in: fixtureRoot), ["target.md"])
+
+        store.undoFileOperation()
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names("", in: fixtureRoot), ["Target.md"])
+        store.redoFileOperation()
+        await idle(store)
+        XCTAssertEqual(names("", in: fixtureRoot), ["target.md"])
+    }
+
+    // MARK: - The history's bounds
+
+    func testAnOperationOverTheTextBoundEndsTheHistoryRatherThanBeingSkipped() {
+        func move(_ name: String, keeping bytes: Int) -> WorkspaceFileOperation {
+            let text = String(repeating: "x", count: bytes / 2)
+            let revision = WorkspaceTextRevision(text: text, signature: WorkspaceFileSignature(modificationDate: nil, fileSize: nil))
+            let url = URL(fileURLWithPath: "/w/\(name)")
+            return WorkspaceFileOperation(
+                verb: .move,
+                steps: [.move(WorkspaceFileMoveStep(
+                    sourceURL: url,
+                    destinationURL: URL(fileURLWithPath: "/w/Archive/\(name)"),
+                    isDirectory: false,
+                    usedCaseOnlyRenameHop: false,
+                    rewrittenFiles: [WorkspaceFileMoveRewrite(originalURL: url, finalURL: url, originalRevision: revision, writtenRevision: revision)]
+                ))],
+                workspaceURL: URL(fileURLWithPath: "/w"),
+                serial: 0
+            )
+        }
+        let bound = WorkspaceFileOperationHistory.maximumRetainedTextBytes
+        var history = WorkspaceFileOperationHistory()
+        history.record(move("a", keeping: bound / 2))
+        history.record(move("b", keeping: bound / 2))
+        XCTAssertEqual(history.undoStack.count, 2)
+        history.record(move("c", keeping: bound / 4))
+        XCTAssertEqual(history.undoStack.map(\.actionName), ["Move “b”", "Move “c”"], "The oldest goes to stay within the bound")
+        XCTAssertLessThanOrEqual(history.undoStack.reduce(0) { $0 + $1.retainedTextByteCount }, bound)
+
+        history.record(move("huge", keeping: bound + 2))
+        XCTAssertTrue(history.undoStack.isEmpty, "Undo can't step past what it could not keep")
+    }
+
+    func testOutermostPathsLeaveOutNestedItemsInOnePass() {
+        XCTAssertEqual(
+            WorkspaceStore.outermostPaths(["/w/a", "/w/a b", "/w/a/c", "/w/a b/d", "/w/z.md", "/w/a/c/e"]),
+            ["/w/a", "/w/a b", "/w/z.md"]
+        )
+        XCTAssertEqual(
+            WorkspaceStore.outermostItems(["/w/z", "/w/a.md", "/w/z/x.md", "/w/a.md"].map { URL(fileURLWithPath: $0) }).map(\.path),
+            ["/w/z", "/w/a.md"],
+            "Items keep the order they came in: a drop moves them in that order"
+        )
+        let many = (0..<20_000).map { "/w/folder\($0 % 100)/note\($0).md" } + (0..<100).map { "/w/folder\($0)" }
+        let start = Date()
+        XCTAssertEqual(WorkspaceStore.outermostPaths(many).count, 100)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2, "Linear in the paths, not quadratic")
+    }
+
+    // MARK: - Several items, one inside another
+
+    func testAFileInsideASelectedFolderGoesWithTheFolder() async throws {
+        let root = try makeRoot()
+        try write("# e\n", "docs/e.md", in: root)
+        let store = try await openStore(root)
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+        store.selectSidebarItems(.items([url("docs", in: root).path, url("docs/e.md", in: root).path]))
+        XCTAssertEqual(store.sidebarSelectionURLs.map(\.path), [url("docs", in: root).path])
+
+        store.duplicateItems(at: store.sidebarSelectionURLs)
+        await idle(store)
+        XCTAssertEqual(names("", in: root), ["docs", "docs copy"])
+        XCTAssertEqual(names("docs", in: root), ["e.md"], "No separate copy of e.md")
+
+        store.putItemsOnPasteboard(at: [url("docs", in: root), url("docs/e.md", in: root)], cutting: false, pasteboard: pasteboard)
+        XCTAssertEqual(pasteboard.pasteboardItems?.count, 1)
+
+        store.deleteItems(at: [url("docs", in: root), url("docs/e.md", in: root)])
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names("", in: root), ["docs copy"])
+    }
+
     // MARK: - Edit menu routing
 
-    func testEditUndoTakesFileOperationsOnlyFromTheSidebarOrAnUnfocusedWindow() {
+    func testEditUndoTakesFileOperationsFromAnyFocusButTextTheTerminalOrADocument() {
         func destination(
             pdf: Bool = false,
             text: Bool = false,
@@ -456,13 +803,19 @@ final class WorkspaceFileOperationUndoTests: FileOperationsTestCase {
 
         // The sidebar, or the window with nothing focused.
         XCTAssertEqual(destination(), .fileOperation)
-        XCTAssertEqual(destination(native: true), .fileOperation, "Newer than the window's own undo")
+        XCTAssertEqual(destination(native: true), .fileOperation, "Before the window’s own undo")
         XCTAssertEqual(destination(native: true, file: false), .native)
         XCTAssertEqual(destination(pdf: true, pdfUndo: true), .fileOperation, "The sidebar has focus beside a PDF")
         // Source and Preview keep ⌘Z, even with nothing left to undo.
         XCTAssertEqual(destination(text: true, native: true), .native)
         XCTAssertEqual(destination(text: true), .unavailable)
-        XCTAssertEqual(destination(text: true, replace: true), .workspaceReplace, "Replace All's promise stands")
+        XCTAssertEqual(destination(text: true, replace: true, file: false, fileIsNewer: false), .workspaceReplace, "Replace All's promise stands")
+        // …but an older Replace never runs past a newer move, even one that cannot run just now.
+        XCTAssertEqual(destination(text: true, replace: true), .unavailable)
+        XCTAssertEqual(destination(text: true, replace: true, file: false), .unavailable)
+        XCTAssertEqual(destination(replace: true, file: false), .unavailable)
+        XCTAssertEqual(destination(pdf: true, document: true, replace: true, pdfUndo: true), .pdf, "A focused PDF keeps its undo")
+        XCTAssertEqual(destination(pdf: true, document: true, replace: true), .unavailable)
         // The terminal and a focused document keep theirs.
         XCTAssertEqual(destination(terminal: true), .unavailable)
         XCTAssertEqual(destination(pdf: true, document: true, pdfUndo: true), .pdf)

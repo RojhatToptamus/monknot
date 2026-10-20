@@ -191,6 +191,45 @@ final class SidebarMultipleSelectionTests: FileOperationsTestCase {
         XCTAssertEqual(f.rowPaths, ["Archive", "docs", "a.md", "b.md", "c.md", "d.md"], "⌘← closes every folder")
     }
 
+    func testClosingAFolderTakesItsSelectedItemsOutOfTheSelection() async throws {
+        let f = try await makeFixture()
+        try await f.click("docs")
+        XCTAssertTrue(f.rowPaths.contains("docs/e.md"))
+        try await f.click("a.md")
+        try await f.click("docs/e.md", modifiers: .command)
+        XCTAssertEqual(f.selected, ["a.md", "docs/e.md"])
+
+        await f.press(Key.left.0, keyCode: Key.left.1, modifiers: .command)
+        XCTAssertFalse(f.rowPaths.contains("docs/e.md"))
+        XCTAssertEqual(f.selected, ["a.md"], "An item the tree no longer shows leaves the selection")
+
+        // ⌘-click adds to exactly what is selected, never to a folder standing in for a hidden item.
+        try await f.click("c.md", modifiers: .command)
+        XCTAssertEqual(f.selected, ["a.md", "c.md"])
+        await f.press(Key.delete.0, keyCode: Key.delete.1, modifiers: .command)
+        await idle(f.store)
+        XCTAssertEqual(names("docs", in: f.root), ["deep", "e.md", "f.md"], "⌘⌫ never reaches into the closed folder")
+        XCTAssertFalse(names("", in: f.root).contains("a.md"))
+        XCTAssertFalse(names("", in: f.root).contains("c.md"))
+    }
+
+    func testClosingTheFolderOfTheOnlySelectedItemSelectsTheFolder() async throws {
+        let f = try await makeFixture()
+        try await f.click("docs")
+        try await f.click("docs/e.md", modifiers: .command)
+        try await f.click("docs", modifiers: .command)
+        XCTAssertEqual(f.selected, ["docs/e.md"], "⌘-click took docs out")
+
+        await f.press(Key.home.0, keyCode: Key.home.1)
+        try await f.click("docs/e.md")
+        try await f.click("docs/f.md", modifiers: .command)
+        XCTAssertEqual(f.selected, ["docs/e.md", "docs/f.md"])
+        try await f.click("docs", modifiers: .command)
+        await f.press(Key.left.0, keyCode: Key.left.1)
+        XCTAssertFalse(f.rowPaths.contains("docs/e.md"), "← closes the lead folder")
+        XCTAssertEqual(f.selected, ["docs"], "The items it hid leave the selection")
+    }
+
     func testTypingANameSelectsTheRowItStarts() async throws {
         let f = try await makeFixture()
         try await f.click("a.md")

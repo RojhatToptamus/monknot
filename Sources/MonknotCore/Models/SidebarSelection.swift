@@ -64,14 +64,18 @@ public struct SidebarSelection: Equatable, Sendable {
 
     /// ↑ and ↓ (`offset` −1 and 1), Home and End (an offset past either end): the row that far
     /// from the lead, alone, or with ⇧ (`extending`) the rows from the anchor to it. From a lead
-    /// the tree does not show, or from nothing, ↓ goes to the first row and ↑ to the last. Nil
-    /// when the tree shows no rows.
+    /// the tree does not show, or from nothing, ↓ goes to the first row and ↑ to the last, and Home
+    /// and End to the first and last. Nil when the tree shows no rows.
     public func moving(by offset: Int, rows: [String], extending: Bool) -> SidebarSelection? {
         guard !rows.isEmpty else { return nil }
         let targetIndex: Int
         if let leadID, let leadIndex = rows.firstIndex(of: leadID) {
             let step = min(max(offset, -rows.count), rows.count)
             targetIndex = min(max(leadIndex + step, 0), rows.count - 1)
+        } else if offset <= -rows.count {
+            targetIndex = 0
+        } else if offset >= rows.count {
+            targetIndex = rows.count - 1
         } else {
             targetIndex = offset < 0 ? rows.count - 1 : 0
         }

@@ -81,7 +81,8 @@ struct MonknotCommandActions {
     /// none to undo now.
     let fileOperationUndoActionName: String?
     let fileOperationRedoActionName: String?
-    /// Whether that move or copy is newer than the workspace Replace that can be undone.
+    /// Whether a move or copy waiting to be undone is newer than the workspace Replace that can be
+    /// undone, even while it cannot run (another operation is under way).
     let fileOperationUndoPrecedesWorkspaceReplace: Bool
 }
 
@@ -112,7 +113,7 @@ struct MonknotCommandMenu: Commands {
             canPerformNative: MonknotNativeUndoCommand.canUndo,
             canPerformWorkspaceReplace: actions?.canUndoWorkspaceReplace == true,
             canPerformFileOperation: actions?.fileOperationUndoActionName != nil,
-            fileOperationIsNewer: actions?.fileOperationUndoPrecedesWorkspaceReplace != false,
+            fileOperationIsNewer: actions?.fileOperationUndoPrecedesWorkspaceReplace == true,
             canPerformPDF: actions?.canUndoPDFAnnotation == true
         )
     }
@@ -577,9 +578,12 @@ func monknotUndoCommandDestination(
     canPerformNative: Bool,
     canPerformWorkspaceReplace: Bool = false,
     canPerformFileOperation: Bool = false,
-    fileOperationIsNewer: Bool = true,
+    fileOperationIsNewer: Bool = false,
     canPerformPDF: Bool
 ) -> MonknotUndoCommandDestination {
+    // A workspace Replace is undone only while no move or copy made after it waits to be undone:
+    // its undo writes notes back by path, and the newer operation may have moved them.
+    let replaceIsNext = canPerformWorkspaceReplace && !fileOperationIsNewer
     // The terminal keeps ⌘Z and ⇧⌘Z for its shell. The window's undo manager it would otherwise
     // reach holds the editor's edits.
     if terminalHasFocus {
@@ -591,14 +595,14 @@ func monknotUndoCommandDestination(
         }
         // Nothing to undo in the focused text: the workspace Replace All is next, as its
         // confirmation promises that ⌘Z undoes it. A file move never is: the text keeps ⌘Z.
-        return canPerformWorkspaceReplace ? .workspaceReplace : .unavailable
+        return replaceIsNext ? .workspaceReplace : .unavailable
     }
-    // Moves and copies are undone where they are made: from the sidebar, or with nothing focused;
-    // a focused document keeps its own undo. Of a move and a Replace, the newer goes first.
+    // Moves and copies are undone with focus anywhere but text, the terminal or a document view,
+    // which keep their own undo. Of a move and a Replace, the newer goes first.
     if canPerformFileOperation, !documentViewHasFocus, fileOperationIsNewer || !canPerformWorkspaceReplace {
         return .fileOperation
     }
-    if canPerformWorkspaceReplace {
+    if replaceIsNext {
         return .workspaceReplace
     }
     if isPDFDocumentActive {

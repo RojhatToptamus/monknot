@@ -15,9 +15,13 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var rootNode: SidebarNode? {
         didSet {
             rootNodeRevision &+= 1
+            sidebarNodeKinds = Self.nodeKinds(in: rootNode)
             reconcileSelectedFolder()
         }
     }
+    /// Every item of the tree, the root left out, by its path: what selection checks look up, once
+    /// per scan rather than walking the tree per item.
+    private var sidebarNodeKinds: [String: SidebarNode.Kind] = [:]
     /// Changes with every new tree, so views can follow the tree without comparing it.
     @Published private(set) var rootNodeRevision = 0
     @Published private(set) var documents: [WorkspaceDocument] = []
@@ -149,7 +153,7 @@ final class WorkspaceStore: ObservableObject {
     var selectedFolderID: String? {
         guard sidebarItemSelection.count == 1,
               let itemID = sidebarItemSelection.itemIDs.first,
-              rootNode?.node(withID: itemID)?.kind == .folder
+              sidebarNodeKinds[itemID] == .folder
         else { return nil }
         return itemID
     }
@@ -176,11 +180,7 @@ final class WorkspaceStore: ObservableObject {
     /// Every item the sidebar selects, in path order, leaving out any inside another selected
     /// folder, which goes with that folder.
     var sidebarSelectionURLs: [URL] {
-        let ids = sidebarSelectionIDs
-        return ids
-            .filter { id in !ids.contains { $0 != id && WorkspaceDocumentSupport.isPath(id, containedIn: $0) } }
-            .sorted()
-            .map(sidebarItemURL(_:))
+        Self.outermostPaths(sidebarSelectionIDs).map(sidebarItemURL(_:))
     }
 
     /// Where New and Paste put items when no row names a folder: the lead item when it is a folder,
@@ -192,16 +192,13 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func sidebarItemURL(_ itemID: String) -> URL {
-        let isFolder = documentsByID[itemID] == nil && rootNode?.node(withID: itemID)?.kind == .folder
+        let isFolder = documentsByID[itemID] == nil && sidebarNodeKinds[itemID] == .folder
         return URL(fileURLWithPath: itemID, isDirectory: isFolder)
     }
 
     /// Selects a folder of the workspace tree in the sidebar; the workspace root is never selected.
     func selectFolder(id: String) {
-        guard let rootNode,
-              id != rootNode.id,
-              rootNode.node(withID: id)?.kind == .folder
-        else { return }
+        guard sidebarNodeKinds[id] == .folder else { return }
         sidebarItemSelection = SidebarSelection(single: id)
     }
 
@@ -209,8 +206,8 @@ final class WorkspaceStore: ObservableObject {
     /// ⇧ and ⌘ pick. Items the tree does not hold, and the workspace root, are left out; with none
     /// left, nothing is selected, not even the open document, until the user picks something.
     func selectSidebarItems(_ selection: SidebarSelection) {
-        guard let rootNode else { return }
-        let next = selection.filtered { $0 != rootNode.id && rootNode.node(withID: $0) != nil }
+        guard rootNode != nil else { return }
+        let next = selection.filtered { sidebarNodeKinds[$0] != nil }
         guard !next.isEmpty else {
             clearSidebarSelection()
             return
@@ -230,7 +227,7 @@ final class WorkspaceStore: ObservableObject {
             sidebarItemSelection = SidebarSelection()
             return
         }
-        let remaining = sidebarItemSelection.filtered { rootNode.node(withID: $0) != nil }
+        let remaining = sidebarItemSelection.filtered { sidebarNodeKinds[$0] != nil }
         guard remaining.isEmpty, sidebarItemSelection.count == 1, var itemID = sidebarItemSelection.itemIDs.first else {
             if remaining != sidebarItemSelection {
                 sidebarItemSelection = remaining
@@ -239,7 +236,7 @@ final class WorkspaceStore: ObservableObject {
         }
         while itemID != rootNode.id, WorkspaceDocumentSupport.isPath(itemID, containedIn: rootNode.id) {
             itemID = (itemID as NSString).deletingLastPathComponent
-            if itemID != rootNode.id, rootNode.node(withID: itemID)?.kind == .folder {
+            if sidebarNodeKinds[itemID] == .folder {
                 sidebarItemSelection = SidebarSelection(single: itemID)
                 return
             }
@@ -1017,13 +1014,49 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    /// `urls` without any inside another of them, which goes with that folder, in path order.
+    /// `urls` without any inside another of them, which goes with that folder, or given twice, in the
+    /// order given: a drop moves its items in the order they came.
     nonisolated static func outermostItems(_ urls: [URL]) -> [URL] {
-        let paths = Set(urls.map(\.standardizedFileURL.path))
-        return paths
-            .filter { path in !paths.contains { $0 != path && WorkspaceDocumentSupport.isPath(path, containedIn: $0) } }
-            .sorted()
-            .compactMap { path in urls.first { $0.standardizedFileURL.path == path }?.standardizedFileURL }
+        let standardized = urls.map(\.standardizedFileURL)
+        let paths = Set(standardized.map(\.path))
+        var seen = Set<String>()
+        return standardized.filter { url in
+            seen.insert(url.path).inserted && !hasAncestor(url.path, in: paths)
+        }
+    }
+
+    /// `paths` without any inside another of them, in path order: one look-up per folder above
+    /// each path, not a comparison per pair.
+    nonisolated static func outermostPaths(_ paths: [String]) -> [String] {
+        let pathSet = Set(paths)
+        return pathSet.filter { !hasAncestor($0, in: pathSet) }.sorted()
+    }
+
+    /// Whether a folder above `path` is in `paths`.
+    nonisolated static func hasAncestor(_ path: String, in paths: Set<String>) -> Bool {
+        var folder = path
+        while true {
+            let parent = (folder as NSString).deletingLastPathComponent
+            guard parent != folder, !parent.isEmpty else { return false }
+            if paths.contains(parent) {
+                return true
+            }
+            folder = parent
+        }
+    }
+
+    private nonisolated static func nodeKinds(in root: SidebarNode?) -> [String: SidebarNode.Kind] {
+        var kinds: [String: SidebarNode.Kind] = [:]
+        func walk(_ nodes: [SidebarNode]) {
+            for node in nodes {
+                kinds[node.id] = node.kind
+                if let children = node.children {
+                    walk(children)
+                }
+            }
+        }
+        walk(root?.children ?? [])
+        return kinds
     }
 
     /// Whether the standardized `url` is a document of the workspace or a folder inside it.
@@ -1249,9 +1282,9 @@ final class WorkspaceStore: ObservableObject {
         let generation = beginDocumentFileOperation()
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
+            var undoSteps: [WorkspaceFileOperationStep] = []
+            var landedItems: [WorkspaceLandedItem] = []
             do {
-                var undoSteps: [WorkspaceFileOperationStep] = []
-                var landedItems: [WorkspaceLandedItem] = []
                 for source in sources {
                     let sourceURL = source.url
                     let destinationURL = Self.uniqueDocumentURL(for: sourceURL, in: source.targetDirectory).standardizedFileURL
@@ -1275,7 +1308,8 @@ final class WorkspaceStore: ObservableObject {
                             sourceURL: sourceURL,
                             contentsURL: source.contentsURL,
                             copyURL: destinationURL,
-                            isDirectory: isFolder
+                            isDirectory: isFolder,
+                            fingerprint: WorkspaceItemFingerprint.read(destinationURL)
                         )))
                     }
                     landedItems.append(WorkspaceLandedItem(url: destinationURL, isFolder: isFolder))
@@ -1296,6 +1330,12 @@ final class WorkspaceStore: ObservableObject {
                 )
             } catch {
                 let result = try? await Self.scanWorkspace(workspaceURL, scanner: scanner)
+                await self?.finishPartialTransfer(
+                    undoSteps: undoSteps,
+                    undoVerb: undoVerb,
+                    completedTransfer: completedTransfer,
+                    generation: generation
+                )
                 await self?.finishCopyFailure(
                     error,
                     result: result,
@@ -1305,6 +1345,21 @@ final class WorkspaceStore: ObservableObject {
                     generation: generation
                 )
             }
+        }
+    }
+
+    /// What a copy or transfer made before it failed stays on disk, and can be undone; a Cut whose
+    /// items moved in part ends, so the next Paste does not try the moved ones again.
+    private func finishPartialTransfer(
+        undoSteps: [WorkspaceFileOperationStep],
+        undoVerb: WorkspaceFileOperationVerb,
+        completedTransfer: WorkspaceDocumentTransfer?,
+        generation: Int
+    ) {
+        guard generation == workspaceGeneration, !undoSteps.isEmpty else { return }
+        recordFileOperation(undoVerb, steps: undoSteps)
+        if let completedTransfer {
+            completeTransfer(completedTransfer)
         }
     }
 
@@ -1435,9 +1490,7 @@ final class WorkspaceStore: ObservableObject {
         let workspaceItems = copying ? [] : fileURLs.filter(isInsideWorkspace)
         let importedItems = copying ? fileURLs : fileURLs.filter { !isInsideWorkspace($0) }
         // An item inside another dropped folder moves with that folder.
-        let movedItems = workspaceItems.filter { url in
-            !workspaceItems.contains { $0 != url && WorkspaceDocumentSupport.isURL(url, containedIn: $0) }
-        }
+        let movedItems = Self.outermostItems(workspaceItems)
 
         // The drop replaces a move waiting for its link review, as any other operation does.
         pendingMarkdownLinkMoveReview = nil
@@ -1710,9 +1763,7 @@ final class WorkspaceStore: ObservableObject {
         let paths = urls.map(\.standardizedFileURL.path).filter {
             $0 != rootPath && WorkspaceDocumentSupport.isPath($0, containedIn: rootPath)
         }
-        let topPaths = Set(paths.filter { path in
-            !paths.contains { $0 != path && WorkspaceDocumentSupport.isPath(path, containedIn: $0) }
-        }).sorted()
+        let topPaths = Self.outermostPaths(paths)
         guard !topPaths.isEmpty else { return }
         if topPaths.count == 1 {
             if let document = documentsByID[topPaths[0]] {
@@ -1724,8 +1775,9 @@ final class WorkspaceStore: ObservableObject {
         }
         guard ensureNotBusy(), ensureWritingToolsInactive(for: "moving items to the Trash") else { return }
 
+        let topPathSet = Set(topPaths)
         let contained = documents.filter { document in
-            topPaths.contains { WorkspaceDocumentSupport.isPath(document.id, containedIn: $0) }
+            topPathSet.contains(document.id) || Self.hasAncestor(document.id, in: topPathSet)
         }
         if let unsaved = contained.first(where: { openDocumentIDs.contains($0.id) && !saveState(for: $0.id).isClean }) {
             errorMessage = "Save or close \(unsaved.displayName) before moving it to the Trash."
@@ -1752,6 +1804,7 @@ final class WorkspaceStore: ObservableObject {
             : .unchanged
         noteInternalFileMutation()
         invalidateWorkspaceSearchCaches(paths: documentIDs)
+        endReplaceUndo(ifTouching: paths)
         let generation = beginDocumentFileOperation()
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner, moveItemToTrash] in
@@ -2073,6 +2126,7 @@ final class WorkspaceStore: ObservableObject {
         let rewrittenPaths = plan.rewriteFiles.flatMap {
             [$0.originalURL.standardizedFileURL.path, $0.finalURL.standardizedFileURL.path]
         }
+        endReplaceUndo(ifTouching: [sourcePath] + rewrittenPaths)
         invalidateWorkspaceSearchCaches(
             paths: request.mappings.flatMap { [$0.sourceID, $0.destinationID] } + rewrittenPaths
         )
@@ -2177,7 +2231,7 @@ final class WorkspaceStore: ObservableObject {
         let state = WorkspaceFileOperationUndoState(
             undoActionName: nextUndo?.actionName,
             redoActionName: fileOperationHistory.nextRedo?.actionName,
-            undoPrecedesWorkspaceReplace: replaceUndoSnapshot == nil || (nextUndo?.serial ?? 0) > replaceUndoSerial
+            undoPrecedesWorkspaceReplace: nextUndo.map { replaceUndoSnapshot == nil || $0.serial > replaceUndoSerial } ?? false
         )
         if fileOperationUndo != state {
             fileOperationUndo = state
@@ -2216,35 +2270,39 @@ final class WorkspaceStore: ObservableObject {
         let disk = WorkspaceFileOperationDisk(
             workspaceURL: workspaceURL,
             moveItemToTrash: moveItemToTrash,
-            unsavedCopyTexts: unsavedCopyTexts
+            unsavedCopyTexts: unsavedCopyTexts,
+            unsavedMarkdown: dirtyDocumentTexts.compactMap { documentID, text in
+                documentsByID[documentID].flatMap { $0.kind == .markdown ? WorkspaceUnsavedMarkdown(document: $0, text: text) : nil }
+            },
+            documents: documents
         )
         noteInternalFileMutation()
         let generation = beginDocumentFileOperation()
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
-            var madeChanges = false
+            var made: WorkspaceFileOperation?
             do {
-                try disk.apply(operation, direction)
-                madeChanges = true
+                let applied = try disk.apply(operation, direction)
+                made = applied
                 try Task.checkCancellation()
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 try Task.checkCancellation()
-                let applied = await self?.finishFileOperationHistory(
+                let taken = await self?.finishFileOperationHistory(
                     result: result,
-                    operation: operation,
+                    operation: applied,
                     direction: direction,
                     effect: effect,
                     generation: generation
                 ) ?? false
-                if !applied {
-                    madeChanges = false
-                    try disk.rollBack(operation, after: direction)
+                if !taken {
+                    made = nil
+                    try disk.rollBack(applied, after: direction)
                 }
             } catch {
                 var finalError = error
-                if madeChanges {
+                if let made {
                     do {
-                        try disk.rollBack(operation, after: direction, failure: error)
+                        try disk.rollBack(made, after: direction, failure: error)
                     } catch let rollbackError {
                         finalError = rollbackError
                     }
@@ -2339,7 +2397,7 @@ final class WorkspaceStore: ObservableObject {
                 if direction == .undo {
                     effect.removedPaths.append(copy.copyURL.standardizedFileURL.path)
                 } else {
-                    effect.createdCopy = copy
+                    effect.createdCopies.append(copy)
                     effect.landingItemID = copy.copyURL.standardizedFileURL.path
                 }
             }
@@ -2366,7 +2424,9 @@ final class WorkspaceStore: ObservableObject {
             effect.removedPaths.contains { WorkspaceDocumentSupport.isPath(path, containedIn: $0) }
         }
         let selectionIsRemoved = previousSelection.map(isRemoved) ?? false
-        let sidebarSelectionIsRemoved = sidebarSelectionID.map(isRemoved) ?? false
+        // Selected items that go leave the selection; nothing is selected once all of them go.
+        let selectedIDs = sidebarSelectionIDs
+        let sidebarSelectionIsRemoved = !selectedIDs.isEmpty && selectedIDs.allSatisfy(isRemoved)
         let selectedDocumentWasRewritten = previousSelection.map(effect.rewrittenDocumentIDs.contains) ?? false
         let movedSelection = previousSelection.map { selection in
             effect.itemMoves.reduce(selection) {
@@ -2387,19 +2447,24 @@ final class WorkspaceStore: ObservableObject {
             publishItemMoves(effect.itemMoves)
         }
         invalidateWorkspaceSearchCaches(paths: effect.changedPaths)
+        endReplaceUndo(ifTouching: effect.itemMoves.map(\.sourcePath) + effect.removedPaths + effect.rewrittenDocumentIDs)
 
         switch direction {
         case .undo:
             fileOperationHistory.didUndo()
         case .redo:
             workspaceUndoSerial &+= 1
-            fileOperationHistory.didRedo(serial: workspaceUndoSerial)
+            fileOperationHistory.didRedo(serial: workspaceUndoSerial, redone: operation)
         }
         publishFileOperationUndoState()
 
         var selectedURL = movedSelection.flatMap { $0 != previousSelection ? URL(fileURLWithPath: $0) : nil }
         var sidebarSelection: SidebarSelectionAfterLoad = sidebarSelectionIsRemoved ? .cleared : .unchanged
-        if let copy = effect.createdCopy {
+        // Copies made again are selected as the copy first selected them: one file opens and one
+        // folder is selected; several are selected in the sidebar, none opened.
+        if effect.createdCopies.count > 1 {
+            sidebarSelection = .items(effect.createdCopies.map(\.copyURL.standardizedFileURL.path))
+        } else if let copy = effect.createdCopies.first {
             if copy.isDirectory {
                 sidebarSelection = .folder(copy.copyURL)
             } else {
@@ -2435,7 +2500,8 @@ final class WorkspaceStore: ObservableObject {
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
-        if !(error is CancellationError) {
+        let keepsOperation = error is CancellationError || (error as? WorkspaceFileOperationError)?.keepsOperation == true
+        if !keepsOperation {
             fileOperationHistory.discardNext(direction)
             publishFileOperationUndoState()
         }
@@ -3646,6 +3712,18 @@ final class WorkspaceStore: ObservableObject {
         replaceUndoSnapshot = nil
         canUndoWorkspaceReplace = false
         publishFileOperationUndoState()
+    }
+
+    /// A workspace Replace's undo writes its notes back by path, so it ends once Monknot moves,
+    /// renames or trashes one of them, or rewrites the links in one: the text it would write back
+    /// belongs to what was there.
+    private func endReplaceUndo(ifTouching paths: some Sequence<String>) {
+        guard let snapshot = replaceUndoSnapshot else { return }
+        let touched = Set(paths)
+        guard !touched.isEmpty else { return }
+        if snapshot.previousTextsByDocumentID.keys.contains(where: { touched.contains($0) || Self.hasAncestor($0, in: touched) }) {
+            clearReplaceUndoSnapshot()
+        }
     }
 
     private func finishWorkspaceReplace(
@@ -5683,8 +5761,8 @@ private struct WorkspaceFileOperationEffect {
     var removedPaths: [String] = []
     /// The notes whose links it rewrites, by their paths before it.
     var rewrittenDocumentIDs: Set<String> = []
-    /// The last copy a redo makes again, which is selected as Duplicate selects its copy.
-    var createdCopy: WorkspaceFileCopyStep?
+    /// The copies a redo makes again, which are selected as the copy selected them.
+    var createdCopies: [WorkspaceFileCopyStep] = []
     var landingItemID: String?
     var changedPaths: [String] = []
 }
@@ -5712,7 +5790,7 @@ private enum DroppedTarget: Sendable {
 
 /// A workspace file or folder waiting for Paste, with the pasteboard item its Copy or Cut wrote.
 private struct WorkspaceDocumentTransfer: Equatable, Sendable {
-    /// The items, none inside another, in path order.
+    /// The items, none inside another, in the order they were copied or cut.
     let urls: [URL]
     let operation: WorkspaceDocumentTransferOperation
     let pasteboardStamp: WorkspacePasteboardTransferStamp?

@@ -40,6 +40,9 @@ struct SidebarView: View {
     @State private var sidebarNodeFrames: [String: CGRect] = [:]
     /// The row being dragged; it stays dimmed until its copy has glided back after a cancel.
     @State private var draggedSidebarNodeID: String?
+    /// Every item the drag moves, when the dragged row is one of several selected: their rows dim
+    /// with it.
+    @State private var draggedItemPaths: Set<String> = []
     /// Where a drag over the tree would land, the tree's own or a file drag from elsewhere.
     @State private var moveTarget: SidebarMoveDropTarget?
     @State private var externalDropRowID: String?
@@ -323,7 +326,8 @@ struct SidebarView: View {
                                     isExpanded: visibleNode.isExpanded(in: expandedFolderIDs),
                                     tracksMoveFrame: tracksSidebarMoveFrames,
                                     isBusy: store.isBusy,
-                                    isMoveSource: draggedSidebarNodeID == visibleNode.id && !dragCopies,
+                                    isMoveSource: !dragCopies
+                                        && (draggedSidebarNodeID == visibleNode.id || draggedItemPaths.contains(visibleNode.dropTargetNode.id)),
                                     theme: theme,
                                     zoomScale: zoomScale,
                                     actions: rowActions
@@ -654,13 +658,45 @@ struct SidebarView: View {
         }
         let nodes = displayedVisibleNodes
         let itemID = row.dropTargetNode.id
-        let selection = rowSelection(nodes)
-        store.selectSidebarItems(
-            modifiers.contains(.shift)
-                ? selection.extending(to: itemID, rows: nodes.map(\.dropTargetNode.id))
-                : selection.toggling(itemID)
-        )
+        if modifiers.contains(.shift) {
+            // The rows from the anchor's row: every one of them is shown.
+            store.selectSidebarItems(rowSelection(nodes).extending(to: itemID, rows: nodes.map(\.dropTargetNode.id)))
+            return true
+        }
+        // ⌘ adds or takes out the item itself; the items already picked stay exactly as they are.
+        let current = store.sidebarItemSelection.isEmpty ? shownOpenDocumentSelection(nodes) : store.sidebarItemSelection
+        let shownByRow = current.itemIDs.filter { row.shows($0) }
+        store.selectSidebarItems(shownByRow.isEmpty ? current.toggling(itemID) : current.filtered { !shownByRow.contains($0) })
         return true
+    }
+
+    /// The open document as a selection while the sidebar selects it and a row shows it.
+    private func shownOpenDocumentSelection(_ nodes: [VisibleSidebarNode]) -> SidebarSelection {
+        guard let documentID = store.sidebarSelectionID,
+              nodes.contains(where: { $0.node.kind == .file && $0.node.id == documentID })
+        else { return SidebarSelection() }
+        return SidebarSelection(single: documentID)
+    }
+
+    /// Selected items a collapse hid leave the selection, so nothing acts on an item the tree no
+    /// longer shows. When none stays shown, the row that now holds the lead is selected instead.
+    private func dropHiddenSelectedItems() {
+        let selection = store.sidebarItemSelection
+        guard !selection.isEmpty else { return }
+        let nodes = displayedVisibleNodes
+        var shownIDs = Set<String>()
+        for node in nodes {
+            shownIDs.insert(node.node.id)
+            shownIDs.formUnion(node.folderNodeIDs)
+        }
+        let shown = selection.filtered { shownIDs.contains($0) }
+        guard shown != selection else { return }
+        if shown.isEmpty, let leadID = selection.leadID,
+           let row = nodes.first(where: { WorkspaceDocumentSupport.isPath(leadID, containedIn: $0.node.id) }) {
+            store.selectSidebarItems(SidebarSelection(single: row.dropTargetNode.id))
+        } else {
+            store.selectSidebarItems(shown)
+        }
     }
 
     /// The keys held for the click being handled: those of the tree's latest mouse event, never a
@@ -759,6 +795,7 @@ struct SidebarView: View {
                 : Set(row.folderNodeIDs)
             expandedFolderIDs.subtract(closing)
             refreshVisibleNodes()
+            dropHiddenSelectedItems()
             return
         }
         selectParentRow()
@@ -796,18 +833,13 @@ struct SidebarView: View {
         return found
     }
 
-    /// Closes every folder. A lead item that disappears into one gives way to its top-level row, so
-    /// the keyboard goes on from there.
+    /// Closes every folder. Selected items inside leave the selection; when none is left shown, the
+    /// top-level row holding the lead is selected, so the keyboard goes on from there.
     private func collapseAllFolders() {
-        let leadID = rowSelection(displayedVisibleNodes).leadID
         guard !expandedFolderIDs.isEmpty else { return }
         expandedFolderIDs = []
         refreshVisibleNodes()
-        let nodes = displayedVisibleNodes
-        if let leadID, !nodes.contains(where: { $0.dropTargetNode.id == leadID }),
-           let row = nodes.first(where: { WorkspaceDocumentSupport.isPath(leadID, containedIn: $0.node.id) }) {
-            store.selectSidebarItems(SidebarSelection(single: row.dropTargetNode.id))
-        }
+        dropHiddenSelectedItems()
     }
 
     /// ⌘↓: opens the selected files, the lead last so its tab shows, and opens the selected
@@ -1029,6 +1061,7 @@ struct SidebarView: View {
         dragSession.treeView = treeMouse.treeView
         treeMouse.dragSession = dragSession
         draggedSidebarNodeID = row.id
+        draggedItemPaths = urls.count > 1 ? Set(urls.map(\.standardizedFileURL.path)) : []
         dragCopies = copies
         dragSession.begin(
             item: SidebarDragSession.Item(
@@ -1149,6 +1182,7 @@ struct SidebarView: View {
 
     private func endDrag() {
         draggedSidebarNodeID = nil
+        draggedItemPaths = []
         dragCopies = false
         setMoveTarget(nil)
         dragSession.clearSpringOpenedFolders()
@@ -1164,6 +1198,7 @@ struct SidebarView: View {
         guard !closing.isEmpty else { return }
         expandedFolderIDs.subtract(closing)
         refreshVisibleNodes()
+        dropHiddenSelectedItems()
     }
 
     /// Once a moved or copied item shows in the tree: its folders open, it scrolls into view and its

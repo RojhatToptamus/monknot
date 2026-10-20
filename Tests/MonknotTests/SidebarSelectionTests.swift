@@ -68,6 +68,10 @@ final class SidebarSelectionTests: XCTestCase {
         XCTAssertEqual(SidebarSelection(single: "c").moving(by: Int.max, rows: rows, extending: true)?.itemIDs, ["c", "d", "e"])
         XCTAssertEqual(SidebarSelection().moving(by: 1, rows: rows, extending: false)?.itemIDs, ["a"])
         XCTAssertEqual(SidebarSelection().moving(by: -1, rows: rows, extending: false)?.itemIDs, ["e"])
+        // Home and End from nothing go to the first and last rows, not the other way round.
+        XCTAssertEqual(SidebarSelection().moving(by: Int.min, rows: rows, extending: false)?.itemIDs, ["a"])
+        XCTAssertEqual(SidebarSelection().moving(by: Int.max, rows: rows, extending: false)?.itemIDs, ["e"])
+        XCTAssertEqual(SidebarSelection(single: "gone").moving(by: Int.min, rows: rows, extending: true)?.itemIDs, ["a"])
         XCTAssertEqual(SidebarSelection(single: "gone").moving(by: 1, rows: rows, extending: false)?.itemIDs, ["a"])
         XCTAssertNil(SidebarSelection(single: "a").moving(by: 1, rows: [], extending: false))
     }

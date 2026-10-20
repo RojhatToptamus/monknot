@@ -985,7 +985,9 @@ on the selection acts on every selected item, one inside another selected folder
 ⌘C, ⌘X and ⌘V, ⌘D, ⌘⌫ (refused, moving nothing, while any of them has unsaved changes), a drag, and
 a row's menu when that row is one of them — a row outside the selection acts on itself alone, as
 its held open state shows. Several items moved, copied or duplicated at once are one step of
-Edit › Undo (Undo Move 3 Items), and the copies come out selected.
+Edit › Undo (Undo Move 3 Items), and the copies come out selected. Closing a folder (←, ⌘←, Collapse
+All Folders) takes the selected items inside it out of the selection, so nothing ever acts on an item
+the tree does not show; when none is left, the row that holds the last one picked is selected.
 
 **Keys.** While the tree has focus (`SidebarView.handleTreeKeyDown`, `SidebarSelection`):
 
@@ -1014,7 +1016,8 @@ several selected; the whole drag is designed, frame by frame (`SidebarDragSessio
 - **The row and its copy.** The row stays where it is at 35 % (a 120 ms fade); a copy of it — its glyph
   (`folder` for a folder) and name on `surf2`, radius 8, `e2`, 28 tall, at most 240 wide — lifts off in
   place and rides under the pointer, the name kept under it. For several items the copy reads "3 Items"
-  beside `doc.on.doc`, and they move one after another, as a drop of them from Finder does.
+  beside `doc.on.doc`, every row they come from dims, and they move one after another, a move that
+  would rewrite links asking first.
 - **The target** is a folder: a folder row, or any row inside an open folder, means that folder; a file
   at the top level or the empty space below the rows means the workspace root. The folder's row and its
   open rows tint `accsoft` as one region, on the row radius inside the list inset (the whole tree for
@@ -1047,15 +1050,22 @@ several selected; the whole drag is designed, frame by frame (`SidebarDragSessio
   named for it: Undo Move “a.md”, Undo Duplicate “a.md”, Undo Move 3 Items. Redo makes it again, and a
   new move or copy ends what Redo held. Undoing a move puts the item back and the links the move
   rewrote back as they were, without asking again; undoing a copy moves the copy to the Trash. ⌘Z and
-  ⇧⌘Z reach it while the tree has focus or nothing does; Source, Preview, the terminal and a focused
-  PDF or image keep their own, so typing's undo never moves a file. Of a move and a workspace Replace
-  All, the newer is undone first. Before it acts, the step checks that the disk still matches what the
-  operation left — the item is where it put it, nothing has taken the name it goes back to, every
-  rewritten note holds the text the move wrote — and otherwise changes nothing and says why; it never
-  overwrites. Such a step leaves the history, since the disk no longer matches it; one that would
-  rewrite or trash unsaved text waits until that text is saved. What goes back lands as a drop does:
-  its folders open, it scrolls into view and its row holds the tint. Files copied in from outside the
-  workspace stay; the history is the window's and ends when its workspace changes
+  ⇧⌘Z reach it with keyboard focus anywhere but text (Source, Preview, a field), the terminal and a
+  document view (a PDF, an image, the player), which keep their own undo, so typing's undo never moves
+  a file (`monknotUndoCommandDestination`). Of a move and a workspace Replace All, the newer is undone
+  first, and an older Replace is never undone — not from text either — while a newer move or copy
+  waits to be undone: Replace's undo writes its notes back by path. Moving, renaming or trashing one of
+  those notes, or rewriting its links, ends the Replace's undo. Before it acts, the step checks that
+  the disk still matches what the operation left — the item is where it put it, nothing has taken the
+  name it goes back to, every rewritten note holds the text the move wrote, a copy is as it was made —
+  and otherwise changes nothing and says why; it never overwrites. Such a step leaves the history,
+  since the disk no longer matches it. One that would rewrite or trash unsaved text, or leave a link in
+  unsaved text pointing where the item no longer is, waits until that text is saved. A copy or
+  transfer of several items that fails part way can still undo what it made. What goes back lands as a
+  drop does: its folders open, it scrolls into view and its row holds the tint. Files copied in from
+  outside the workspace and items moved to the Trash stay. The history is the window's, ends when its
+  workspace changes, and keeps at most 50 operations and 16 MB of rewritten notes; a move that rewrote
+  more than that cannot be undone, so the history ends there rather than skip past it
   (`WorkspaceFileOperationHistory`, `WorkspaceStore.undoFileOperation`).
 
 **Recents** is a collapsible group between the tree and the footer: the chevron in the glyph column, a
