@@ -1026,7 +1026,7 @@ several selected; the whole drag is designed, frame by frame (`SidebarDragSessio
 - **Not here.** The folder it is already in (every dragged item, for several), a dragged item itself,
   or a folder inside one tint nothing, and a drop there changes nothing. Over the sidebar's header the list scrolls rather than targeting.
 - **Option** copies: the cursor takes the system's copy badge and the row returns to full strength,
-  because it stays; the folder it is in becomes a target, where the copy is a duplicate, as in Finder.
+  because it stays; the folder it is in becomes a target, where the copy is a duplicate beside it.
   Letting go of Option makes it a move again.
 - **Spring-loading.** Resting on a closed folder for the system's spring-loading delay (0.5 s unless
   changed in Accessibility; none when it is off) opens it, the chevron turning as a click turns it.
