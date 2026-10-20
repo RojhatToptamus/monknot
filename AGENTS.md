@@ -453,8 +453,12 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
   `MonknotContextMenuController` (`Support/Design/MonknotContextMenu.swift`, installed at launch)
   takes the right-click, asks the hit SwiftUI host for that menu as AppKit would, and draws its rows
   on a non-key floating panel. Each window reports its theme and zoom with
-  `MonknotContextMenuAppearance`. Text views, web views, PDFs, the player and value pop-ups keep the
-  system's menu. The PDF bar's More (`MonknotMenuButton`) presents through the same controller.
+  `MonknotContextMenuAppearance`. Text views, web views, PDFs and the player keep the system's menu.
+  A control's menu is the same menu, opened below it by `MonknotMenuPresenter` through
+  `MonknotContextMenuController.presentMenu`: the PDF bar's More (`MonknotMenuButton`) and every
+  `MonknotPopUpButton`'s values (the current one checked with `MonknotMenuRowCheck`, a colour's
+  `MonknotColorSwatch` or a tool's glyph in the glyph column, past 380 tall scrolling under the
+  chrome thumb). Never show a system `NSMenu` from a chrome control.
 - Glyph sizes come from `MonknotSymbolOptics` (`Support/Design/MonknotMetrics.swift`): pictures are
   sized by their measured ink (`SymbolInkMetrics`) to one optical size, marks (open strokes,
   lettering) keep their nominal; never hand-pick a point size for one glyph (design.md §8.2). Every
@@ -554,6 +558,7 @@ Current XCTest coverage focuses on `MonknotCore`:
 - `EditorFlowPipelineTests` (app target): the shared pipeline with a stand-in host: protected ranges count only for the text they were scanned from, a paused or suspended editor asks the checker nothing, a clean check clears the gate, and a check whose sentence changed ends stale for its own token.
 - `MarkdownVisualEditorTests` (app target): Preview editing in real WebKit: typing, Return and Delete, Markdown shortcuts, Edit-menu undo and redo (also across a switch to Source, after a Source edit or a change on disk, and refused without half-applying), an outside change racing a typed character, composition through `NSTextInputClient`, a click below the last block, smart dashes in code, a dropped file, formatting, tasks, links, paste and copy, composition, tables, external changes, the slash rule, toggles, callouts, the + handle, drag-and-drop, the block menu and its shortcuts, 50 KB and 1 MB keystroke timing, and theme and narrow-window snapshots of the page, menus and handles (written to `MONKNOT_EDITOR_SNAPSHOT_DIR` when set).
 - `MarkdownEditorMenuTests` (app target): the Preview editor's menus in real WebKit: one menu at a time, the table menu and bar, the code language, the link card, Turn Into's timing and every surface following a moved column.
+- `MonknotPopUpMenuTests` (app target): a real `MonknotPopUpButton` clicked open: Monknot's menu below it (above it at the screen's bottom) with the value checked and highlighted, ↓ and ↩ choosing, Esc choosing nothing, a value missing from the list, a 300-item list scrolling with Home, End and type-select keeping the row in view and the thumb fading, Settings-style previews restored on Esc, a menu button's commands, and a pop-up inside a popover leaving the popover open. With `MONKNOT_POPUP_MENU_SNAPSHOT_DIR` set, renders the zoom, colour, tool and long font menus off screen.
 - `MonknotContextMenuTests` (app target): real right-clicks over the real sidebar open Monknot's menu with the row's items, Control-click too; choosing acts on the clicked row; a quick release over a row only highlights it and a release never runs Move to Trash; the keys (↑↓, ⌃N ⌃P, Home/End, type-select, ↩, Esc); a click elsewhere only closes; a right-click elsewhere opens there; scrolling and losing key close it; text views and unreported windows keep the system's menu; layout at every zoom; placement and flipping; every command's glyph. With `MONKNOT_CONTEXT_MENU_SNAPSHOT_DIR` set, renders the surface off screen and captures it on screen.
 - `UndoKeyRoutingTests` (app target): ⌘Z through a hosted `ContentView`'s key handling with real focus in Source and in Preview with nothing to undo: an older workspace Replace waits for a newer move, the sidebar undoes the move, then the Replace undoes from the text.
 - `SidebarSelectionTests`: ranges, toggles, arrow moves, Home/End, select all, following moves, and type-to-select.

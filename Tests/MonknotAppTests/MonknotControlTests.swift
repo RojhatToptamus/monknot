@@ -117,8 +117,10 @@ final class MonknotControlTests: XCTestCase {
         }
     }
 
-    /// A pop-up's menu checks the current value, previews a highlighted one when asked, restores the
-    /// value it opened with when closed without a choice, commits a chosen one, and runs its commands.
+    /// A pop-up's menu is Monknot's menu (design.md §5.3): its values, the current one checked, then its
+    /// commands after a separator. Highlighting a value previews it when asked, closing without a
+    /// choice restores the value it opened with, a chosen value shows at once and commits as the menu
+    /// leaves, and a command runs without being taken for a value.
     func testPopUpMenuChecksPreviewsCancelsAndCommits() throws {
         final class Recorder {
             var selection = "harbor-light"
@@ -140,38 +142,64 @@ final class MonknotControlTests: XCTestCase {
             actionGroups: [[MonknotPopUpAction(title: "Stroke Width…") { recorder.strokeWidthRequests += 1 }]],
             previewsSelection: true,
             onPreviewSelection: { recorder.previews.append($0) },
-            onCancelPreview: { recorder.cancels += 1 }
+            onCancelPreview: { recorder.cancels += 1 },
+            theme: .defaultLight,
+            zoomScale: 1
         )
         let coordinator = presenter.makeCoordinator()
 
-        let menu = coordinator.makeMenu(minimumWidth: 120)
-        XCTAssertEqual(menu.items.map(\.title), ["Harbor", "Forge", "", "Stroke Width…"])
-        XCTAssertEqual(menu.items.map(\.state), [.on, .off, .off, .off])
-        XCTAssertTrue(menu.items[2].isSeparatorItem, "Commands follow the values after a separator")
-        XCTAssertEqual(menu.minimumWidth, 120, "Never narrower than its button")
+        let entries = coordinator.makeEntries()
+        XCTAssertEqual(entries.map { $0.item?.title ?? "-" }, ["Harbor", "Forge", "-", "Stroke Width…"])
+        XCTAssertEqual(entries.map { $0.item?.isChecked ?? false }, [true, false, false, false])
+        XCTAssertEqual(entries.map { $0.item?.isValue ?? false }, [true, true, false, false], "Commands follow the values after a separator")
+        XCTAssertTrue(entries.compactMap(\.item).allSatisfy { $0.systemImage == nil && $0.swatch == nil }, "Plain names have no glyph column")
 
-        coordinator.menu(menu, willHighlight: menu.items[1])
+        coordinator.highlight(1)
         XCTAssertEqual(recorder.previewed, "forge-light")
         XCTAssertEqual(recorder.previews, ["forge-light"])
-        coordinator.finishTracking()
+        coordinator.highlight(3)
+        coordinator.highlight(nil)
+        XCTAssertEqual(recorder.previews, ["forge-light"], "Only a value previews")
+        coordinator.finishTracking(chosen: nil)
         XCTAssertEqual(recorder.cancels, 1, "Closing without a choice cancels the preview")
         XCTAssertEqual(recorder.selection, "harbor-light")
         XCTAssertNil(recorder.previewed)
         XCTAssertFalse(recorder.isPresented, "The button leaves its open state")
 
         recorder.isPresented = true
-        let second = coordinator.makeMenu(minimumWidth: 120)
-        second.performActionForItem(at: 1)
-        coordinator.finishTracking()
+        let second = coordinator.makeEntries()
+        coordinator.finishTracking(chosen: 1)
+        XCTAssertEqual(recorder.previewed, "forge-light", "The chosen value shows while its choice lands")
+        second[1].item?.perform()
         XCTAssertEqual(recorder.selection, "forge-light")
+        XCTAssertNil(recorder.previewed)
         XCTAssertEqual(recorder.cancels, 1, "A chosen value is not cancelled")
 
-        let third = coordinator.makeMenu(minimumWidth: 120)
-        XCTAssertEqual(third.items.map(\.state), [.off, .on, .off, .off], "The new value is checked")
-        third.performActionForItem(at: 3)
-        coordinator.finishTracking()
+        let third = coordinator.makeEntries()
+        XCTAssertEqual(third.map { $0.item?.isChecked ?? false }, [false, true, false, false], "The new value is checked")
+        coordinator.finishTracking(chosen: 3)
+        third[3].item?.perform()
         XCTAssertEqual(recorder.strokeWidthRequests, 1)
         XCTAssertEqual(recorder.selection, "forge-light", "A command is not a value")
+        XCTAssertEqual(recorder.cancels, 2, "A command cancels a preview, as closing does")
+    }
+
+    /// A pop-up's values carry their glyph or swatch into the menu's glyph column.
+    func testPopUpMenuShowsAToolsGlyphAndAColoursSwatch() {
+        let presenter = MonknotMenuPresenter(
+            isPresented: .constant(true),
+            selection: .constant("pen"),
+            items: [
+                MonknotPopUpItem(id: "pen", title: "Draw", systemImage: "pencil.tip"),
+                MonknotPopUpItem(id: "yellow", title: "Yellow", swatch: .yellow),
+            ],
+            theme: .defaultDark,
+            zoomScale: 1
+        )
+        let entries = presenter.makeCoordinator().makeEntries()
+        XCTAssertEqual(entries.first?.item?.systemImage, "pencil.tip")
+        XCTAssertEqual(entries.last?.item?.swatch, .yellow)
+        XCTAssertTrue(MonknotContextMenuLayout(entries: entries, theme: .defaultDark, zoomScale: 1).hasGlyphColumn)
     }
 
     /// A menu button's menu ("More"): groups of commands with their glyphs, separated, each enabled or
@@ -186,15 +214,16 @@ final class MonknotControlTests: XCTestCase {
                     MonknotPopUpAction(title: "Redo", systemImage: "arrow.uturn.forward", isEnabled: false) {},
                 ],
                 [MonknotPopUpAction(title: "Highlight Selection", systemImage: "highlighter") {}],
-            ]
+            ],
+            theme: .defaultLight,
+            zoomScale: 1
         )
-        let coordinator = presenter.makeCoordinator()
-        let menu = coordinator.makeMenu(minimumWidth: 28)
-        XCTAssertEqual(menu.items.map(\.title), ["Undo", "Redo", "", "Highlight Selection"])
-        XCTAssertEqual(menu.items.filter { !$0.isSeparatorItem }.map(\.isEnabled), [true, false, true])
-        XCTAssertTrue(menu.items[2].isSeparatorItem)
-        XCTAssertTrue(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.image != nil && $0.state == .off })
-        menu.performActionForItem(at: 0)
+        let entries = presenter.makeCoordinator().makeEntries()
+        XCTAssertEqual(entries.map { $0.item?.title ?? "-" }, ["Undo", "Redo", "-", "Highlight Selection"])
+        XCTAssertEqual(entries.compactMap(\.item).map(\.isEnabled), [true, false, true])
+        XCTAssertTrue(entries.compactMap(\.item).allSatisfy { $0.systemImage != nil && !$0.isChecked && !$0.isValue })
+        XCTAssertFalse(MonknotContextMenuLayout(entries: entries, theme: .defaultLight, zoomScale: 1).reservesCheck)
+        entries[0].item?.perform()
         XCTAssertEqual(undone, 1)
     }
 

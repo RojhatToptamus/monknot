@@ -307,6 +307,29 @@ final class MonknotCommittedColorWell: NSColorWell {
     }
 }
 
+/// A colour as a value (design.md §5.3): a 14 pt circle inside a `line` hairline. The markup colour
+/// pop-up shows it, and so does each colour's row in its menu. It dims with a disabled pop-up.
+struct MonknotColorSwatch: View {
+    static let diameterBase: CGFloat = 14
+
+    let color: Color
+    var isDisabled = false
+    let theme: AppTheme
+    let zoomScale: Double
+
+    @Environment(\.monknotPopUpDisabled) private var isPopUpDisabled
+
+    var body: some View {
+        let diameter = MonknotMetrics.interfaceGlyph(Self.diameterBase, theme: theme, zoomScale: zoomScale)
+        Circle()
+            .fill(color)
+            .overlay { Circle().strokeBorder(theme.borderColor, lineWidth: 1) }
+            .frame(width: diameter, height: diameter)
+            .opacity(isDisabled || isPopUpDisabled ? 0.35 : 1)
+            .accessibilityHidden(true)
+    }
+}
+
 /// The one colour well (design.md §5.7): the system's minimal well, a swatch that opens the colour
 /// picker. Settings' theme colours and a PDF text box's colour use it.
 struct MonknotColorWell: NSViewRepresentable {

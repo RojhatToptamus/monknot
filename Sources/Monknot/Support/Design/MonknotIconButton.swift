@@ -273,7 +273,8 @@ private struct MonknotIconButtonStyle: ButtonStyle {
 
 /// An icon button that opens a menu of commands ("More"): `MonknotIconButton` itself, so it hovers,
 /// presses, takes focus and disables as every bar button does, and holds the `press` fill while its
-/// native menu is open (design.md §5.1). Each group of commands follows a separator.
+/// menu, Monknot's own (§5.8), is open below it (design.md §5.1). Each group of commands follows a
+/// separator.
 struct MonknotMenuButton: View {
     let systemImage: String
     let label: String
@@ -294,7 +295,7 @@ struct MonknotMenuButton: View {
             isMenuPresented = true
         }
         .background(
-            MonknotMenuPresenter(isPresented: $isMenuPresented, actionGroups: commands)
+            MonknotMenuPresenter(isPresented: $isMenuPresented, actionGroups: commands, theme: theme, zoomScale: zoomScale)
                 .allowsHitTesting(false)
         )
     }
