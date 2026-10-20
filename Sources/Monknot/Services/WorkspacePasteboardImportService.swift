@@ -886,24 +886,31 @@ extension WorkspaceStore {
     /// and the next Paste in Monknot copies or moves it. A file goes on it as it is now, unsaved
     /// changes included.
     func putItemOnPasteboard(at url: URL, cutting: Bool, pasteboard: NSPasteboard = .general) {
-        guard !isBusy else { return }
+        putItemsOnPasteboard(at: [url], cutting: cutting, pasteboard: pasteboard)
+    }
+
+    /// Copy and Cut for several workspace files and folders at once, as for one. An item inside
+    /// another one given goes with it.
+    func putItemsOnPasteboard(at urls: [URL], cutting: Bool, pasteboard: NSPasteboard = .general) {
+        let urls = Self.outermostItems(urls)
+        guard !isBusy, !urls.isEmpty else { return }
         let stamp: WorkspacePasteboardTransferStamp
         do {
-            stamp = try WorkspacePasteboardExportService.copyFile(
-                at: url,
-                unsavedText: dirtyTextByDocumentID[url.standardizedFileURL.path],
+            stamp = try WorkspacePasteboardExportService.copyFiles(
+                urls.map { WorkspacePasteboardCopiedItem(url: $0, unsavedText: dirtyTextByDocumentID[$0.path]) },
                 to: pasteboard
             )
         } catch {
-            // The pasteboard may no longer hold the item of an earlier Copy or Cut.
+            // The pasteboard may no longer hold the items of an earlier Copy or Cut.
             discardPendingTransfer()
-            errorMessage = "Could not copy \(url.lastPathComponent): \(error.localizedDescription)"
+            let name = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) items"
+            errorMessage = "Could not copy \(name): \(error.localizedDescription)"
             return
         }
         if cutting {
-            cutItem(at: url, pasteboardStamp: stamp)
+            cutItems(at: urls, pasteboardStamp: stamp)
         } else {
-            copyItem(at: url, pasteboardStamp: stamp)
+            copyItems(at: urls, pasteboardStamp: stamp)
         }
     }
 

@@ -20,13 +20,16 @@ struct SidebarView: View {
     let showWorkspaceSearch: () -> Void
     let dismissWorkspaceSearch: () -> Void
     let workspaceSearchFocusChanged: (Bool) -> Void
-    let copyPath: (URL) -> Void
-    let copyRelativePath: (URL) -> Void
+    /// Copies the paths of the items, one per line.
+    let copyPath: ([URL]) -> Void
+    let copyRelativePath: ([URL]) -> Void
     /// A New File or New Folder command from the menu, answered with the name prompt for the
     /// sidebar's target folder.
     @Binding var newItemRequest: SidebarNewItemRequest?
     /// Each change opens the workspace switcher.
     var workspaceSwitcherRequest = 0
+    /// Each change selects every row the tree shows: Edit › Select All while the tree has focus.
+    var selectAllRequest = 0
     /// The clipboard the sidebar's Copy, Cut and Paste use.
     var pasteboard: NSPasteboard = .general
     @State private var isDropTargeted = false
@@ -37,6 +40,9 @@ struct SidebarView: View {
     @State private var sidebarNodeFrames: [String: CGRect] = [:]
     /// The row being dragged; it stays dimmed until its copy has glided back after a cancel.
     @State private var draggedSidebarNodeID: String?
+    /// Every item the drag moves, when the dragged row is one of several selected: their rows dim
+    /// with it.
+    @State private var draggedItemPaths: Set<String> = []
     /// Where a drag over the tree would land, the tree's own or a file drag from elsewhere.
     @State private var moveTarget: SidebarMoveDropTarget?
     @State private var externalDropRowID: String?
@@ -52,6 +58,8 @@ struct SidebarView: View {
     @State private var visibleNodes: [VisibleSidebarNode] = []
     /// Whether the clipboard held something to paste when a context menu last opened.
     @State private var treeMouse = SidebarTreeMouse()
+    /// Names typed while the tree has focus, which select the row they start.
+    @State private var typeSelect = SidebarTypeSelect()
     private let treeExpansionPersistence = WorkspaceTreeExpansionPersistence()
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -107,6 +115,9 @@ struct SidebarView: View {
             }
             .onChange(of: store.recentDocumentChangeSerial) { _, _ in
                 refreshRecentDocuments()
+            }
+            .onChange(of: selectAllRequest) { _, _ in
+                selectAllRows()
             }
             .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { _, _ in
                 expandedWorkspacePath = nil
@@ -175,9 +186,16 @@ struct SidebarView: View {
             // The rows come from the tree, which also changes without the documents (an empty folder).
             .onChange(of: store.rootNodeRevision) { _, _ in
                 refreshVisibleNodes()
+                resolvePendingLanding()
             }
             .onChange(of: store.documentIDRemapEvent?.serial ?? 0) { _, _ in
                 followMovedFolders()
+                resolvePendingLanding()
+            }
+            // An item Edit › Undo or Redo moved or copied lands as a dropped one does.
+            .onChange(of: store.fileOperationLanding) { _, landing in
+                guard let landing else { return }
+                pendingLanding = SidebarPendingLanding(itemID: landing.itemID, deadline: Date().addingTimeInterval(10))
                 resolvePendingLanding()
             }
             .onChange(of: store.isBusy) { _, isBusy in
@@ -293,11 +311,14 @@ struct SidebarView: View {
                         canPaste: canPaste,
                         mouse: treeMouse
                     ) {
+                        let selectedRowIDs = selectedRowIDs(in: nodes)
                         LazyVStack(alignment: .leading, spacing: scaled(MonknotMetrics.rowGapBase)) {
-                            ForEach(nodes) { visibleNode in
+                            ForEach(Array(nodes.enumerated()), id: \.element.id) { index, visibleNode in
                                 SidebarNodeRow(
                                     visibleNode: visibleNode,
-                                    isSelected: visibleNode.shows(sidebarSelectionID),
+                                    isSelected: selectedRowIDs.contains(visibleNode.id),
+                                    joinsSelectionAbove: index > 0 && selectedRowIDs.contains(nodes[index - 1].id),
+                                    joinsSelectionBelow: index + 1 < nodes.count && selectedRowIDs.contains(nodes[index + 1].id),
                                     saveState: visibleNode.node.document.map { store.saveState(for: $0.id) } ?? .clean,
                                     gitStatus: visibleNode.node.document.flatMap { document in
                                         store.gitStatusByRelativePath[document.relativePath]
@@ -305,7 +326,8 @@ struct SidebarView: View {
                                     isExpanded: visibleNode.isExpanded(in: expandedFolderIDs),
                                     tracksMoveFrame: tracksSidebarMoveFrames,
                                     isBusy: store.isBusy,
-                                    isMoveSource: draggedSidebarNodeID == visibleNode.id && !dragCopies,
+                                    isMoveSource: !dragCopies
+                                        && (draggedSidebarNodeID == visibleNode.id || draggedItemPaths.contains(visibleNode.dropTargetNode.id)),
                                     theme: theme,
                                     zoomScale: zoomScale,
                                     actions: rowActions
@@ -478,9 +500,15 @@ struct SidebarView: View {
         )
     }
 
-    /// The tree's own keys while it has keyboard focus: Return renames the selection, ⌘D
-    /// duplicates it and ⌘⌫ moves it to the Trash. Cut, Copy and Paste come through the Edit menu.
-    /// A held key acts once: its repeats are ignored.
+    // MARK: Selecting and the keyboard (design.md §10.4)
+
+    /// The tree's own keys while it has keyboard focus. ↑ and ↓ select the row above or below, ⇧
+    /// adding to the selection; ← and → close and open a folder or go to its parent or first
+    /// item, ⌥ for every folder inside, ⌘← closes every folder; Home and End go to the first and
+    /// last rows; ⌘↑ selects the folder holding the item and ⌘↓ opens what is selected; ⌘A selects
+    /// every row; typing a name selects the row it starts. Return renames the item, ⌘D duplicates
+    /// and ⌘⌫ moves to the Trash what is selected, once per press however long the key is held.
+    /// Cut, Copy and Paste come through the Edit menu, as Select All does in the app.
     private func handleTreeKeyDown(_ event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
         let command: SidebarTreeKeyCommand?
@@ -489,35 +517,116 @@ struct SidebarView: View {
             command = modifiers.isEmpty ? .rename : nil
         case SidebarTreeKeyCommand.deleteKeyCode:
             command = modifiers == .command ? .moveToTrash : nil
+        case SidebarTreeKeyCommand.upArrowKeyCode:
+            command = switch modifiers {
+            case []: .move(-1, extending: false)
+            case .shift: .move(-1, extending: true)
+            case .command: .selectParent
+            default: nil
+            }
+        case SidebarTreeKeyCommand.downArrowKeyCode:
+            command = switch modifiers {
+            case []: .move(1, extending: false)
+            case .shift: .move(1, extending: true)
+            case .command: .open
+            default: nil
+            }
+        case SidebarTreeKeyCommand.homeKeyCode:
+            command = modifiers.isEmpty || modifiers == .shift ? .move(Int.min, extending: modifiers == .shift) : nil
+        case SidebarTreeKeyCommand.endKeyCode:
+            command = modifiers.isEmpty || modifiers == .shift ? .move(Int.max, extending: modifiers == .shift) : nil
+        case SidebarTreeKeyCommand.leftArrowKeyCode:
+            command = switch modifiers {
+            case []: .collapse(recursively: false)
+            case .option: .collapse(recursively: true)
+            case .command: .collapseAll
+            default: nil
+            }
+        case SidebarTreeKeyCommand.rightArrowKeyCode:
+            command = switch modifiers {
+            case []: .expand(recursively: false)
+            case .option: .expand(recursively: true)
+            default: nil
+            }
         default:
-            command = modifiers == .command && event.charactersIgnoringModifiers?.lowercased() == "d"
-                ? .duplicate
-                : nil
+            if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "d" {
+                command = .duplicate
+            } else if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "a" {
+                command = .selectAll
+            } else if modifiers.subtracting(.shift).isEmpty,
+                      let characters = event.characters,
+                      SidebarTreeKeyCommand.isTypeSelectText(characters),
+                      characters != " " || typeSelect.continues(at: event.timestamp) {
+                command = .typeSelect(characters)
+            } else {
+                command = nil
+            }
         }
         guard let command else { return false }
-        guard !event.isARepeat else { return true }
-        guard !store.isBusy,
-              let selectionID = sidebarSelectionID,
-              let item = store.rootNode?.node(withID: selectionID)
-        else {
+        guard !event.isARepeat || command.repeats else { return true }
+        // Moving the selection goes on while a file operation runs; changing files waits for it.
+        guard !store.isBusy || !command.changesFiles else {
             NSSound.beep()
             return true
         }
 
         switch command {
         case .rename:
+            guard store.sidebarSelectionIDs.count == 1,
+                  let selectionID = sidebarSelectionID,
+                  let item = store.rootNode?.node(withID: selectionID)
+            else {
+                NSSound.beep()
+                return true
+            }
             beginRename(item)
         case .duplicate:
-            store.duplicateItem(at: item.url)
+            let urls = store.sidebarSelectionURLs
+            guard !urls.isEmpty else {
+                NSSound.beep()
+                return true
+            }
+            store.duplicateItems(at: urls)
         case .moveToTrash:
-            moveToTrash(item)
+            let urls = store.sidebarSelectionURLs
+            guard !urls.isEmpty else {
+                NSSound.beep()
+                return true
+            }
+            store.deleteItems(at: urls)
+        case .move(let offset, let extending):
+            moveSelection(by: offset, extending: extending)
+        case .selectParent:
+            selectParentRow()
+        case .open:
+            openSelection()
+        case .collapse(let recursively):
+            collapseLeadRow(recursively: recursively)
+        case .expand(let recursively):
+            expandLeadRow(recursively: recursively)
+        case .collapseAll:
+            collapseAllFolders()
+        case .selectAll:
+            selectAllRows()
+        case .typeSelect(let characters):
+            let nodes = displayedVisibleNodes
+            if let itemID = typeSelect.type(
+                characters,
+                at: event.timestamp,
+                rows: nodes.map(\.dropTargetNode.id),
+                names: nodes.map(\.displayName),
+                leadID: rowSelection(nodes).leadID
+            ) {
+                store.selectSidebarItems(SidebarSelection(single: itemID))
+            }
         }
         return true
     }
 
     /// A click on a folder row selects the folder (the deepest of a compact row) and opens or
-    /// closes it.
+    /// closes it; with ⌘ or ⇧ it only picks the folder (`pickRow`).
     private func clickFolder(_ visibleNode: VisibleSidebarNode) {
+        guard !pickRow(visibleNode) else { return }
         store.selectFolder(id: visibleNode.dropTargetNode.id)
         let folderIDs = Set(visibleNode.folderNodeIDs)
         if folderIDs.allSatisfy(expandedFolderIDs.contains) {
@@ -526,6 +635,243 @@ struct SidebarView: View {
             expandedFolderIDs.formUnion(folderIDs)
         }
         refreshVisibleNodes()
+    }
+
+    /// A click on a file row opens the file; with ⌘ or ⇧ it only picks the file (`pickRow`).
+    private func clickFile(_ documentID: String) {
+        if let row = displayedVisibleNodes.first(where: { $0.node.kind == .file && $0.node.id == documentID }),
+           pickRow(row) {
+            return
+        }
+        openDocument(documentID)
+    }
+
+    /// ⌘-click adds the row's item to the selection or takes it out; ⇧-click selects the rows from
+    /// the anchor (the item last clicked) to it. Neither opens anything. True when the click held
+    /// either key.
+    private func pickRow(_ row: VisibleSidebarNode) -> Bool {
+        let modifiers = clickModifiers
+        guard modifiers.contains(.command) || modifiers.contains(.shift) else { return false }
+        guard !store.isBusy else {
+            NSSound.beep()
+            return true
+        }
+        let nodes = displayedVisibleNodes
+        let itemID = row.dropTargetNode.id
+        if modifiers.contains(.shift) {
+            // The rows from the anchor's row: every one of them is shown.
+            store.selectSidebarItems(rowSelection(nodes).extending(to: itemID, rows: nodes.map(\.dropTargetNode.id)))
+            return true
+        }
+        // ⌘ adds or takes out the item itself; the items already picked stay exactly as they are.
+        let current = store.sidebarItemSelection.isEmpty ? shownOpenDocumentSelection(nodes) : store.sidebarItemSelection
+        let shownByRow = current.itemIDs.filter { row.shows($0) }
+        store.selectSidebarItems(shownByRow.isEmpty ? current.toggling(itemID) : current.filtered { !shownByRow.contains($0) })
+        return true
+    }
+
+    /// The open document as a selection while the sidebar selects it and a row shows it.
+    private func shownOpenDocumentSelection(_ nodes: [VisibleSidebarNode]) -> SidebarSelection {
+        guard let documentID = store.sidebarSelectionID,
+              nodes.contains(where: { $0.node.kind == .file && $0.node.id == documentID })
+        else { return SidebarSelection() }
+        return SidebarSelection(single: documentID)
+    }
+
+    /// Selected items a collapse hid leave the selection, so nothing acts on an item the tree no
+    /// longer shows. When none stays shown, the row that now holds the lead is selected instead.
+    private func dropHiddenSelectedItems() {
+        let selection = store.sidebarItemSelection
+        guard !selection.isEmpty else { return }
+        let nodes = displayedVisibleNodes
+        var shownIDs = Set<String>()
+        for node in nodes {
+            shownIDs.insert(node.node.id)
+            shownIDs.formUnion(node.folderNodeIDs)
+        }
+        let shown = selection.filtered { shownIDs.contains($0) }
+        guard shown != selection else { return }
+        if shown.isEmpty, let leadID = selection.leadID,
+           let row = nodes.first(where: { WorkspaceDocumentSupport.isPath(leadID, containedIn: $0.node.id) }) {
+            store.selectSidebarItems(SidebarSelection(single: row.dropTargetNode.id))
+        } else {
+            store.selectSidebarItems(shown)
+        }
+    }
+
+    /// The keys held for the click being handled: those of the tree's latest mouse event, never a
+    /// key press's (a button pressed from the keyboard is a plain click).
+    private var clickModifiers: NSEvent.ModifierFlags {
+        if let event = NSApp.currentEvent, event.type == .keyDown || event.type == .keyUp {
+            return []
+        }
+        return treeMouse.modifierFlags.intersection([.command, .shift])
+    }
+
+    /// The rows that show a selected item, by row.
+    private func selectedRowIDs(in nodes: [VisibleSidebarNode]) -> Set<String> {
+        let selectedIDs = Set(store.sidebarSelectionIDs)
+        guard !selectedIDs.isEmpty else { return [] }
+        return Set(nodes.lazy.filter { node in
+            node.node.kind == .folder
+                ? node.folderNodeIDs.contains(where: selectedIDs.contains)
+                : selectedIDs.contains(node.node.id)
+        }.map(\.id))
+    }
+
+    /// The sidebar's selection in terms of rows: each item as the item of the row that shows it, or
+    /// of the nearest folder above it the tree shows; the open document stands in when the sidebar
+    /// picked nothing.
+    private func rowSelection(_ nodes: [VisibleSidebarNode]) -> SidebarSelection {
+        var rowItemIDs: [String: String] = [:]
+        for node in nodes {
+            let itemID = node.dropTargetNode.id
+            rowItemIDs[node.node.id] = itemID
+            for folderID in node.folderNodeIDs {
+                rowItemIDs[folderID] = itemID
+            }
+        }
+        let rootPath = store.rootNode?.id ?? ""
+        let selection = store.sidebarItemSelection.isEmpty
+            ? (store.sidebarSelectionID.map(SidebarSelection.init(single:)) ?? SidebarSelection())
+            : store.sidebarItemSelection
+        return selection.mapped { itemID in
+            var path = itemID
+            while path.count > rootPath.count {
+                if let rowItemID = rowItemIDs[path] {
+                    return rowItemID
+                }
+                path = (path as NSString).deletingLastPathComponent
+            }
+            return itemID
+        }
+    }
+
+    private func leadRow(_ nodes: [VisibleSidebarNode]) -> VisibleSidebarNode? {
+        guard let leadID = rowSelection(nodes).leadID else { return nil }
+        return nodes.first { $0.dropTargetNode.id == leadID }
+    }
+
+    private func moveSelection(by offset: Int, extending: Bool) {
+        let nodes = displayedVisibleNodes
+        guard let next = rowSelection(nodes).moving(by: offset, rows: nodes.map(\.dropTargetNode.id), extending: extending) else {
+            NSSound.beep()
+            return
+        }
+        store.selectSidebarItems(next)
+    }
+
+    /// Edit › Select All in the tree: every row it shows.
+    private func selectAllRows() {
+        let nodes = displayedVisibleNodes
+        guard !nodes.isEmpty, !store.isBusy else { return }
+        store.selectSidebarItems(.all(nodes.map(\.dropTargetNode.id), leadID: rowSelection(nodes).leadID))
+    }
+
+    /// Selects the row of the folder holding the lead item; nothing at the top level.
+    private func selectParentRow() {
+        let nodes = displayedVisibleNodes
+        guard let row = leadRow(nodes),
+              let parent = nodes.first(where: { $0.shows((row.node.id as NSString).deletingLastPathComponent) })
+        else {
+            NSSound.beep()
+            return
+        }
+        store.selectSidebarItems(SidebarSelection(single: parent.dropTargetNode.id))
+    }
+
+    /// ←: closes the lead folder, or else selects the folder holding the item. With ⌥ the folder
+    /// and every folder inside it close.
+    private func collapseLeadRow(recursively: Bool) {
+        let nodes = displayedVisibleNodes
+        guard let row = leadRow(nodes) else {
+            NSSound.beep()
+            return
+        }
+        if row.node.kind == .folder, row.isExpanded(in: expandedFolderIDs) || recursively {
+            let rowPath = row.node.id
+            let closing = recursively
+                ? expandedFolderIDs.filter { WorkspaceDocumentSupport.isPath($0, containedIn: rowPath) }
+                : Set(row.folderNodeIDs)
+            expandedFolderIDs.subtract(closing)
+            refreshVisibleNodes()
+            dropHiddenSelectedItems()
+            return
+        }
+        selectParentRow()
+    }
+
+    /// →: opens the lead folder, or else selects the first item inside it. With ⌥ the folder and
+    /// every folder inside it open.
+    private func expandLeadRow(recursively: Bool) {
+        let nodes = displayedVisibleNodes
+        guard let row = leadRow(nodes), row.node.kind == .folder else {
+            NSSound.beep()
+            return
+        }
+        if recursively {
+            expandFolders(Set(row.folderNodeIDs).union(Self.folderIDs(inside: row.dropTargetNode)))
+            return
+        }
+        guard row.isExpanded(in: expandedFolderIDs) else {
+            expandFolders(Set(row.folderNodeIDs))
+            return
+        }
+        guard let index = nodes.firstIndex(where: { $0.id == row.id }),
+              index + 1 < nodes.count,
+              nodes[index + 1].depth > row.depth
+        else { return }
+        store.selectSidebarItems(SidebarSelection(single: nodes[index + 1].dropTargetNode.id))
+    }
+
+    private static func folderIDs(inside node: SidebarNode) -> Set<String> {
+        var found: Set<String> = []
+        for child in node.children ?? [] where child.kind == .folder {
+            found.insert(child.id)
+            found.formUnion(folderIDs(inside: child))
+        }
+        return found
+    }
+
+    /// Closes every folder. Selected items inside leave the selection; when none is left shown, the
+    /// top-level row holding the lead is selected, so the keyboard goes on from there.
+    private func collapseAllFolders() {
+        guard !expandedFolderIDs.isEmpty else { return }
+        expandedFolderIDs = []
+        refreshVisibleNodes()
+        dropHiddenSelectedItems()
+    }
+
+    /// ⌘↓: opens the selected files, the lead last so its tab shows, and opens the selected
+    /// folders in the tree.
+    private func openSelection() {
+        let nodes = displayedVisibleNodes
+        let selection = rowSelection(nodes)
+        guard !selection.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        let ordered = selection.itemIDs.filter { $0 != selection.leadID } + [selection.leadID].compactMap { $0 }
+        var folderIDs: Set<String> = []
+        var documentIDs: [String] = []
+        for itemID in ordered {
+            if store.document(id: itemID) != nil {
+                documentIDs.append(itemID)
+            } else if let row = nodes.first(where: { $0.dropTargetNode.id == itemID }), row.node.kind == .folder {
+                folderIDs.formUnion(row.folderNodeIDs)
+            }
+        }
+        expandFolders(folderIDs)
+        documentIDs.forEach(openDocument)
+    }
+
+    /// The items a row's menu acts on: every selected item when the row is one of several selected,
+    /// otherwise the row's own.
+    private func menuTargets(for url: URL) -> [URL] {
+        let path = url.standardizedFileURL.path
+        let selectedIDs = store.sidebarSelectionIDs
+        guard selectedIDs.count > 1, selectedIDs.contains(path) else { return [url] }
+        return store.sidebarSelectionURLs
     }
 
     private func refreshRecentDocuments() {
@@ -569,17 +915,24 @@ struct SidebarView: View {
     private var rowActions: SidebarRowActions {
         SidebarRowActions(
             clickFolder: clickFolder(_:),
-            openDocument: openDocument,
+            openDocument: clickFile(_:),
             createFile: beginCreateFile(in:),
             createFolder: beginCreateFolder(in:),
             rename: beginRename(_:),
-            location: locationActions,
+            location: rowLocationActions,
             exportPDF: exportPDF,
-            copy: { store.putItemOnPasteboard(at: $0, cutting: false, pasteboard: pasteboard) },
-            cut: { store.putItemOnPasteboard(at: $0, cutting: true, pasteboard: pasteboard) },
+            copy: { store.putItemsOnPasteboard(at: menuTargets(for: $0), cutting: false, pasteboard: pasteboard) },
+            cut: { store.putItemsOnPasteboard(at: menuTargets(for: $0), cutting: true, pasteboard: pasteboard) },
             paste: paste(into:),
-            duplicate: store.duplicateItem(at:),
-            moveToTrash: moveToTrash(_:),
+            duplicate: { store.duplicateItems(at: menuTargets(for: $0)) },
+            moveToTrash: { item in
+                let targets = menuTargets(for: item.url)
+                if targets.count > 1 {
+                    store.deleteItems(at: targets)
+                } else {
+                    moveToTrash(item)
+                }
+            },
             dragChanged: handleSidebarNodeDragChanged(id:location:),
             dragEnded: handleSidebarNodeDragEnded(id:location:),
             dropFileURLs: { urls, directoryURL, copying in
@@ -590,11 +943,21 @@ struct SidebarView: View {
         )
     }
 
+    /// The location items of the root's menu and of Recents, which act on that one item.
     private var locationActions: SidebarLocationActions {
         SidebarLocationActions(
-            copyPath: copyPath,
-            copyRelativePath: copyRelativePath,
-            revealInFinder: revealInFinder(_:)
+            copyPath: { copyPath([$0]) },
+            copyRelativePath: { copyRelativePath([$0]) },
+            revealInFinder: { revealInFinder([$0]) }
+        )
+    }
+
+    /// A row's location items, which act on every selected item when the row is one of several.
+    private var rowLocationActions: SidebarLocationActions {
+        SidebarLocationActions(
+            copyPath: { copyPath(menuTargets(for: $0)) },
+            copyRelativePath: { copyRelativePath(menuTargets(for: $0)) },
+            revealInFinder: { revealInFinder(menuTargets(for: $0)) }
         )
     }
 
@@ -618,6 +981,15 @@ struct SidebarView: View {
             Divider()
 
             locationActions.menuItems(for: workspaceURL, includesRelativePath: false)
+        }
+
+        if store.rootNode != nil {
+            Divider()
+
+            MonknotMenuCommandButton(.collapseAllFolders) {
+                collapseAllFolders()
+            }
+            .disabled(expandedFolderIDs.isEmpty)
         }
     }
 
@@ -675,18 +1047,29 @@ struct SidebarView: View {
         updateDragTarget()
     }
 
+    /// Starts dragging a row: its item, or every selected item when the row is one of several
+    /// selected, as one copy that names how many there are.
     private func beginDrag(_ row: VisibleSidebarNode) {
         let item = row.dropTargetNode
-        let systemImage = item.kind == .folder
-            ? MonknotWorkspaceIcons.openFolder
-            : (item.document?.kind.resolvedSystemImage ?? WorkspaceDocumentKind.unsupported.resolvedSystemImage)
+        let urls = menuTargets(for: item.url)
+        let systemImage = urls.count > 1
+            ? MonknotWorkspaceIcons.dragItems
+            : item.kind == .folder
+                ? MonknotWorkspaceIcons.openFolder
+                : (item.document?.kind.resolvedSystemImage ?? WorkspaceDocumentKind.unsupported.resolvedSystemImage)
         let copies = treeMouse.modifierFlags.contains(.option)
         dragSession.treeView = treeMouse.treeView
         treeMouse.dragSession = dragSession
         draggedSidebarNodeID = row.id
+        draggedItemPaths = urls.count > 1 ? Set(urls.map(\.standardizedFileURL.path)) : []
         dragCopies = copies
         dragSession.begin(
-            item: SidebarDragSession.Item(rowID: row.id, url: item.url, title: row.displayName, systemImage: systemImage),
+            item: SidebarDragSession.Item(
+                rowID: row.id,
+                urls: urls,
+                title: urls.count > 1 ? "\(urls.count) Items" : row.displayName,
+                systemImage: systemImage
+            ),
             copies: copies,
             theme: theme,
             zoomScale: zoomScale,
@@ -776,15 +1159,20 @@ struct SidebarView: View {
         case .folder(let folderURL): folderURL
         }
         let item = row.dropTargetNode
+        let urls = dragSession.item?.urls ?? [item.url]
         let destinationPath = (folderURL ?? store.workspaceURL)?.standardizedFileURL.path ?? ""
         let landedID = (destinationPath as NSString).appendingPathComponent(item.url.lastPathComponent)
         closeSpringOpenedFolders(keeping: ancestorFolderIDs(of: landedID))
         dragSession.finishDropped()
         endDrag()
-        // As in Finder, holding Option when the drag ends copies the item instead of moving it.
+        // As in Finder, holding Option when the drag ends copies the items instead of moving them.
         if copies {
             pendingLanding = SidebarPendingLanding(itemID: nil, deadline: Date().addingTimeInterval(10))
-            store.duplicateItem(at: item.url, into: folderURL)
+            store.duplicateItems(at: urls, into: folderURL)
+        } else if urls.count > 1 {
+            // The dragged row lands; the rest move one after another, as a drop of them does.
+            pendingLanding = SidebarPendingLanding(itemID: landedID, deadline: Date().addingTimeInterval(10))
+            store.dropFileURLs(urls, into: folderURL)
         } else {
             pendingLanding = SidebarPendingLanding(itemID: landedID, deadline: Date().addingTimeInterval(10))
             store.moveItem(id: item.id, toDirectory: folderURL)
@@ -794,6 +1182,7 @@ struct SidebarView: View {
 
     private func endDrag() {
         draggedSidebarNodeID = nil
+        draggedItemPaths = []
         dragCopies = false
         setMoveTarget(nil)
         dragSession.clearSpringOpenedFolders()
@@ -809,6 +1198,7 @@ struct SidebarView: View {
         guard !closing.isEmpty else { return }
         expandedFolderIDs.subtract(closing)
         refreshVisibleNodes()
+        dropHiddenSelectedItems()
     }
 
     /// Once a moved or copied item shows in the tree: its folders open, it scrolls into view and its
@@ -905,6 +1295,7 @@ struct SidebarView: View {
         guard let workspaceURL = store.workspaceURL else { return nil }
         return SidebarMoveDropTarget.resolve(
             draggedRowID: rowID,
+            draggedItemURLs: dragSession.item?.urls ?? [],
             location: location,
             rows: displayedVisibleNodes,
             rowFrames: sidebarNodeFrames,
@@ -963,8 +1354,8 @@ struct SidebarView: View {
         )
     }
 
-    private func revealInFinder(_ url: URL) {
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+    private func revealInFinder(_ urls: [URL]) {
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
     }
 
     private func validationMessage(for prompt: SidebarNamePrompt, name: String) -> String? {
@@ -1138,10 +1529,12 @@ enum SidebarMoveDropTarget: Hashable {
 
     /// The target under `location`, in the tree's coordinate space: a folder row is that folder (the
     /// deepest of a compact row), a file row is the file's folder, and empty tree space below the
-    /// rows is the root. Nil where the item already is (unless `copies`, which duplicates it there,
-    /// as Finder does), on the item itself or anything inside it, and anywhere else.
+    /// rows is the root. Nil where every dragged item already is (unless `copies`, which duplicates
+    /// them there, as Finder does), on a dragged item itself or anything inside one, and anywhere
+    /// else. `draggedItemURLs` are the items dragged with the row when it is one of several selected.
     static func resolve(
         draggedRowID: String,
+        draggedItemURLs: [URL] = [],
         location: CGPoint,
         rows: [VisibleSidebarNode],
         rowFrames: [String: CGRect],
@@ -1150,11 +1543,11 @@ enum SidebarMoveDropTarget: Hashable {
         copies: Bool = false
     ) -> SidebarMoveDropTarget? {
         guard let draggedRow = rows.first(where: { $0.id == draggedRowID }) else { return nil }
-        let itemPath = draggedRow.dropTargetNode.url.standardizedFileURL.path
+        let itemPaths = Set([draggedRow.dropTargetNode.url.standardizedFileURL.path] + draggedItemURLs.map(\.standardizedFileURL.path))
 
         let destinationURL: URL
         if let row = rows.first(where: { rowFrames[$0.id]?.contains(location) == true }) {
-            guard row.id != draggedRowID else { return nil }
+            guard row.id != draggedRowID, !itemPaths.contains(row.dropTargetNode.url.standardizedFileURL.path) else { return nil }
             destinationURL = row.destinationURL
         } else {
             let rowsBottom = rowFrames.values.map(\.maxY).max() ?? 0
@@ -1167,9 +1560,8 @@ enum SidebarMoveDropTarget: Hashable {
         }
 
         let destinationPath = destinationURL.standardizedFileURL.path
-        guard copies || destinationPath != (itemPath as NSString).deletingLastPathComponent,
-              destinationPath != itemPath,
-              !destinationPath.hasPrefix(itemPath + "/")
+        guard copies || itemPaths.contains(where: { destinationPath != ($0 as NSString).deletingLastPathComponent }),
+              !itemPaths.contains(where: { destinationPath == $0 || destinationPath.hasPrefix($0 + "/") })
         else { return nil }
         return destinationPath == workspaceURL.standardizedFileURL.path
             ? .root
@@ -1644,6 +2036,8 @@ extension SidebarNodeRow: Equatable {
             lhs.visibleNode.node.kind == rhs.visibleNode.node.kind &&
             lhs.visibleNode.node.document == rhs.visibleNode.node.document &&
             lhs.isSelected == rhs.isSelected &&
+            lhs.joinsSelectionAbove == rhs.joinsSelectionAbove &&
+            lhs.joinsSelectionBelow == rhs.joinsSelectionBelow &&
             lhs.saveState == rhs.saveState &&
             lhs.gitStatus == rhs.gitStatus &&
             lhs.isExpanded == rhs.isExpanded &&
@@ -1658,6 +2052,9 @@ extension SidebarNodeRow: Equatable {
 private struct SidebarNodeRow: View {
     let visibleNode: VisibleSidebarNode
     let isSelected: Bool
+    /// The rows above and below are selected too, so the selection fills join (design.md §10.4).
+    let joinsSelectionAbove: Bool
+    let joinsSelectionBelow: Bool
     let saveState: DocumentSaveState
     let gitStatus: WorkspaceGitFileStatus?
     let isExpanded: Bool
@@ -1760,7 +2157,14 @@ private struct SidebarNodeRow: View {
                 trailing: trailing
             )
         }
-        .buttonStyle(MonknotListRowButtonStyle(theme: theme, zoomScale: zoomScale, isSelected: isSelected, hasContextMenu: true))
+        .buttonStyle(MonknotListRowButtonStyle(
+            theme: theme,
+            zoomScale: zoomScale,
+            isSelected: isSelected,
+            hasContextMenu: true,
+            joinsSelectionAbove: joinsSelectionAbove,
+            joinsSelectionBelow: joinsSelectionBelow
+        ))
         .background {
             if tracksMoveFrame {
                 SidebarNodeFrameReader(id: node.id)
@@ -2146,10 +2550,50 @@ private enum SidebarTreeKeyCommand {
     case rename
     case duplicate
     case moveToTrash
+    /// ↑ ↓ (−1, 1), Home and End (past either end), with ⇧ `extending` the selection.
+    case move(Int, extending: Bool)
+    case selectParent
+    case open
+    case collapse(recursively: Bool)
+    case expand(recursively: Bool)
+    case collapseAll
+    case selectAll
+    case typeSelect(String)
 
     static let returnKeyCode: UInt16 = 36
     static let enterKeyCode: UInt16 = 76
     static let deleteKeyCode: UInt16 = 51
+    static let leftArrowKeyCode: UInt16 = 123
+    static let rightArrowKeyCode: UInt16 = 124
+    static let downArrowKeyCode: UInt16 = 125
+    static let upArrowKeyCode: UInt16 = 126
+    static let homeKeyCode: UInt16 = 115
+    static let endKeyCode: UInt16 = 119
+
+    /// Moving the selection and typing go on while a key is held; the commands that change files
+    /// act once per press.
+    var repeats: Bool {
+        switch self {
+        case .move, .collapse, .expand, .typeSelect: true
+        case .rename, .duplicate, .moveToTrash, .selectParent, .open, .collapseAll, .selectAll: false
+        }
+    }
+
+    /// Renaming, duplicating, trashing and opening, which wait while a file operation runs.
+    var changesFiles: Bool {
+        switch self {
+        case .rename, .duplicate, .moveToTrash, .open: true
+        case .move, .selectParent, .collapse, .expand, .collapseAll, .selectAll, .typeSelect: false
+        }
+    }
+
+    /// Text a name can start with: no control characters and none of the function keys' private
+    /// characters (arrows, Home, F1…).
+    static func isTypeSelectText(_ characters: String) -> Bool {
+        !characters.isEmpty && characters.unicodeScalars.allSatisfy { scalar in
+            !CharacterSet.controlCharacters.contains(scalar) && !(0xF700...0xF8FF).contains(scalar.value)
+        }
+    }
 }
 
 /// A New File or New Folder command for the sidebar's target folder.

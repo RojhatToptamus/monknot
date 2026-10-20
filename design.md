@@ -961,43 +961,70 @@ under the pointer), the open one the current row with the `accent` `folder.fill`
 Workspace… and Manage Workspaces…. Labels are `ink`, glyphs `ink2`, as in the editor's menus. Find in
 Workspace's Replace scope is a pop-up (§5.3).
 
-**Selection.** The tree has one selection: a folder, or else the open document. Clicking a
+**Selection.** The tree's selection is the items it picked — a clicked folder, or files and folders
+picked with the keys, ⇧ or ⌘ — or else the open document. Clicking a
 folder selects it, opens or closes it and gives the tree keyboard focus, without closing the open
 document. Clicking a file opens it; a document shown for typing (Markdown in Source or Preview, text,
 or a source beside its preview) takes keyboard focus, ready for typing, while any other file (an image, a PDF, video,
 audio, a preview) leaves focus in the tree, so ⌘C, ⌘X and ⌘V act on it. New Markdown, New File, New Folder and Paste put items in the
-selected folder, or the selected document's folder, or the root when nothing is selected; a row's context
-menu acts on that row, and the empty tree's menu and files dropped from another app onto empty
-space act on the root. While the
-tree has focus, ⌘C, ⌘X and ⌘V copy, cut and paste the selection, Return renames it, ⌘D duplicates it and
-⌘⌫ moves it to the Trash, once per press however long the key is held; with the editor, terminal or a
-field focused those keys stay theirs. A created
+selected folder, or the selected file's folder, or the root when nothing is selected; the empty tree's
+menu and files dropped from another app onto empty space act on the root. A created
 or pasted item is selected and its folder opens; files pasted or dropped in from elsewhere open their
-folder. The selection follows a rename or move, moves up to the nearest remaining folder when its folder
-is removed outside Monknot, and clears when the workspace changes; open folders stay open when renamed
-or moved. Nothing is selected after the selection goes to the Trash, or after the open document leaves
-the workspace: the tab beside it shows, as when its tab closes, but the tree selects it only once the
-user picks it.
+folder. The selection follows a rename or move, moves up to the nearest remaining folder when its one
+item is removed outside Monknot (of several, the rest stay), and clears when the workspace changes;
+open folders stay open when renamed or moved. Nothing is selected after the selection goes to the
+Trash, or after the open document leaves the workspace: the tab beside it shows, as when its tab
+closes, but the tree selects it only once the user picks it.
+
+**Several items.** ⌘-click adds an item to the selection or takes it out; ⇧-click selects the rows from
+the anchor — the item last clicked or ⌘-clicked — to the one clicked, across open folders, in place of
+the rest. Neither opens a file or a folder; a plain click selects that row alone again. Selected rows
+next to each other share one `selected` fill, its corners square where they meet
+(`MonknotListRowButtonStyle.joinsSelectionAbove`), so a run reads as one block. Everything that acts
+on the selection acts on every selected item, one inside another selected folder going with it:
+⌘C, ⌘X and ⌘V, ⌘D, ⌘⌫ (refused, moving nothing, while any of them has unsaved changes), a drag, and
+a row's menu when that row is one of them — a row outside the selection acts on itself alone, as
+its held open state shows. Several items moved, copied or duplicated at once are one step of
+Edit › Undo (Undo Move 3 Items), and the copies come out selected. Closing a folder (←, ⌘←, Collapse
+All Folders) takes the selected items inside it out of the selection, so nothing ever acts on an item
+the tree does not show; when none is left, the row that holds the last one picked is selected.
+
+**Keys.** While the tree has focus (`SidebarView.handleTreeKeyDown`, `SidebarSelection`):
+
+- ↑ ↓ select the row above or below, and with ⇧ extend the selection from its anchor; Home and End go
+  to the first and last row. None of them opens anything, so a held arrow never fills the tab strip.
+- → opens a folder, then selects its first item; ← closes an open folder, otherwise selects the folder
+  holding the item. With ⌥ they open or close the folder and every folder inside it; ⌘← closes every
+  folder. ⌘↑ selects the folder holding the item; ⌘↓ opens the selected files, the lead's tab last,
+  and opens the selected folders. ⌘A selects every row shown.
+- Typing a name selects the first row from the lead on whose name starts with what was typed within a
+  second (case and accents ignored, Space only once a name has started).
+- Return renames the one selected item, ⌘D duplicates and ⌘⌫ moves to the Trash what is selected,
+  once per press however long the key is held; ⌘Z and ⇧⌘Z undo and redo the last move or copy
+  (Moving files, below). With the editor, terminal or a field focused, all of these stay theirs.
 
 **Row menus.** Folder and file rows start with New File and New Folder (in the folder, or beside the
 file), then Rename and the location items, then Copy, Cut, Paste and Duplicate, then Move to Trash.
-Paste is enabled only while the clipboard holds something to paste.
+Paste is enabled only while the clipboard holds something to paste. The empty tree's menu ends with
+Collapse All Folders, enabled while a folder is open.
 
-**Moving files.** Dragging a row moves its item; the whole drag is designed, frame by frame
-(`SidebarDragSession`):
+**Moving files.** Dragging a row moves its item, or every selected item when the row is one of
+several selected; the whole drag is designed, frame by frame (`SidebarDragSession`):
 
 - **Start.** 4 pt with the button down starts a drag; anything shorter is a click, which opens the
   file as it always has.
 - **The row and its copy.** The row stays where it is at 35 % (a 120 ms fade); a copy of it — its glyph
   (`folder` for a folder) and name on `surf2`, radius 8, `e2`, 28 tall, at most 240 wide — lifts off in
-  place and rides under the pointer, the name kept under it.
+  place and rides under the pointer, the name kept under it. For several items the copy reads "3 Items"
+  beside `doc.on.doc`, every row they come from dims, and they move one after another, a move that
+  would rewrite links asking first.
 - **The target** is a folder: a folder row, or any row inside an open folder, means that folder; a file
   at the top level or the empty space below the rows means the workspace root. The folder's row and its
   open rows tint `accsoft` as one region, on the row radius inside the list inset (the whole tree for
   the root): the place it lands, not a line between rows, since the tree sorts itself. A new target
   cross-fades with the last over 120 ms; nothing slides.
-- **Not here.** The folder it is already in, the item itself, or a folder inside it tint nothing, and a
-  drop there changes nothing. Over the sidebar's header the list scrolls rather than targeting.
+- **Not here.** The folder it is already in (every dragged item, for several), a dragged item itself,
+  or a folder inside one tint nothing, and a drop there changes nothing. Over the sidebar's header the list scrolls rather than targeting.
 - **Option** copies: the cursor takes the system's copy badge and the row returns to full strength,
   because it stays; the folder it is in becomes a target, where the copy is a duplicate, as in Finder.
   Letting go of Option makes it a move again.
@@ -1018,6 +1045,28 @@ Paste is enabled only while the clipboard holds something to paste.
   the workspace. Brought back over the tree, it targets as a drag from Finder does.
 - **From Finder** (or another window): the same targets, tint, spring-loading and refusals; files from
   outside are copied in, files already in the workspace are moved.
+- **Undo.** Edit › Undo takes back the last move, rename or copy made in the sidebar — a drag, an
+  Option-drag, Cut and Paste, Duplicate, or a drop of items already in the workspace — as one step
+  named for it: Undo Move “a.md”, Undo Duplicate “a.md”, Undo Move 3 Items. Redo makes it again, and a
+  new move or copy ends what Redo held. Undoing a move puts the item back and the links the move
+  rewrote back as they were, without asking again; undoing a copy moves the copy to the Trash. ⌘Z and
+  ⇧⌘Z reach it with keyboard focus anywhere but text (Source, Preview, a field), the terminal and a
+  document view (a PDF, an image, the player), which keep their own undo, so typing's undo never moves
+  a file (`monknotUndoCommandDestination`). Of a move and a workspace Replace All, the newer is undone
+  first, and an older Replace is never undone — not from text either — while a newer move or copy
+  waits to be undone: Replace's undo writes its notes back by path. Moving, renaming or trashing one of
+  those notes, or rewriting its links, ends the Replace's undo. Before it acts, the step checks that
+  the disk still matches what the operation left — the item is where it put it, nothing has taken the
+  name it goes back to, every rewritten note holds the text the move wrote, a copy is as it was made —
+  and otherwise changes nothing and says why; it never overwrites. Such a step leaves the history,
+  since the disk no longer matches it. One that would rewrite or trash unsaved text, or leave a link in
+  unsaved text pointing where the item no longer is, waits until that text is saved. A copy or
+  transfer of several items that fails part way can still undo what it made. What goes back lands as a
+  drop does: its folders open, it scrolls into view and its row holds the tint. Files copied in from
+  outside the workspace and items moved to the Trash stay. The history is the window's, ends when its
+  workspace changes, and keeps at most 50 operations and 16 MB of rewritten notes; a move that rewrote
+  more than that cannot be undone, so the history ends there rather than skip past it
+  (`WorkspaceFileOperationHistory`, `WorkspaceStore.undoFileOperation`).
 
 **Recents** is a collapsible group between the tree and the footer: the chevron in the glyph column, a
 group header (§4.3) and a trailing count in 12 `ink3`. Its entries are file rows one level in, whose

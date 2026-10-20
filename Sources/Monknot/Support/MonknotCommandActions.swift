@@ -75,6 +75,15 @@ struct MonknotCommandActions {
     let showKeyboardShortcutsHelp: () -> Void
     let undoWorkspaceReplace: () -> Void
     let canUndoWorkspaceReplace: Bool
+    let undoFileOperation: () -> Void
+    let redoFileOperation: () -> Void
+    /// The sidebar's last move or copy, as Edit › Undo names it ("Move “a.md”"); nil when there is
+    /// none to undo now.
+    let fileOperationUndoActionName: String?
+    let fileOperationRedoActionName: String?
+    /// Whether a move or copy waiting to be undone is newer than the workspace Replace that can be
+    /// undone, even while it cannot run (another operation is under way).
+    let fileOperationUndoPrecedesWorkspaceReplace: Bool
 }
 
 private struct MonknotCommandActionsKey: FocusedValueKey {
@@ -100,8 +109,11 @@ struct MonknotCommandMenu: Commands {
             isPDFDocumentActive: actions?.isPDFDocumentActive == true,
             hasNativeEditingFocus: MonknotNativePasteboardCommand.hasNativeEditingFocus,
             terminalHasFocus: MonknotNativeUndoCommand.terminalHasFocus,
+            documentViewHasFocus: MonknotNativeUndoCommand.documentViewHasFocus,
             canPerformNative: MonknotNativeUndoCommand.canUndo,
             canPerformWorkspaceReplace: actions?.canUndoWorkspaceReplace == true,
+            canPerformFileOperation: actions?.fileOperationUndoActionName != nil,
+            fileOperationIsNewer: actions?.fileOperationUndoPrecedesWorkspaceReplace == true,
             canPerformPDF: actions?.canUndoPDFAnnotation == true
         )
     }
@@ -111,9 +123,22 @@ struct MonknotCommandMenu: Commands {
             isPDFDocumentActive: actions?.isPDFDocumentActive == true,
             hasNativeEditingFocus: MonknotNativePasteboardCommand.hasNativeEditingFocus,
             terminalHasFocus: MonknotNativeUndoCommand.terminalHasFocus,
+            documentViewHasFocus: MonknotNativeUndoCommand.documentViewHasFocus,
             canPerformNative: MonknotNativeUndoCommand.canRedo,
+            canPerformFileOperation: actions?.fileOperationRedoActionName != nil,
             canPerformPDF: actions?.canRedoPDFAnnotation == true
         )
+    }
+
+    /// "Undo Move “a.md”" while Undo takes back a move or copy; otherwise "Undo".
+    private var undoTitle: String {
+        guard undoDestination == .fileOperation, let name = actions?.fileOperationUndoActionName else { return "Undo" }
+        return "Undo \(name)"
+    }
+
+    private var redoTitle: String {
+        guard redoDestination == .fileOperation, let name = actions?.fileOperationRedoActionName else { return "Redo" }
+        return "Redo \(name)"
     }
 
     /// One property per menu group, so each type-checks quickly.
@@ -246,12 +271,14 @@ struct MonknotCommandMenu: Commands {
 
     private var undoRedoCommands: some Commands {
         CommandGroup(replacing: .undoRedo) {
-            Button("Undo") {
+            Button(undoTitle) {
                 switch undoDestination {
                 case .native:
                     _ = MonknotNativeUndoCommand.performUndoIfAvailable()
                 case .workspaceReplace:
                     actions?.undoWorkspaceReplace()
+                case .fileOperation:
+                    actions?.undoFileOperation()
                 case .pdf:
                     actions?.undoPDFAnnotation()
                 case .unavailable:
@@ -261,12 +288,14 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("z", modifiers: [.command])
             .disabled(undoDestination == .unavailable)
 
-            Button("Redo") {
+            Button(redoTitle) {
                 switch redoDestination {
                 case .native:
                     _ = MonknotNativeUndoCommand.performRedoIfAvailable()
                 case .workspaceReplace:
                     break
+                case .fileOperation:
+                    actions?.redoFileOperation()
                 case .pdf:
                     actions?.redoPDFAnnotation()
                 case .unavailable:
@@ -536,6 +565,7 @@ struct MonknotCommandMenu: Commands {
 enum MonknotUndoCommandDestination: Equatable {
     case native
     case workspaceReplace
+    case fileOperation
     case pdf
     case unavailable
 }
@@ -544,10 +574,16 @@ func monknotUndoCommandDestination(
     isPDFDocumentActive: Bool,
     hasNativeEditingFocus: Bool,
     terminalHasFocus: Bool = false,
+    documentViewHasFocus: Bool = false,
     canPerformNative: Bool,
     canPerformWorkspaceReplace: Bool = false,
+    canPerformFileOperation: Bool = false,
+    fileOperationIsNewer: Bool = false,
     canPerformPDF: Bool
 ) -> MonknotUndoCommandDestination {
+    // A workspace Replace is undone only while no move or copy made after it waits to be undone:
+    // its undo writes notes back by path, and the newer operation may have moved them.
+    let replaceIsNext = canPerformWorkspaceReplace && !fileOperationIsNewer
     // The terminal keeps ⌘Z and ⇧⌘Z for its shell. The window's undo manager it would otherwise
     // reach holds the editor's edits.
     if terminalHasFocus {
@@ -558,10 +594,15 @@ func monknotUndoCommandDestination(
             return .native
         }
         // Nothing to undo in the focused text: the workspace Replace All is next, as its
-        // confirmation promises that ⌘Z undoes it.
-        return canPerformWorkspaceReplace ? .workspaceReplace : .unavailable
+        // confirmation promises that ⌘Z undoes it. A file move never is: the text keeps ⌘Z.
+        return replaceIsNext ? .workspaceReplace : .unavailable
     }
-    if canPerformWorkspaceReplace {
+    // Moves and copies are undone with focus anywhere but text, the terminal or a document view,
+    // which keep their own undo. Of a move and a Replace, the newer goes first.
+    if canPerformFileOperation, !documentViewHasFocus, fileOperationIsNewer || !canPerformWorkspaceReplace {
+        return .fileOperation
+    }
+    if replaceIsNext {
         return .workspaceReplace
     }
     if isPDFDocumentActive {
