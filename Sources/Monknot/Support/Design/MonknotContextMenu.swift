@@ -88,14 +88,21 @@ struct MonknotMenuCommandButton: View {
 
 // MARK: - Model and layout
 
-/// One open context menu: its rows, and which one the pointer or the keyboard has highlighted.
+/// One open menu: its rows, which one the pointer or the keyboard has highlighted, and how far a menu
+/// taller than it may be has scrolled.
 @MainActor
 final class MonknotContextMenuModel: ObservableObject {
     struct Item {
         let title: String
         let systemImage: String?
+        /// A colour's swatch in the glyph column, for a colour among a pop-up's values.
+        var swatch: Color?
         let isEnabled: Bool
         let isDestructive: Bool
+        /// One of a pop-up's values: every value row keeps room for the check, and the current one
+        /// shows it.
+        var isValue = false
+        var isChecked = false
         let perform: () -> Void
     }
 
@@ -112,10 +119,24 @@ final class MonknotContextMenuModel: ObservableObject {
     }
 
     let entries: [Entry]
-    @Published var highlighted: Int?
+    @Published var highlighted: Int? {
+        didSet {
+            if highlighted != oldValue {
+                onHighlight?(highlighted)
+            }
+        }
+    }
     @Published var pressed: Int?
     /// False until the surface has been drawn once, so it grows in from its corner.
     @Published var isShown = false
+    /// How far the rows have scrolled, in points from the top, in a menu taller than it may be.
+    @Published var scrollOffset: CGFloat = 0
+    /// The thumb shows while the rows scroll and a moment after, never merely under the pointer
+    /// (design.md §5.7).
+    @Published var showsThumb = false
+    @Published var isThumbHovered = false
+    /// Told when the highlight moves, so a pop-up can preview the value under it.
+    var onHighlight: ((Int?) -> Void)?
 
     init(entries: [Entry]) {
         self.entries = entries
@@ -167,19 +188,40 @@ final class MonknotContextMenuModel: ObservableObject {
     }
 }
 
-/// Where each row of a context menu sits, in the surface's own coordinates from its top left. The
-/// surface draws from these frames and the pointer is hit-tested against them, so the two agree at
-/// every zoom.
+/// Where each row of a menu sits, from the top left of its content: the surface's own coordinates
+/// until it scrolls. The surface draws from these frames and the pointer is hit-tested against them,
+/// so the two agree at every zoom.
 struct MonknotContextMenuLayout {
     static let minimumWidthBase: CGFloat = 232
     static let maximumWidthBase: CGFloat = 320
+    /// A pop-up's values scroll past this height, as Preview's menus do (editor.css `.mk-menu`).
+    static let valueMenuMaximumHeightBase: CGFloat = 380
+    /// The thumb's shortest length, so a long list's thumb stays easy to see and grab.
+    static let minimumThumbLength: CGFloat = 20
 
     let frames: [CGRect]
+    /// The surface: as tall as the content, or as tall as it may be where the menu scrolls.
     let size: CGSize
+    /// The rows with the list inset above and below.
+    let contentHeight: CGFloat
+    let rowHeight: CGFloat
+    /// False for a menu of plain names, which has no glyph column (as Preview's language menu).
+    let hasGlyphColumn: Bool
+    /// A pop-up's menu keeps the check's room on every row, so the check never moves the labels.
+    let reservesCheck: Bool
     /// The entries that are rows, not separators.
     private let rows: Set<Int>
+    private let inset: CGFloat
 
-    init(entries: [MonknotContextMenuModel.Entry], theme: AppTheme, zoomScale: Double) {
+    /// `minimumWidth` keeps a pop-up's menu as wide as its button; past `maximumHeight` the rows
+    /// scroll.
+    init(
+        entries: [MonknotContextMenuModel.Entry],
+        theme: AppTheme,
+        zoomScale: Double,
+        minimumWidth: CGFloat = 0,
+        maximumHeight: CGFloat? = nil
+    ) {
         func density(_ base: CGFloat) -> CGFloat {
             MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
         }
@@ -187,16 +229,23 @@ struct MonknotContextMenuLayout {
         let rowHeight = density(MonknotMetrics.menuRowHeightBase)
         let separatorHeight = 1 + 2 * density(6)
         let font = NSFont.systemFont(ofSize: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale))
-        let widestLabel = entries.compactMap(\.item).map { item in
+        let items = entries.compactMap(\.item)
+        let widestLabel = items.map { item in
             ceil((item.title as NSString).size(withAttributes: [.font: font]).width)
         }.max() ?? 0
+        let hasGlyphColumn = items.contains { $0.systemImage != nil || $0.swatch != nil }
+        let reservesCheck = items.contains(where: \.isValue)
+        let glyphColumn = hasGlyphColumn
+            ? MonknotMetrics.interfaceGlyph(MonknotMetrics.rowIconColumnWidthBase, theme: theme, zoomScale: zoomScale)
+                + density(MonknotMetrics.menuRowGlyphGapBase)
+            : 0
         let rowChrome = 2 * density(MonknotMetrics.menuRowPaddingBase)
-            + MonknotMetrics.interfaceGlyph(MonknotMetrics.rowIconColumnWidthBase, theme: theme, zoomScale: zoomScale)
-            + density(MonknotMetrics.menuRowGlyphGapBase)
+            + glyphColumn
             + density(8)
+            + (reservesCheck ? MonknotMenuRowCheck.width(theme: theme, zoomScale: zoomScale) : 0)
         let width = min(
-            max(density(Self.minimumWidthBase), 2 * inset + rowChrome + widestLabel),
-            density(Self.maximumWidthBase)
+            max(density(Self.minimumWidthBase), minimumWidth, 2 * inset + rowChrome + widestLabel),
+            max(density(Self.maximumWidthBase), minimumWidth)
         )
 
         var frames: [CGRect] = []
@@ -219,13 +268,82 @@ struct MonknotContextMenuLayout {
             }
         }
         self.frames = frames
-        self.size = CGSize(width: width, height: y + inset)
+        self.contentHeight = y + inset
+        self.size = CGSize(width: width, height: min(y + inset, maximumHeight ?? .greatestFiniteMagnitude))
+        self.rowHeight = rowHeight
+        self.hasGlyphColumn = hasGlyphColumn
+        self.reservesCheck = reservesCheck
         self.rows = Set(entries.indices.filter { entries[$0].item != nil })
+        self.inset = inset
     }
 
-    /// The row under `point`, in the surface's coordinates; nil over the inset or a separator.
+    var maximumScrollOffset: CGFloat {
+        max(0, contentHeight - size.height)
+    }
+
+    var scrolls: Bool {
+        maximumScrollOffset > 0
+    }
+
+    /// The row under `point`, in the content's coordinates; nil over the inset or a separator.
     func entry(at point: CGPoint) -> Int? {
         frames.indices.first { rows.contains($0) && frames[$0].contains(point) }
+    }
+
+    /// The entries any part of which shows at `offset`.
+    func visibleEntries(at offset: CGFloat) -> [Int] {
+        guard scrolls else { return Array(frames.indices) }
+        return frames.indices.filter { frames[$0].maxY > offset && frames[$0].minY < offset + size.height }
+    }
+
+    func clampedOffset(_ offset: CGFloat) -> CGFloat {
+        min(max(0, offset), maximumScrollOffset)
+    }
+
+    /// The offset nearest `offset` that shows the row at `index` whole, with the list inset around it,
+    /// as Preview's menus reveal a row the keys reach.
+    func offset(revealing index: Int, from offset: CGFloat) -> CGFloat {
+        guard frames.indices.contains(index) else { return offset }
+        let top = frames[index].minY - inset
+        let bottom = frames[index].maxY + inset
+        if top < offset {
+            return clampedOffset(top)
+        }
+        if bottom > offset + size.height {
+            return clampedOffset(bottom - size.height)
+        }
+        return offset
+    }
+
+    /// The offset that puts the row at `index` in the middle of the menu, where a pop-up opens with its
+    /// value.
+    func offset(centering index: Int) -> CGFloat {
+        guard frames.indices.contains(index) else { return 0 }
+        return clampedOffset(frames[index].midY - size.height / 2)
+    }
+
+    /// The thumb in the surface's coordinates at `offset` (design.md §5.7): a capsule centred in the 9
+    /// lane flush with the trailing edge, 4 wide at rest and 6 under the pointer, its ends 6 clear of
+    /// the surface's; nil when the menu does not scroll.
+    func thumbFrame(offset: CGFloat, isHovered: Bool) -> CGRect? {
+        guard scrolls else { return nil }
+        let track = size.height - 2 * MonknotScrollbarStyle.endInset
+        let length = max(Self.minimumThumbLength, track * size.height / contentHeight)
+        let travel = max(0, track - length)
+        let width = isHovered ? MonknotScrollbarStyle.hoveredThumbWidth : MonknotScrollbarStyle.restingThumbWidth
+        return CGRect(
+            x: size.width - MonknotScrollbarStyle.thumbCenterInset - width / 2,
+            y: MonknotScrollbarStyle.endInset + travel * clampedOffset(offset) / maximumScrollOffset,
+            width: width,
+            height: length
+        )
+    }
+
+    /// How far the content scrolls for each point the thumb is dragged.
+    var scrollPerThumbPoint: CGFloat {
+        guard let thumb = thumbFrame(offset: 0, isHovered: false) else { return 0 }
+        let travel = size.height - 2 * MonknotScrollbarStyle.endInset - thumb.height
+        return travel > 0 ? maximumScrollOffset / travel : 0
     }
 }
 
@@ -233,7 +351,9 @@ struct MonknotContextMenuLayout {
 
 /// The menu row on a floating surface (design.md §5.8): `surf2`, radius 12, `e2`, the 6 list inset,
 /// 30 rows 1 apart. The one highlight is the `selected` fill, `press` while held; a destructive
-/// command's highlighted row is `danger`. It grows in from the pointer's corner.
+/// command's highlighted row is `danger`; a pop-up's current value carries the check. It grows in from
+/// the pointer's corner. A menu taller than it may be scrolls under the chrome lists' thumb, drawing
+/// only the rows in view.
 struct MonknotContextMenuSurface: View {
     @ObservedObject var model: MonknotContextMenuModel
     let layout: MonknotContextMenuLayout
@@ -244,10 +364,10 @@ struct MonknotContextMenuSurface: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            ForEach(Array(model.entries.enumerated()), id: \.offset) { index, entry in
+            ForEach(layout.visibleEntries(at: model.scrollOffset), id: \.self) { index in
                 let frame = layout.frames[index]
                 Group {
-                    switch entry {
+                    switch model.entries[index] {
                     case .separator:
                         MonknotMenuSeparator(theme: theme, zoomScale: zoomScale)
                     case .item(let item):
@@ -255,10 +375,21 @@ struct MonknotContextMenuSurface: View {
                     }
                 }
                 .frame(width: frame.width, height: frame.height)
-                .offset(x: frame.minX, y: frame.minY)
+                .offset(x: frame.minX, y: frame.minY - model.scrollOffset)
             }
         }
         .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
+        .overlay(alignment: .topLeading) {
+            if let thumb = layout.thumbFrame(offset: model.scrollOffset, isHovered: model.isThumbHovered) {
+                Capsule()
+                    .fill(theme.foregroundColor.opacity(
+                        model.isThumbHovered ? MonknotScrollbarStyle.hoveredOpacity : MonknotScrollbarStyle.restingOpacity
+                    ))
+                    .frame(width: thumb.width, height: thumb.height)
+                    .offset(x: thumb.minX, y: thumb.minY)
+                    .opacity(model.showsThumb ? 1 : 0)
+            }
+        }
         .monknotFloatingSurface(
             .e2,
             cornerRadius: theme.chromeRadius(MonknotMetrics.cardCornerRadius, zoomScale: zoomScale),
@@ -276,15 +407,22 @@ struct MonknotContextMenuSurface: View {
             : model.pressed == index ? theme.pressedFillColor
             : isHighlighted ? theme.chromeSelectedFillColor
             : .clear
+        let leading: MonknotMenuRowLeading = !layout.hasGlyphColumn ? .none
+            : item.swatch.map { .swatch($0) } ?? item.systemImage.map { .glyph($0) } ?? .blank
         return MonknotMenuRowLabel(
-            leading: item.systemImage.map { .glyph($0) } ?? .blank,
+            leading: leading,
             title: item.title,
             isHighlighted: isHighlighted,
             isDisabled: !item.isEnabled,
             isDestructive: item.isDestructive,
             theme: theme,
             zoomScale: zoomScale
-        )
+        ) {
+            if layout.reservesCheck {
+                MonknotMenuRowCheck(isDisabled: !item.isEnabled, theme: theme, zoomScale: zoomScale)
+                    .opacity(item.isChecked ? 1 : 0)
+            }
+        }
         .background {
             // The highlight moves at once, as the keyboard moves it: a menu never trails the pointer.
             RoundedRectangle(cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale))
@@ -394,12 +532,13 @@ final class MonknotContextMenuInteractionView: NSView {
 private final class MonknotContextMenuAccessibilityRow: NSAccessibilityElement {
     let press: () -> Bool
 
-    init(title: String, isEnabled: Bool, frame: NSRect, parent: NSView, press: @escaping () -> Bool) {
+    init(title: String, isEnabled: Bool, isChecked: Bool, frame: NSRect, parent: NSView, press: @escaping () -> Bool) {
         self.press = press
         super.init()
         setAccessibilityRole(.menuItem)
         setAccessibilityLabel(title)
         setAccessibilityEnabled(isEnabled)
+        setAccessibilitySelected(isChecked)
         setAccessibilityParent(parent)
         setAccessibilityFrame(frame)
     }
@@ -459,7 +598,8 @@ struct MonknotContextMenuAppearance: NSViewRepresentable {
 /// as AppKit would, and draws those rows on a floating surface instead of the system's menu. Text
 /// in Source, Preview, a PDF and the terminal, and the media player, keep the system's menu, which
 /// carries spelling, Writing Tools, Look Up and Services; so does a window that has not reported its
-/// appearance, and a menu with a submenu.
+/// appearance, and a menu with a submenu. A control's menu (a pop-up's values, the PDF bar's More)
+/// is the same menu, opened below the control by `presentMenu`.
 @MainActor
 final class MonknotContextMenuController: ObservableObject {
     static let shared = MonknotContextMenuController()
@@ -491,7 +631,8 @@ final class MonknotContextMenuController: ObservableObject {
         weak var window: NSWindow?
         let surfaceFrame: NSRect
         let openedAt: TimeInterval
-        let onClose: (() -> Void)?
+        /// Told the chosen entry, or nil when the menu closed without a choice.
+        let onClose: ((Int?) -> Void)?
     }
 
     private var appearances: [ObjectIdentifier: WindowAppearance] = [:]
@@ -503,6 +644,11 @@ final class MonknotContextMenuController: ObservableObject {
     private var openingPressIsDown = false
     private var typeSelection = ""
     private var typeSelectionTime: TimeInterval = 0
+    /// Where a drag of the thumb started: the pointer's height on screen and the offset then.
+    private var thumbDrag: (pointerY: CGFloat, offset: CGFloat)?
+    private var thumbHide: DispatchWorkItem?
+    /// How long the thumb stays after the rows stop scrolling, as in Preview's menus.
+    static let thumbLinger: TimeInterval = 0.7
 
     var isOpen: Bool {
         presentation != nil
@@ -575,7 +721,9 @@ final class MonknotContextMenuController: ObservableObject {
             }
             return Handled(passThrough: isInPanel)
         case .scrollWheel:
-            if !isInPanel {
+            if isInPanel {
+                scroll(with: event)
+            } else {
                 close()
             }
             return Handled(passThrough: false)
@@ -651,43 +799,39 @@ final class MonknotContextMenuController: ObservableObject {
         return false
     }
 
-    /// Shows a menu button's commands (the PDF bar's More) below `anchor`, its leading edges on the
-    /// button's, 4 clear of it; above it where the screen ends. False when `anchor`'s window has not
-    /// reported its appearance, so the caller shows the system's menu instead.
-    func presentCommands(
-        _ groups: [[MonknotPopUpAction]],
+    /// Shows a control's menu below `anchor` (design.md §5.1, §5.3): a menu button's commands (the PDF
+    /// bar's More), or a pop-up's values with the current one checked, highlighted and in view. Its
+    /// leading edge is on the control's, 4 clear of it, above it where the screen ends; where it would
+    /// cross the window's trailing edge (a control at the end of a bar), it ends on the control's
+    /// trailing edge instead. It is at least as wide as the control, and scrolls past
+    /// `maximumHeightBase`. False when `anchor` is in no window.
+    @discardableResult
+    func presentMenu(
+        _ entries: [MonknotContextMenuModel.Entry],
         below anchor: NSView,
-        onClose: @escaping () -> Void
+        theme: AppTheme,
+        zoomScale: Double,
+        maximumHeightBase: CGFloat? = nil,
+        onHighlight: ((Int?) -> Void)? = nil,
+        onClose: @escaping (Int?) -> Void
     ) -> Bool {
-        guard let window = anchor.window,
-              let appearance = appearances[ObjectIdentifier(window)],
-              appearance.window === window
-        else { return false }
-        var entries: [MonknotContextMenuModel.Entry] = []
-        for group in groups where !group.isEmpty {
-            if !entries.isEmpty {
-                entries.append(.separator)
-            }
-            for command in group {
-                entries.append(.item(MonknotContextMenuModel.Item(
-                    title: command.title,
-                    systemImage: command.systemImage ?? MonknotMenuCommand(rawValue: command.title)?.systemImage,
-                    isEnabled: command.isEnabled,
-                    isDestructive: MonknotMenuCommand(rawValue: command.title)?.isDestructive == true,
-                    perform: command.action
-                )))
-            }
-        }
-        guard !entries.isEmpty else { return false }
+        guard let window = anchor.window, !entries.isEmpty else { return false }
+        install()
         let anchorRect = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
-        let gap = MonknotMetrics.interfaceDensity(4, theme: appearance.theme, zoomScale: appearance.zoomScale)
+        let gap = MonknotMetrics.interfaceDensity(4, theme: theme, zoomScale: zoomScale)
         present(
             entries: entries,
             at: NSPoint(x: anchorRect.minX, y: anchorRect.minY - gap),
             flippedAbove: anchorRect.maxY + gap,
+            flippedLeftTo: anchorRect.maxX,
+            within: window.frame.maxX,
             in: window,
-            theme: appearance.theme,
-            zoomScale: appearance.zoomScale,
+            theme: theme,
+            zoomScale: zoomScale,
+            minimumWidth: anchorRect.width,
+            maximumHeight: maximumHeightBase.map { MonknotMetrics.interfaceDensity($0, theme: theme, zoomScale: zoomScale) },
+            highlighted: entries.firstIndex { $0.item?.isChecked == true },
+            onHighlight: onHighlight,
             onClose: onClose
         )
         openingPressIsDown = false
@@ -695,29 +839,48 @@ final class MonknotContextMenuController: ObservableObject {
     }
 
     /// Shows `entries` with the surface's top-left corner at `screenPoint`, flipped left or up where
-    /// the screen ends, 6 clear of its edge; flipped up, its bottom edge is at `flippedAbove`, or at
-    /// the point itself.
+    /// the screen (or `within`, a trailing edge it keeps inside) ends, 6 clear of the screen's edge;
+    /// flipped up, its bottom edge is at `flippedAbove`, and flipped left its trailing edge is at
+    /// `flippedLeftTo`, or at the point itself. A menu taller than `maximumHeight` or the screen
+    /// scrolls; `highlighted` opens highlighted and in view, without telling `onHighlight`.
     func present(
         entries: [MonknotContextMenuModel.Entry],
         menu: NSMenu? = nil,
         at screenPoint: NSPoint,
         flippedAbove: CGFloat? = nil,
+        flippedLeftTo: CGFloat? = nil,
+        within trailingLimit: CGFloat? = nil,
         in window: NSWindow,
         theme: AppTheme,
         zoomScale: Double,
-        onClose: (() -> Void)? = nil
+        minimumWidth: CGFloat = 0,
+        maximumHeight: CGFloat? = nil,
+        highlighted: Int? = nil,
+        onHighlight: ((Int?) -> Void)? = nil,
+        onClose: ((Int?) -> Void)? = nil
     ) {
         close(animated: false)
 
-        let model = MonknotContextMenuModel(entries: entries)
-        let layout = MonknotContextMenuLayout(entries: entries, theme: theme, zoomScale: zoomScale)
-        let size = layout.size
         let visible = (window.screen ?? NSScreen.main)?.visibleFrame.insetBy(dx: 6, dy: 6)
             ?? NSRect(origin: .zero, size: CGSize(width: 10_000, height: 10_000))
+        let model = MonknotContextMenuModel(entries: entries)
+        let layout = MonknotContextMenuLayout(
+            entries: entries,
+            theme: theme,
+            zoomScale: zoomScale,
+            minimumWidth: minimumWidth,
+            maximumHeight: min(maximumHeight ?? .greatestFiniteMagnitude, visible.height)
+        )
+        if let highlighted, model.isEnabled(highlighted) {
+            model.highlighted = highlighted
+            model.scrollOffset = layout.offset(centering: highlighted)
+        }
+        model.onHighlight = onHighlight
+        let size = layout.size
         var surface = NSRect(x: screenPoint.x, y: screenPoint.y - size.height, width: size.width, height: size.height)
         var anchor = UnitPoint.topLeading
-        if surface.maxX > visible.maxX {
-            surface.origin.x = screenPoint.x - size.width
+        if surface.maxX > min(visible.maxX, trailingLimit ?? .greatestFiniteMagnitude) {
+            surface.origin.x = (flippedLeftTo ?? screenPoint.x) - size.width
             anchor = .topTrailing
         }
         if surface.minY < visible.minY {
@@ -826,8 +989,22 @@ final class MonknotContextMenuController: ObservableObject {
         guard let presentation else { return nil }
         let location = NSEvent.mouseLocation
         let surface = presentation.surfaceFrame
-        let point = CGPoint(x: location.x - surface.minX, y: surface.maxY - location.y)
+        guard surface.contains(location) else { return nil }
+        let point = CGPoint(x: location.x - surface.minX, y: surface.maxY - location.y + presentation.model.scrollOffset)
         return presentation.layout.entry(at: point)
+    }
+
+    /// The pointer is in the thumb's lane while the thumb shows, where a press drags it.
+    private var pointerIsOverThumbLane: Bool {
+        guard let presentation, presentation.layout.scrolls, presentation.model.showsThumb else { return false }
+        let surface = presentation.surfaceFrame
+        let lane = NSRect(
+            x: surface.maxX - MonknotScrollbarStyle.trackWidth,
+            y: surface.minY,
+            width: MonknotScrollbarStyle.trackWidth,
+            height: surface.height
+        )
+        return lane.contains(NSEvent.mouseLocation)
     }
 
     private var pointerIsOverSurface: Bool {
@@ -836,7 +1013,25 @@ final class MonknotContextMenuController: ObservableObject {
     }
 
     func pointerMoved() {
-        guard let model = presentation?.model else { return }
+        guard let presentation else { return }
+        let model = presentation.model
+        if let thumbDrag {
+            let dragged = thumbDrag.pointerY - NSEvent.mouseLocation.y
+            setScrollOffset(thumbDrag.offset + dragged * presentation.layout.scrollPerThumbPoint)
+            return
+        }
+        let overLane = pointerIsOverThumbLane
+        if model.isThumbHovered != overLane {
+            withAnimation(MonknotMotion.hoverAnimation) {
+                model.isThumbHovered = overLane
+            }
+        }
+        if overLane {
+            // A thumb under the pointer stays until the pointer leaves it.
+            cancelThumbHide()
+        } else if model.showsThumb, thumbHide == nil {
+            scheduleThumbHide()
+        }
         let index = entryUnderPointer().flatMap { model.isEnabled($0) ? $0 : nil }
         if model.highlighted != index {
             model.highlighted = index
@@ -848,12 +1043,22 @@ final class MonknotContextMenuController: ObservableObject {
 
     func pointerDown() {
         guard let model = presentation?.model else { return }
+        if pointerIsOverThumbLane {
+            thumbDrag = (NSEvent.mouseLocation.y, model.scrollOffset)
+            cancelThumbHide()
+            return
+        }
         pointerMoved()
         model.pressed = model.highlighted
     }
 
     func pointerUp() {
         guard let model = presentation?.model else { return }
+        if thumbDrag != nil {
+            thumbDrag = nil
+            pointerMoved()
+            return
+        }
         let index = entryUnderPointer()
         model.pressed = nil
         openingPressIsDown = false
@@ -877,10 +1082,64 @@ final class MonknotContextMenuController: ObservableObject {
         }
     }
 
+    // MARK: Scrolling
+
+    /// A wheel or trackpad over a menu taller than it may be scrolls its rows; the row under the
+    /// pointer takes the highlight as they pass.
+    private func scroll(with event: NSEvent) {
+        guard let presentation, presentation.layout.scrolls else { return }
+        let delta = event.hasPreciseScrollingDeltas
+            ? event.scrollingDeltaY
+            : event.scrollingDeltaY * presentation.layout.rowHeight
+        setScrollOffset(presentation.model.scrollOffset - delta)
+        pointerMoved()
+    }
+
+    private func setScrollOffset(_ offset: CGFloat) {
+        guard let presentation else { return }
+        let clamped = presentation.layout.clampedOffset(offset)
+        guard clamped != presentation.model.scrollOffset else { return }
+        presentation.model.scrollOffset = clamped
+        presentation.model.showsThumb = true
+        if thumbDrag == nil, !presentation.model.isThumbHovered {
+            scheduleThumbHide()
+        } else {
+            cancelThumbHide()
+        }
+    }
+
+    private func cancelThumbHide() {
+        thumbHide?.cancel()
+        thumbHide = nil
+    }
+
+    /// The thumb fades a moment after the rows stop, unless the pointer is on it.
+    private func scheduleThumbHide() {
+        thumbHide?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let model = self.presentation?.model else { return }
+            self.thumbHide = nil
+            guard self.thumbDrag == nil, !model.isThumbHovered else { return }
+            withAnimation(MonknotMotion.hoverAnimation) {
+                model.showsThumb = false
+            }
+        }
+        thumbHide = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.thumbLinger, execute: work)
+    }
+
     // MARK: Keys
 
     private func handleKey(_ event: NSEvent) {
-        guard let model = presentation?.model else { return }
+        guard let presentation else { return }
+        let model = presentation.model
+        let before = model.highlighted
+        defer {
+            // The keys keep the row they reach in view.
+            if let after = presentation.model.highlighted, after != before, self.presentation?.id == presentation.id {
+                setScrollOffset(presentation.layout.offset(revealing: after, from: model.scrollOffset))
+            }
+        }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let enabled = model.enabledIndices
         let control = modifiers == .control
@@ -897,6 +1156,9 @@ final class MonknotContextMenuController: ObservableObject {
             model.highlighted = enabled.first
         case 119, 121:
             model.highlighted = enabled.last
+        case 49 where isTypeSelecting:
+            // A space inside a name being typed ("Helvetica Neue") goes on finding it.
+            typeSelect(" ", modifiers: modifiers, model: model)
         case 36, 76, 49:
             if let index = model.highlighted, model.isEnabled(index) {
                 choose(index)
@@ -921,6 +1183,10 @@ final class MonknotContextMenuController: ObservableObject {
         } else {
             model.highlighted = enabled.last { $0 < current } ?? current
         }
+    }
+
+    private var isTypeSelecting: Bool {
+        !typeSelection.isEmpty && ProcessInfo.processInfo.systemUptime - typeSelectionTime <= 1
     }
 
     /// Typing highlights the first enabled row whose title starts with what was typed; a pause of a
@@ -948,19 +1214,21 @@ final class MonknotContextMenuController: ObservableObject {
 
     private func choose(_ index: Int) {
         guard let item = presentation?.model.entries[index].item, item.isEnabled else { return }
-        close()
+        close(chosen: index)
         // The action runs once the menu has started to leave, as a system menu's does.
         DispatchQueue.main.async {
             item.perform()
         }
     }
 
-    /// Closes the open menu: a 90 ms fade, or at once.
-    func close(animated: Bool = true) {
+    /// Closes the open menu: a 90 ms fade, or at once. `chosen` is the entry whose action runs next.
+    func close(animated: Bool = true, chosen: Int? = nil) {
         guard let presentation else { return }
         self.presentation = nil
         openingPressIsDown = false
         typeSelection = ""
+        thumbDrag = nil
+        cancelThumbHide()
         observers.forEach(NotificationCenter.default.removeObserver)
         observers = []
         if let globalMonitor {
@@ -975,7 +1243,7 @@ final class MonknotContextMenuController: ObservableObject {
         if let menu = presentation.menu {
             menu.delegate?.menuDidClose?(menu)
         }
-        presentation.onClose?()
+        presentation.onClose?(chosen)
         guard animated else {
             panel.orderOut(nil)
             return
@@ -1001,13 +1269,14 @@ final class MonknotContextMenuController: ObservableObject {
             let frame = presentation.layout.frames[index]
             let screenFrame = NSRect(
                 x: surface.minX + frame.minX,
-                y: surface.maxY - frame.maxY,
+                y: surface.maxY - frame.maxY + presentation.model.scrollOffset,
                 width: frame.width,
                 height: frame.height
             )
             return MonknotContextMenuAccessibilityRow(
                 title: item.title,
                 isEnabled: item.isEnabled,
+                isChecked: item.isChecked,
                 frame: screenFrame,
                 parent: view
             ) { [weak self] in

@@ -913,11 +913,7 @@ private struct PDFAnnotationToolbar: View {
             label: "Annotation Tool",
             selection: modeSelection,
             items: modes.map {
-                MonknotPopUpItem(
-                    id: $0.toolbarID,
-                    title: $0.title,
-                    image: NSImage(systemSymbolName: $0.systemImage, accessibilityDescription: nil)
-                )
+                MonknotPopUpItem(id: $0.toolbarID, title: $0.title, systemImage: $0.systemImage)
             },
             actions: [MonknotPopUpAction(title: "Add Text Box", action: addFreeText)],
             theme: theme,
@@ -1005,7 +1001,7 @@ private struct PDFAnnotationToolbar: View {
                 }
             ),
             items: PDFAnnotationPaletteColor.all.map {
-                MonknotPopUpItem(id: $0.id, title: $0.name, image: $0.menuSwatch)
+                MonknotPopUpItem(id: $0.id, title: $0.name, swatch: $0.color)
             },
             actions: offersStrokeWidth
                 ? [MonknotPopUpAction(title: "Stroke Width…") { strokeWidthPopoverLayout = layout }]
@@ -1014,8 +1010,8 @@ private struct PDFAnnotationToolbar: View {
             zoomScale: zoomScale,
             leadingPaddingBase: 8
         ) { shown in
-            PDFColorSwatch(
-                color: PDFAnnotationPaletteColor.all.first { $0.id == shown } ?? selectedColor,
+            MonknotColorSwatch(
+                color: (PDFAnnotationPaletteColor.all.first { $0.id == shown } ?? selectedColor).color,
                 theme: theme,
                 zoomScale: zoomScale
             )
@@ -1188,25 +1184,6 @@ struct PDFZoomToolbarGroup: View {
         }
         .disabled(!status.isAvailable)
         .accessibilityValue(status.displayLabel)
-    }
-}
-
-/// The markup colour as a pop-up's value: a 14 pt swatch inside a `line` hairline.
-private struct PDFColorSwatch: View {
-    let color: PDFAnnotationPaletteColor
-    let theme: AppTheme
-    let zoomScale: Double
-
-    @Environment(\.monknotPopUpDisabled) private var isDisabled
-
-    var body: some View {
-        let diameter = MonknotMetrics.interfaceGlyph(14, theme: theme, zoomScale: zoomScale)
-        Circle()
-            .fill(color.color)
-            .overlay { Circle().strokeBorder(theme.borderColor, lineWidth: 1) }
-            .frame(width: diameter, height: diameter)
-            .opacity(isDisabled ? 0.35 : 1)
-            .accessibilityHidden(true)
     }
 }
 
@@ -6227,24 +6204,6 @@ private struct PDFAnnotationPaletteColor: Identifiable, Equatable {
     static let graphite = PDFAnnotationPaletteColor(id: "graphite", name: "Graphite", hex: "#d8dee9")
 
     static let all: [PDFAnnotationPaletteColor] = [.yellow, .green, .blue, .pink, .red, .graphite]
-
-    /// The colour's swatch beside its name in the style menu.
-    var menuSwatch: NSImage {
-        Self.menuSwatches[id] ?? NSImage()
-    }
-
-    private static let menuSwatches: [String: NSImage] = Dictionary(uniqueKeysWithValues: all.map { color in
-        let image = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
-            let circle = NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5))
-            color.nsColor.setFill()
-            circle.fill()
-            NSColor.black.withAlphaComponent(0.15).setStroke()
-            circle.lineWidth = 1
-            circle.stroke()
-            return true
-        }
-        return (color.id, image)
-    })
 }
 
 private enum PDFAnnotationOperationError: LocalizedError {

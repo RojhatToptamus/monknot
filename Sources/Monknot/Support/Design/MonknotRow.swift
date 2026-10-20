@@ -9,6 +9,8 @@ enum MonknotMenuRowLeading {
     case blank
     /// A short text in the glyph column, such as a line number.
     case tag(String)
+    /// A colour as a value (a markup colour): its swatch, as the pop-up showing it draws it.
+    case swatch(Color)
 }
 
 /// A menu row is 30 tall in a popover and 34 in an overlay.
@@ -75,6 +77,9 @@ struct MonknotMenuRowLabel<Trailing: View>: View {
                     .lineLimit(1)
                     .fixedSize()
                     .frame(minWidth: MonknotMetrics.interfaceGlyph(MonknotMetrics.rowIconColumnWidthBase, theme: theme, zoomScale: zoomScale))
+            case .swatch(let color):
+                MonknotColorSwatch(color: color, isDisabled: isDisabled, theme: theme, zoomScale: zoomScale)
+                    .frame(width: MonknotMetrics.interfaceGlyph(MonknotMetrics.rowIconColumnWidthBase, theme: theme, zoomScale: zoomScale))
             }
 
             if let detail, !detail.isEmpty {
@@ -163,6 +168,28 @@ extension MonknotMenuRowLabel where Trailing == EmptyView {
             zoomScale: zoomScale,
             trailing: { EmptyView() }
         )
+    }
+}
+
+/// The current value's check at the end of a menu row (editor.css `.mk-row-check`): an 11 `checkmark`
+/// in `ink2`, `ink4` disabled. A pop-up's menu checks its value with it, as Preview's menus do.
+struct MonknotMenuRowCheck: View {
+    static let pointSizeBase: CGFloat = 11
+
+    var isDisabled = false
+    let theme: AppTheme
+    let zoomScale: Double
+
+    /// The room a check takes at the end of a row, which a menu of values keeps on every row.
+    static func width(theme: AppTheme, zoomScale: Double) -> CGFloat {
+        MonknotMetrics.interfaceGlyph(pointSizeBase, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        MonknotSystemGlyph(systemImage: "checkmark", nominalPointSizeBase: Self.pointSizeBase, theme: theme, zoomScale: zoomScale)
+            .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.mutedForegroundColor)
+            .frame(width: Self.width(theme: theme, zoomScale: zoomScale))
+            .accessibilityHidden(true)
     }
 }
 

@@ -408,7 +408,8 @@ box, radius 6, a 13pt symbol. No padding value — the box and the centring do i
 two regular buttons 2 apart, with no shell around them. A button that shows or hides a panel has no
 on state (§1.3). A button that opens a menu of commands (More) is the same button (`MonknotMenuButton`),
 holding `press` while its menu shows; the menu is Monknot's menu (§5.8), below the button and 4 clear of
-it, above it where the screen ends.
+it, above it where the screen ends, and ending on the button's trailing edge where it would cross the
+window's (§5.3).
 A disabled container (a PDF bar while its document loads) disables its buttons, and they draw
 themselves at `ink4`; nothing dims the bar.
 
@@ -454,8 +455,24 @@ A **pop-up** (`MonknotPopUpButton`: Settings' pickers, the PDF zoom, tool, marku
 Find in Workspace's replace scope) is 28 tall: its value (13 `ink`, tabular, as wide as its longest
 option, or a swatch or glyph) and a 10 `chevron.down` in `ink3`, 10 leading (8 before a swatch or
 glyph) and 8 trailing, on the `track` fill; `hover` tint under the pointer, `press` while its menu is
-open. Its menu is native, with the current value checked and placed over the button, as
-`NSPopUpButton` places it; commands that are not values (Stroke Width…) follow a separator.
+open. Its menu is Monknot's menu (§5.8), opened below the button as More's is, so a value list and a
+command list beside it in a bar are one surface:
+
+- **Where:** its leading edge on the button's, 4 below it, above it where the screen ends; at least
+  as wide as the button. Where it would cross the window's trailing edge (the zoom ends the PDF bar),
+  it ends on the button's trailing edge instead, so a menu never hangs off its window.
+- **Values:** the current one carries an 11 `checkmark` in `ink2` at the row's end, as Preview's
+  value menus do (`MonknotMenuRowCheck`), and opens highlighted and in view; every value row keeps
+  the check's room, so the labels never shift. A value missing from the list (a zoom between
+  presets) leaves nothing checked or highlighted. A tool shows its glyph and a colour its swatch
+  (`MonknotColorSwatch`, the button's own) in the glyph column; plain names (zoom levels, fonts,
+  themes) have no glyph column.
+- **Commands** that are not values (Stroke Width…, Add Text Box) follow a separator.
+- **Long lists** scroll past 380, as Preview's menus do: the chrome lists' thumb shows while the rows
+  scroll and fades 0.7 s after, the keys keep the row they reach in view, and typing finds a row by
+  its name, a space included ("Helvetica Neue").
+- **Previews:** where the control previews (Settings' theme), the highlighted value is shown until
+  the menu closes; Esc or a click elsewhere restores the value it opened with.
 
 ### 5.4 Button with glyph and label
 
@@ -532,10 +549,11 @@ edge. It takes its colour from the theme's `ink`.
 ### 5.8 Context menus
 
 Every right-click (or Control-click) in the chrome opens Monknot's menu, never the system's: a sidebar
-row, the tree's empty space, a Recents row, a document tab, a terminal session, and the PDF bar's More
-button. It is the menu row on a floating surface, the same as Preview's menus and the workspace
-switcher, so a menu looks the same wherever it opens (`MonknotContextMenuController`,
-`MonknotContextMenuSurface`).
+row, the tree's empty space, a Recents row, a document tab, a terminal session; so do the PDF bar's
+More button and every pop-up's values (§5.3), opened below their control
+(`MonknotContextMenuController.presentMenu`). It is the menu row on a floating surface, the same as
+Preview's menus and the workspace switcher, so a menu looks the same wherever it opens
+(`MonknotContextMenuController`, `MonknotContextMenuSurface`).
 
 - **Surface:** `surf2`, radius 12, `e2`, the 6 list inset. 232 wide, as Preview's narrow menus; a
   longer label widens it, up to 320. Rows 30, 1 apart, 8 padding, a 15 glyph in the 18 column at
@@ -564,9 +582,9 @@ switcher, so a menu looks the same wherever it opens (`MonknotContextMenuControl
   released there chooses it; a quick right-click leaves the menu open.
 - **Closing:** a click elsewhere closes it and does nothing else; a right-click elsewhere opens that
   place's menu; scrolling, another app, the window moving, resizing or losing focus close it.
-- **What keeps the system's menu:** text in Source, Preview, a PDF and the terminal, the media player,
-  and a value pop-up (§5.3). Their menus carry spelling, Writing Tools, Look Up, Translate and
-  Services, which only the system's menu has. A menu with a submenu also stays the system's, and so
+- **What keeps the system's menu:** text in Source, Preview, a PDF and the terminal, and the media
+  player. Their menus carry spelling, Writing Tools, Look Up, Translate and Services, which only the
+  system's menu has. A menu with a submenu also stays the system's, and so
   does VoiceOver's Show Menu, which reaches the same items.
 
 ---
@@ -1142,7 +1160,7 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 | Tab | 28 · padding-x 10 · kind glyph 15 in the 18 column · gap 8 · label 13/400 · close 9 in 16, in the glyph column on hover · unsaved dot 6 on the glyph · pin or warning badge 10 · max width 220 · no minimum |
 | Bar | 40 · padding 6 (10 for a header over a list) · 28 controls 2 apart, groups 8 apart · no rule (terminal, PDF, panel headers, banners) |
 | Sidebar | width 240 (196 minimum) · header 40: monogram 18 (radius 6, initial 10.5/600), name 13/600, chevron 10, search and New Markdown 28/17 · row 28 · padding-x 8 · disclosure chevron 10 or file glyph 15 in the 18 column · gap 8 · label 13/400 · indent 14 · list inset 10, top 4 · no gap between rows · Recents header: chevron, group header, count 12 · footer 28 |
-| Context menu | width 232, up to 320 · list inset 6 · row 30, 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · separator `line2` 4 inside the inset, 6 each side · no shortcuts · radius 12, `e2` |
+| Context menu | width 232, up to 320 (at least its control's) · list inset 6 · row 30, 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · separator `line2` 4 inside the inset, 6 each side · no shortcuts · radius 12, `e2` · a control's menu 4 below it · a pop-up's check 11 `ink2` at the row's end, its values at most 380 tall, then scrolling under the 4 / 6 thumb in a 9 lane |
 | Sidebar drag | start 4 · source row 35 % · copy 28 tall, ≤ 240, radius 8, `e2`, glyph and name · target region `accsoft`, radius 8 · auto-scroll zone one row, ≤ 12 rows/s · landing tint 900 ms |
 | Menus | popover 340 (switcher) · list inset 6 · row 30 (34 in an overlay), rows 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · detail 12 `ink3` · group header 12 `ink3` · separator `line2` 4 inside the inset · overlay header 44, footer 32 |
 | Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with an 11 `chevron.down`; a callout's title the same 11 `chevron.down` · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink3` keys, submenu chevron 11, at most 380 tall; a menu of plain names (languages) has no glyph column · handles: + 22×24 and grip 18×24, the + a 16 × 16 glyph and the grip 10 × 16 (§8.9), radius 6, 1 apart, `ink3` at rest and `hover` fill with `ink2` on hover, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
@@ -1625,8 +1643,8 @@ Before calling any UI work done:
 - [ ] Anything that moves recorded frame by frame: nothing jumps, flashes or settles, and it closes
       the way it opened. Reduce Motion makes it instant or a fade; colours still fade.
 - [ ] A value the page and the chrome share (a token, a metric) is written once, in Swift.
-- [ ] A right-click in the chrome opens Monknot's menu (§5.8), its commands from `MonknotMenuCommand`;
-      only text, media and value pop-ups keep the system's.
+- [ ] A right-click in the chrome, a pop-up and a menu button open Monknot's menu (§5.8), its
+      commands from `MonknotMenuCommand`; only text and media keep the system's.
 - [ ] A drag shows where it lands with a fill (`accsoft`), never an outline; Esc and a drop on no
       target return the item; the result is shown where it landed.
 
@@ -1675,6 +1693,7 @@ symptom, so they are worth checking deliberately rather than hoping to notice.
     they drift apart. Keep one source; the page takes its values from Swift.
 17. **An outline as a drop target** — a 2 pt accent ring, a dashed border: an outline is a control
     nobody can press, and a dashed one is a placeholder. A drag's target is a fill (§10.4).
-18. **The system's menu in the chrome** — a native context menu beside Monknot's rows reads as a
-    second app, and shows shortcuts that act on something else. Build it from `MonknotMenuCommand`
-    and let `MonknotContextMenuController` draw it (§5.8).
+18. **The system's menu in the chrome** — a native context menu or pop-up list beside Monknot's rows
+    reads as a second app (a translucent zoom list next to More's opaque one), and shows shortcuts
+    that act on something else. Build it from `MonknotMenuCommand` or `MonknotPopUpButton` and let
+    `MonknotContextMenuController` draw it (§5.8).
