@@ -18,6 +18,7 @@ sections for what you are touching:
 | a colour, a fill, a theme | §1, §2, §3, §14 |
 | a control: button, tab, row, field, menu, pop-up, segmented control | §0, §4, §5, §6, §7, §8 |
 | a right-click menu, or dragging files in the sidebar | §5.8, §10.4 (Moving files), §11 |
+| a popover: the switcher, Stroke Width, Text Style | §5.9, §2, §11 |
 | anything that changes size with zoom | §9 |
 | the window, a pane, a bar, the titlebar | §10.0–§10.7a |
 | Preview editing, its menus and surfaces | §10.10, §10.11 |
@@ -271,6 +272,10 @@ Assign the class first; the treatment follows mechanically.
 A sidebar is not hovering above the canvas, so a shadow under it is a lie the eye catches
 immediately.
 
+Menus and popovers are one floating surface: `surf2`, radius 12, `e2`, no arrow
+(`monknotFloatingSurface`; §5.8, §5.9). Never the system's popover, whose arrow, material, shadow and
+spring read as another app beside Monknot's menus.
+
 ### 2.1 Elevation tokens
 
 ```
@@ -419,7 +424,7 @@ themselves at `ink4`; nothing dims the bar.
 | Hover | `hover` fill, `ink` glyph |
 | Pressed | `press` fill |
 | On (format applied) | `on` fill (`fg` at 12 % light, 17 % dark), `ink` glyph. Preview's format bar uses it for bold, italic, strikethrough, code and link, so formatting never spends the accent, a format that is on never looks like the text selection under it, and the fill still reads on a 28 pt button where a menu row's `selected` fill disappears |
-| Open (its menu is showing) | `press` fill and `ink` glyph until the menu closes: the format bar's block selector, the table bar's Row and Column, the code language label, a block's grip while its block menu shows, the PDF bar's More and Text Style, a pop-up, the sidebar header while the switcher is open. A callout's title takes its own tint at 16 % |
+| Open (its menu is showing) | `press` fill and `ink` glyph until the menu closes: the format bar's block selector, the table bar's Row and Column, the code language label, a block's grip while its block menu shows, the PDF bar's More and Text Style, a pop-up (the Draw style pop-up while Stroke Width shows), the sidebar header while the switcher is open. A callout's title takes its own tint at 16 % |
 | Disabled | `ink4` glyph, no fill. No extra opacity on top. |
 
 **Search option exception.** Match Case and Match Whole Word are small buttons inside the search
@@ -457,7 +462,8 @@ Find in Workspace's replace scope) is 28 tall: its value (13 `ink`, tabular, as 
 option, or a swatch or glyph) and a 10 `chevron.down` in `ink3`, 10 leading (8 before a swatch or
 glyph) and 8 trailing, on the `track` fill; `hover` tint under the pointer, `press` while its menu is
 open. Its menu is native, with the current value checked and placed over the button, as
-`NSPopUpButton` places it; commands that are not values (Stroke Width…) follow a separator.
+`NSPopUpButton` places it; commands that are not values (Stroke Width…, which opens its popover below
+the pop-up, §5.9) follow a separator.
 
 ### 5.4 Button with glyph and label
 
@@ -491,7 +497,9 @@ smaller than it is.
 **A menu's highlight is not a hover.** In every menu — a context menu, the switcher, the outline's
 panel, Quick Open and the other overlays, Preview's menus — the row under the pointer and the row the
 keys chose are **one highlight**: the `selected` fill and `ink`, applied at once, never faded, so it
-never trails the pointer (`MonknotMenuRowButtonStyle`, `MonknotCommandOverlayResults`). A row
+never trails the pointer (`MonknotMenuRowButtonStyle`, `MonknotCommandOverlayResults`). In a popover's
+list the row with keyboard focus (Full Keyboard Access) is that highlight too, and gives it up to a row
+under the pointer (`MonknotMenuRowButtonStyle(highlightsFocus:)`), so Tab moves the one highlight. A row
 scrolling under a pointer that holds still does not take the highlight from the keys. A current item
 (the open workspace, the heading in view) is marked by its glyph or ink, never by a second fill.
 
@@ -561,7 +569,7 @@ Every right-click (or Control-click) in the chrome opens Monknot's menu, never t
 row, the tree's empty space, a Recents row, a document tab, a terminal session, and the PDF bar's More
 button. It is the menu row on a floating surface, the same as Preview's menus and the workspace
 switcher, so a menu looks the same wherever it opens (`MonknotContextMenuController`,
-`MonknotContextMenuSurface`).
+`MonknotContextMenuSurface`). A popover is the same surface with controls in it (§5.9).
 
 - **Surface:** `surf2`, radius 12, `e2`, the 6 list inset. 232 wide, as Preview's narrow menus; a
   longer label widens it, up to 320. Rows 30, 1 apart, 8 padding, a 15 glyph in the 18 column at
@@ -594,6 +602,46 @@ switcher, so a menu looks the same wherever it opens (`MonknotContextMenuControl
   and a value pop-up (§5.3). Their menus carry spelling, Writing Tools, Look Up, Translate and
   Services, which only the system's menu has. A menu with a submenu also stays the system's, and so
   does VoiceOver's Show Menu, which reaches the same items.
+
+### 5.9 Popovers
+
+A popover is the context menu's surface with controls in it: the workspace switcher, and the PDF bar's
+Stroke Width and Text Style. A control attaches it with `View.monknotPopover` and
+`MonknotPopoverController` shows it, one at a time. It is never the system's popover: an arrow, a
+material, another radius and shadow, and a spring beside Monknot's menus read as two apps.
+
+- **Surface:** `surf2`, radius 12, `e2`, no arrow. What it holds brings its inset. A **list** (the
+  switcher, 340 wide) takes the 6 list inset and menu rows 30, 1 apart. A **form** (Stroke Width 210,
+  Text Style 248) takes 12 padding, rows 10 apart, controls 8 apart, every control the shared one.
+- **Where:** 4 below its control, their leading edges together. A list sits 6 outside its control, so
+  its rows share the control's edges and glyph column: the switcher's folders sit on the header's
+  monogram. With no room below it opens 4 above; where it would cross the screen's trailing edge, or
+  the window's while ending on the control's edge keeps it in the window, the trailing edges meet, as a
+  control's menu does.
+  Only a surface that would still leave the screen is moved in, 6 clear of the edge, so one that fits
+  keeps its edges on its control's (`MonknotPopoverPlacement`). It follows its content's size, its edge
+  on the control staying put.
+- **Its control** holds its open state (`press`, `ink`) while it shows (§5.1).
+- **Motion:** opened by the pointer, it grows from the corner that faces its control, scale 0.97 → 1
+  with opacity over 150 ms `cubic-bezier(0.23, 1, 0.32, 1)`; opened from the keyboard it appears at
+  once, as Preview's surfaces do (§10.10). It leaves in a 90 ms fade however it closes. With Reduce
+  Motion it fades in over 120 ms.
+- **Focus:** it floats in a child panel that takes keyboard focus and never becomes main, so the
+  window keeps its active titlebar and chrome (a text selection behind it draws inactive, as behind
+  any key panel). With Full Keyboard Access, focus starts on its first control and Tab and ⇧Tab move
+  through them; in a list the focused row is the one highlight (§5.6), and a workspace row's Remove
+  shows while the row or Remove has focus, so Tab reaches it. Closing gives focus back to the window
+  and to what had it.
+- **Keys:** Esc and ⌘. close it. A ⌘ shortcut closes it and goes on to the window, as though it were
+  not open. Every other key belongs to its focused control: ← → step the slider.
+- **Closing:** a click outside closes it and does nothing else, so a click on its own control closes it
+  rather than opening it again, and a right-click outside opens no menu. Scrolling outside, the window
+  moving, resizing, entering or leaving full screen or closing, another window or app taking focus,
+  opening the menu bar, and its control going away (another tool, another tab) close it too. What it
+  opens belongs to it: the font menu and the colour well's picker keep it open. Opening a popover
+  closes any other and any context menu.
+- **VoiceOver** reads it as a popover named for its control (Workspaces, Stroke Width, Text Style); its
+  controls read as they do anywhere, and a workspace row offers Remove as an action.
 
 ---
 
@@ -992,7 +1040,8 @@ least the glyph column, so short numbers put the match on the file's text edge).
 its spinner in the glyph column and its text on the text edge. A hairline inside the inset separates
 the controls from the results.
 
-**The workspace switcher** is a popover menu, 340 wide (§0): a group header, then menu rows — each
+**The workspace switcher** is a list popover (§5.9), 340 wide, 4 below the header row and 6 outside it,
+so its folders sit on the monogram's column: a group header, then menu rows — each
 workspace with its path in 12 `ink3` and its ⌃⌘ number (Remove, a small button, replaces the number
 under the pointer), the open one the current row with the `accent` `folder.fill` — a separator, Add
 Workspace… and Manage Workspaces…. Labels are `ink`, glyphs `ink2`, as in the editor's menus. Find in
@@ -1180,6 +1229,7 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 | Bar | 40 · padding 6 (10 for a header over a list) · 28 controls 2 apart, groups 8 apart · no rule (terminal, PDF, panel headers, banners) |
 | Sidebar | width 240 (196 minimum) · header 40: monogram 18 (radius 6, initial 10.5/600), name 13/600, chevron 10, search and New Markdown 28/17 · row 28 · padding-x 8 · disclosure chevron 10 or file glyph 15 in the 18 column · gap 8 · label 13/400 · indent 14 · list inset 10, top 4 · no gap between rows · Recents header: chevron, group header, count 12 · footer 28 |
 | Context menu | width 232, up to 320 · list inset 6 · row 30, 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · separator `line2` 4 inside the inset, 6 each side · no shortcuts · radius 12, `e2` |
+| Popover | `surf2`, radius 12, `e2`, no arrow · 4 below its control (above where the screen ends) · list: the 6 inset, 6 outside its control · form: padding 12, rows 10 apart, controls 8 apart · switcher 340, Stroke Width 210, Text Style 248 |
 | Sidebar drag | start 4 · source row 35 % · copy 28 tall, ≤ 240, radius 8, `e2`, glyph and name · target region `accsoft`, radius 8 · auto-scroll zone one row, ≤ 12 rows/s · landing tint 900 ms |
 | Menus | popover 340 (switcher) · list inset 6 · row 30 (34 in an overlay), rows 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · detail 12 `ink3` · group header 12 `ink3` · separator `line2` 4 inside the inset · overlay header 44, footer 32 |
 | Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with an 11 `chevron.down`; a callout's title the same 11 `chevron.down` · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink3` keys, submenu chevron 11, at most 380 tall; a menu of plain names (languages) has no glyph column · handles: + 22×24 and grip 18×24, the + a 16 × 16 glyph and the grip 10 × 16 (§8.9), radius 6, 1 apart, `ink3` at rest, `hover` fill with `ink` on hover, `press` and `ink` held or while the block menu shows, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
@@ -1492,7 +1542,8 @@ in reverse, however it is closed.
   and it returns exactly where it was with nothing settling after. While the document is collapsed
   the split halves its dividers, so the two that meet beside the sidebar still make one gap; the
   document card takes back what they give up, so no edge moves as they change.
-- **Context menus** grow in from the pointer over 150 ms and leave in 90 ms (§5.8); a sidebar drag's
+- **Context menus and popovers** grow in over 150 ms, a menu from the pointer and a popover from its
+  control, and leave in 90 ms (§5.8, §5.9); a popover opened from the keyboard appears at once; a sidebar drag's
   copy glides back over 250 ms on Esc, and a landed row lets go of its tint over 900 ms (§10.4).
 - **Marks that come and go fade over 120 ms**: a working spinner, a search's spinner, the outline's
   panel (Reduce Motion keeps the fade and drops only the rail's widening). A dragged tab, sidebar row
@@ -1506,7 +1557,7 @@ in reverse, however it is closed.
   keyboard.
 - Never animate size, position, elevation, border or weight except for the pane transitions above,
   a switch's knob, the outline rail's widening, the toast's 4 pt rise, a disclosure chevron's turn,
-  Preview's grow-in and press (§10.10), a context menu's grow-in (§5.8) and a dragged row's copy
+  Preview's grow-in and press (§10.10), a context menu's and a popover's grow-in (§5.8, §5.9) and a dragged row's copy
   gliding back (§10.4).
 - Honour Reduce Motion: entrances become plain fades, side panes show and hide instantly, chevrons
   and switch knobs jump; colour transitions stay.
@@ -1674,6 +1725,8 @@ Before calling any UI work done:
 - [ ] A value the page and the chrome share (a token, a metric) is written once, in Swift.
 - [ ] A right-click in the chrome opens Monknot's menu (§5.8), its commands from `MonknotMenuCommand`;
       only text, media and value pop-ups keep the system's.
+- [ ] A popover is Monknot's surface (§5.9): no arrow, 4 below its control, which shows open; Esc and
+      a click outside close it, and focus goes back where it was.
 - [ ] A drag shows where it lands with a fill (`accsoft`), never an outline; Esc and a drop on no
       target return the item; the result is shown where it landed.
 - [ ] Every menu has one highlight, moved by the pointer and the keys, at once (§5.6); a current item
@@ -1734,3 +1787,5 @@ symptom, so they are worth checking deliberately rather than hoping to notice.
     (`MonknotSymbolOptics`, §8.2); never fix one glyph with a hand-picked point size.
 20. **Two highlights in one menu** — a hover fill beside the keyboard's row, or a current item with
     its own fill: the eye cannot tell which row ↩ will choose. One highlight (§5.6).
+21. **The system's popover in the chrome** — an arrow, a material and a spring beside Monknot's menus
+    read as a second app. Attach `View.monknotPopover` (§5.9).

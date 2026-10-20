@@ -532,6 +532,10 @@ final class MonknotContextMenuController: ObservableObject {
 
     /// Whether the menu takes `event` for itself, so the window never sees it.
     private func consumes(_ event: NSEvent) -> Bool {
+        // An open popover takes every click outside it (design.md §5.9), right-clicks included.
+        if MonknotPopoverController.shared.isOpen {
+            return false
+        }
         if let presentation, let handled = handleWhileOpen(event, presentation: presentation) {
             return !handled.passThrough
         }

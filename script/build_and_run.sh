@@ -420,6 +420,7 @@ APP_SOURCES=(
   "Sources/Monknot/Support/Design/MonknotMetrics.swift"
   "Sources/Monknot/Support/Design/MonknotMotion.swift"
   "Sources/Monknot/Support/Design/MonknotPanelCard.swift"
+  "Sources/Monknot/Support/Design/MonknotPopover.swift"
   "Sources/Monknot/Support/Design/MonknotRow.swift"
   "Sources/Monknot/Support/Design/MonknotScrollbarStyle.swift"
   "Sources/Monknot/Support/Design/MonknotSFSymbol.swift"

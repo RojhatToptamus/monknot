@@ -1663,7 +1663,13 @@ private struct SidebarProjectHeader: View {
                 }
                 .buttonStyle(MonknotListRowButtonStyle(theme: theme, zoomScale: zoomScale, isOpen: isSwitcherPresented))
                 .disabled(isBusy)
-                .popover(isPresented: $isSwitcherPresented, arrowEdge: .top) {
+                .monknotPopover(
+                    isPresented: $isSwitcherPresented,
+                    label: "Workspaces",
+                    contentKind: .list,
+                    theme: theme,
+                    zoomScale: zoomScale
+                ) {
                     WorkspaceSwitcherPopover(
                         workspaces: workspaces,
                         activeWorkspacePath: workspaceURL?.standardizedFileURL.path,
@@ -1777,9 +1783,9 @@ private struct SidebarWorkspaceMonogram: View {
     }
 }
 
-/// The workspace switcher (design.md §10.4): a popover menu of the editor's menu rows, 340 wide. The
-/// open workspace is the current row with the `accent` folder; each row shows its path and its ⌃⌘
-/// shortcut, which Remove replaces under the pointer.
+/// The workspace switcher (design.md §10.4): a list popover of the editor's menu rows, 340 wide, on
+/// Monknot's popover surface (§5.9). The open workspace is the current row with the `accent` folder;
+/// each row shows its path and its ⌃⌘ shortcut, which Remove replaces under the pointer.
 private struct WorkspaceSwitcherPopover: View {
     static let widthBase: CGFloat = 340
     static let visibleRowLimit = 7
@@ -1793,6 +1799,8 @@ private struct WorkspaceSwitcherPopover: View {
     let addWorkspace: () -> Void
     let removeWorkspace: (SavedWorkspaceEntry) -> Void
     let manageWorkspaces: () -> Void
+    /// The row under the pointer: it has the one highlight, over the row keyboard focus is on.
+    @State private var pointerRow: String?
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
@@ -1825,6 +1833,7 @@ private struct WorkspaceSwitcherPopover: View {
                                 isBusy: isBusy,
                                 theme: theme,
                                 zoomScale: zoomScale,
+                                pointerRow: $pointerRow,
                                 open: { switchWorkspace(workspace) },
                                 remove: { removeWorkspace(workspace) }
                             )
@@ -1842,6 +1851,7 @@ private struct WorkspaceSwitcherPopover: View {
                     systemImage: "folder.badge.plus",
                     theme: theme,
                     zoomScale: zoomScale,
+                    pointerRow: $pointerRow,
                     action: addWorkspace
                 )
 
@@ -1850,13 +1860,13 @@ private struct WorkspaceSwitcherPopover: View {
                     systemImage: "gearshape",
                     theme: theme,
                     zoomScale: zoomScale,
+                    pointerRow: $pointerRow,
                     action: manageWorkspaces
                 )
             }
         }
         .padding(scaled(MonknotMetrics.menuListInsetBase))
         .frame(width: scaled(Self.widthBase))
-        .background(theme.elevatedSurfaceColor)
     }
 }
 
@@ -1867,14 +1877,27 @@ private struct WorkspaceSwitcherRow: View {
     let isBusy: Bool
     let theme: AppTheme
     let zoomScale: Double
+    @Binding var pointerRow: String?
     let open: () -> Void
     let remove: () -> Void
     @State private var isHovered = false
+    @FocusState private var isRowFocused: Bool
+    @State private var isRemoveFocused = false
 
     /// Another workspace is loading, so this one cannot open yet: `ink4` and no hover ink (design.md
     /// §5.1). The active workspace keeps its current look.
     private var isUnavailable: Bool {
         isBusy && !isActive
+    }
+
+    /// Remove shows under the pointer, and for the keyboard while the row or Remove has focus, so Tab
+    /// reaches it (design.md §5.9).
+    private var showsRemove: Bool {
+        isHovered || isRowFocused || isRemoveFocused
+    }
+
+    private var rowID: String {
+        workspace.id.uuidString
     }
 
     var body: some View {
@@ -1902,15 +1925,27 @@ private struct WorkspaceSwitcherRow: View {
                                 theme: theme,
                                 zoomScale: zoomScale
                             )
-                            .monknotStateOpacity(isHovered ? 0 : 1)
+                            .monknotStateOpacity(showsRemove ? 0 : 1)
                         }
                     }
                 }
             }
             // The current workspace is marked by its accent `folder.fill` alone (design.md §1.3), so
-            // the one highlight is the pointer's.
-            .buttonStyle(MonknotMenuRowButtonStyle(theme: theme, zoomScale: zoomScale))
+            // the one highlight is the pointer's, or keyboard focus's.
+            .buttonStyle(MonknotMenuRowButtonStyle(
+                theme: theme,
+                zoomScale: zoomScale,
+                highlightsFocus: true,
+                pointerIsOnAnotherRow: pointerRow != nil && pointerRow != rowID
+            ))
+            .focused($isRowFocused)
+            .focusEffectDisabled()
             .disabled(isBusy || isActive)
+            .accessibilityAction(named: "Remove") {
+                if !isBusy {
+                    remove()
+                }
+            }
 
             // Crossfades with the shortcut, as a tab's close button does with its glyph.
             MonknotIconButton(
@@ -1918,19 +1953,28 @@ private struct WorkspaceSwitcherRow: View {
                 label: "Remove \(workspace.displayName)",
                 theme: theme,
                 zoomScale: zoomScale,
-                isDisabled: isBusy || !isHovered,
+                isDisabled: isBusy || !showsRemove,
                 size: .small,
                 focusRingPlacement: .contained,
+                onFocusChange: { isRemoveFocused = $0 },
                 action: remove
             )
             // On the row's trailing padding minus the small button's own inset, so its glyph
             // sits where the shortcut's last character was.
             .padding(.trailing, MonknotMetrics.interfaceDensity(MonknotMetrics.menuRowPaddingBase - 4, theme: theme, zoomScale: zoomScale))
-            .monknotStateOpacity(isHovered ? 1 : 0)
+            .monknotStateOpacity(showsRemove ? 1 : 0)
             .allowsHitTesting(isHovered)
-            .accessibilityHidden(!isHovered)
+            // VoiceOver reaches Remove through the row's action.
+            .accessibilityHidden(true)
         }
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                pointerRow = rowID
+            } else if pointerRow == rowID {
+                pointerRow = nil
+            }
+        }
         .accessibilityElement(children: .contain)
     }
 }
@@ -1940,6 +1984,7 @@ private struct WorkspaceSwitcherActionRow: View {
     let systemImage: String
     let theme: AppTheme
     let zoomScale: Double
+    @Binding var pointerRow: String?
     let action: () -> Void
 
     var body: some View {
@@ -1951,7 +1996,20 @@ private struct WorkspaceSwitcherActionRow: View {
                 zoomScale: zoomScale
             )
         }
-        .buttonStyle(MonknotMenuRowButtonStyle(theme: theme, zoomScale: zoomScale))
+        .buttonStyle(MonknotMenuRowButtonStyle(
+            theme: theme,
+            zoomScale: zoomScale,
+            highlightsFocus: true,
+            pointerIsOnAnotherRow: pointerRow != nil && pointerRow != title
+        ))
+        .focusEffectDisabled()
+        .onHover { hovering in
+            if hovering {
+                pointerRow = title
+            } else if pointerRow == title {
+                pointerRow = nil
+            }
+        }
     }
 }
 

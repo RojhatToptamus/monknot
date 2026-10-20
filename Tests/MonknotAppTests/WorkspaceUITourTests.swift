@@ -178,8 +178,8 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             XCTFail("Could not capture \(stop.name)")
             return
         }
-        // A popover (the workspace switcher) is a window of its own: draw it over the window's image.
-        let popovers = NSApp.windows.filter { $0 !== window && $0.isVisible && String(describing: type(of: $0)).contains("Popover") }
+        // A popover (the workspace switcher) is a panel of its own: draw it over the window's image.
+        let popovers = NSApp.windows.filter { $0 !== window && $0.isVisible && $0 is MonknotPopoverPanel }
         // `MONKNOT_UI_TOUR_RAW` keeps the window server's own image too, before any snapshot is drawn.
         if ProcessInfo.processInfo.environment["MONKNOT_UI_TOUR_RAW"] != nil {
             try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
@@ -222,13 +222,11 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
                 CGWindowID(popover.windowNumber),
                 [.boundsIgnoreFraming, .bestResolution]
             ) else { continue }
-            // An off-screen test window can leave the popover at the screen's corner, so draw it where
-            // it opens on screen: under the sidebar header, its list on the rows' inset.
+            // Where it opens on screen, beside its control.
             let frame = popover.frame
-            let sidebarHeaderBottom = MonknotMetrics.chromeHeight(theme: .defaultLight, zoomScale: 1) + 34
             let origin = CGPoint(
-                x: (MonknotMetrics.listGutterBase - 13) * scale,
-                y: (window.frame.height - sidebarHeaderBottom - frame.height) * scale
+                x: (frame.minX - window.frame.minX) * scale,
+                y: (frame.minY - window.frame.minY) * scale
             )
             NSGraphicsContext.current?.cgContext.draw(
                 popoverImage,
