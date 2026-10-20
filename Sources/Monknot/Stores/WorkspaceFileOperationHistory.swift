@@ -1,8 +1,9 @@
 import Foundation
 import MonknotCore
 
-/// A move, rename or copy of workspace items as one user action, which Edit › Undo takes back and
-/// Edit › Redo makes again (design.md §10.4). A drop of several items is one operation.
+/// A move, rename, copy or Move to Trash of workspace items as one user action, which Edit › Undo
+/// takes back and Edit › Redo makes again (design.md §10.4). A drop of several items is one
+/// operation.
 struct WorkspaceFileOperation: Sendable {
     let verb: WorkspaceFileOperationVerb
     /// In the order they were made.
@@ -11,12 +12,11 @@ struct WorkspaceFileOperation: Sendable {
     /// Orders the operation against the workspace Replace's undo: the newer goes first.
     var serial: Int
 
-    /// What Edit › Undo and Redo name the operation: Move “a.md”, Copy 3 Items.
+    /// What Edit › Undo and Redo name the operation: Move “a.md”, Copy 3 Items, Move 2 Items to
+    /// Trash.
     var actionName: String {
-        guard steps.count == 1, let step = steps.first else {
-            return "\(verb.title) \(steps.count) Items"
-        }
-        return "\(verb.title) “\(step.itemName)”"
+        let subject = steps.count == 1 ? "“\(steps[0].itemName)”" : "\(steps.count) Items"
+        return verb == .trash ? "Move \(subject) to Trash" : "\(verb.title) \(subject)"
     }
 
     /// The bytes of note text the operation keeps to put rewritten links back.
@@ -35,6 +35,7 @@ enum WorkspaceFileOperationVerb: Sendable {
     case rename
     case copy
     case duplicate
+    case trash
 
     var title: String {
         switch self {
@@ -42,6 +43,7 @@ enum WorkspaceFileOperationVerb: Sendable {
         case .rename: "Rename"
         case .copy: "Copy"
         case .duplicate: "Duplicate"
+        case .trash: "Move to Trash"
         }
     }
 }
@@ -49,12 +51,14 @@ enum WorkspaceFileOperationVerb: Sendable {
 enum WorkspaceFileOperationStep: Sendable {
     case move(WorkspaceFileMoveStep)
     case copy(WorkspaceFileCopyStep)
+    case trash(WorkspaceFileTrashStep)
 
     /// The name the item had when the user acted on it.
     var itemName: String {
         switch self {
         case .move(let move): move.sourceURL.lastPathComponent
         case .copy(let copy): copy.sourceURL.lastPathComponent
+        case .trash(let trash): trash.originalURL.lastPathComponent
         }
     }
 }
@@ -87,6 +91,13 @@ struct WorkspaceFileCopyStep: Sendable {
     let isDirectory: Bool
     /// The copy as it was made, so undoing it refuses once it has been edited since.
     var fingerprint: WorkspaceItemFingerprint?
+}
+
+/// A file or folder Monknot moved to the Trash, and where the Trash keeps it.
+struct WorkspaceFileTrashStep: Sendable {
+    let originalURL: URL
+    let trashedURL: URL
+    let isDirectory: Bool
 }
 
 /// What a file or folder holds, as far as an undo needs to know whether it changed: each file's
@@ -207,6 +218,7 @@ enum WorkspaceFileOperationError: LocalizedError, Equatable {
     case linksChanged(String)
     case outsideWorkspace(String)
     case copyChanged(String)
+    case notInTrash(String)
     /// A note with unsaved changes links to what the step moves: the step waits until it is saved.
     case unsavedLinks(note: String, undoing: Bool)
     case rollbackFailed(operation: String, rollback: String)
@@ -231,6 +243,8 @@ enum WorkspaceFileOperationError: LocalizedError, Equatable {
             "“\(name)” is no longer safely inside the workspace."
         case .copyChanged(let name):
             "“\(name)” changed after it was made."
+        case .notInTrash(let name):
+            "“\(name)” is no longer in the Trash."
         case .unsavedLinks(let note, let undoing):
             "Save \(note) first: its unsaved links would no longer lead where they do after \(undoing ? "undoing" : "redoing") this move."
         case .rollbackFailed(let operation, let rollback):
@@ -248,7 +262,7 @@ enum WorkspaceFileOperationError: LocalizedError, Equatable {
 /// ones made before it.
 struct WorkspaceFileOperationDisk: Sendable {
     let workspaceURL: URL
-    let moveItemToTrash: @Sendable (URL) throws -> Void
+    let moveItemToTrash: @Sendable (URL) throws -> URL?
     /// The unsaved text a copy made again carries, by the copied item's path: its own ("" subpath)
     /// and that of each document inside it, as Duplicate copies it.
     var unsavedCopyTexts: [String: [WorkspaceUnsavedCopyText]] = [:]
@@ -350,11 +364,36 @@ struct WorkspaceFileOperationDisk: Sendable {
             if let fingerprint = copy.fingerprint, WorkspaceItemFingerprint.read(copy.copyURL) != fingerprint {
                 throw WorkspaceFileOperationError.copyChanged(copy.copyURL.lastPathComponent)
             }
-            try moveItemToTrash(copy.copyURL)
+            _ = try moveItemToTrash(copy.copyURL)
         case (.copy(let copy), .redo):
             return .copy(try copyAgain(copy))
+        case (.trash(let trash), .undo):
+            try putBackFromTrash(trash)
+        case (.trash(let trash), .redo):
+            return .trash(try trashAgain(trash))
         }
         return step
+    }
+
+    /// Moves the item from the Trash back to the name it had, which must still be free.
+    private func putBackFromTrash(_ trash: WorkspaceFileTrashStep) throws {
+        guard let type = (try? FileManager.default.attributesOfItem(atPath: trash.trashedURL.path))?[.type] as? FileAttributeType,
+              (type == .typeDirectory) == trash.isDirectory
+        else {
+            throw WorkspaceFileOperationError.notInTrash(trash.originalURL.lastPathComponent)
+        }
+        try checkTarget(trash.originalURL, isFree: true)
+        try checkContainment(of: trash.originalURL)
+        try FileManager.default.moveItem(at: trash.trashedURL, to: trash.originalURL)
+    }
+
+    /// Moves the item put back to the Trash again, and returns the step with where the Trash keeps
+    /// it now.
+    private func trashAgain(_ trash: WorkspaceFileTrashStep) throws -> WorkspaceFileTrashStep {
+        try checkItem(at: trash.originalURL, isDirectory: trash.isDirectory)
+        try checkContainment(of: trash.originalURL)
+        let trashedURL = try moveItemToTrash(trash.originalURL) ?? trash.trashedURL
+        return WorkspaceFileTrashStep(originalURL: trash.originalURL, trashedURL: trashedURL, isDirectory: trash.isDirectory)
     }
 
     /// Puts each rewritten note's links back, then the item where it was.
@@ -457,7 +496,7 @@ struct WorkspaceFileOperationDisk: Sendable {
                     try WorkspaceTextFileGuard.writeUTF8Text(unsaved.text, to: url)
                 }
             } catch {
-                try? moveItemToTrash(copy.copyURL)
+                _ = try? moveItemToTrash(copy.copyURL)
                 throw error
             }
         }

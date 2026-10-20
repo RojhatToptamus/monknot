@@ -27,7 +27,8 @@ final class WorkspaceScanResultPatcherTests: XCTestCase {
         XCTAssertEqual(notesNode.children?.map(\.name), ["New.md"])
     }
 
-    func testSkipsUnsupportedNewFileChange() throws {
+    /// Every file is listed: one Monknot does not show joins the tree, and a hidden one does not.
+    func testListsANewFileOfAnyTypeButNotAHiddenOne() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -35,19 +36,23 @@ final class WorkspaceScanResultPatcherTests: XCTestCase {
         let initial = try WorkspaceDocumentScanner().scan(rootURL: root)
 
         let archive = root.appendingPathComponent("archive.zip")
-        try write("not a workspace document", to: archive)
+        let hidden = root.appendingPathComponent(".env")
+        try write("PK", to: archive)
+        try write("SECRET=1", to: hidden)
 
         let patched = try XCTUnwrap(WorkspaceScanResultPatcher.applyingFileChanges(
             to: initial,
             rootURL: root,
-            changedPaths: [archive.standardizedFileURL.path]
+            changedPaths: [archive.standardizedFileURL.path, hidden.standardizedFileURL.path]
         ))
 
-        XCTAssertEqual(patched.documents.map(\.relativePath), ["Existing.md"])
-        XCTAssertEqual(patched.root.children?.map(\.name), ["Existing.md"])
+        XCTAssertEqual(patched.documents.map(\.relativePath).sorted(), ["Existing.md", "archive.zip"])
+        XCTAssertEqual(patched.documents.first { $0.relativePath == "archive.zip" }?.kind, .unsupported)
+        XCTAssertEqual(patched.root.children?.map(\.name), ["archive.zip", "Existing.md"])
+        XCTAssertEqual(patched.documents.map(\.relativePath).sorted(), try WorkspaceDocumentScanner().scan(rootURL: root).documents.map(\.relativePath).sorted())
     }
 
-    func testDirectoryRefreshSkipsUnsupportedFiles() throws {
+    func testDirectoryRefreshListsEveryFileItHolds() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -57,7 +62,8 @@ final class WorkspaceScanResultPatcherTests: XCTestCase {
         let initial = try WorkspaceDocumentScanner().scan(rootURL: root)
 
         try write("# Added", to: folder.appendingPathComponent("Added.md"))
-        try write("not a workspace document", to: folder.appendingPathComponent("archive.zip"))
+        try write("{}", to: folder.appendingPathComponent("analysis.ipynb"))
+        try write("hidden", to: folder.appendingPathComponent(".DS_Store"))
 
         let patched = try XCTUnwrap(WorkspaceScanResultPatcher.applyingFileChanges(
             to: initial,
@@ -65,9 +71,12 @@ final class WorkspaceScanResultPatcherTests: XCTestCase {
             changedPaths: [folder.standardizedFileURL.path]
         ))
 
-        XCTAssertEqual(patched.documents.map(\.relativePath).sorted(), ["Folder/Added.md", "Folder/Nested.md"])
+        XCTAssertEqual(
+            patched.documents.map(\.relativePath).sorted(),
+            ["Folder/Added.md", "Folder/Nested.md", "Folder/analysis.ipynb"]
+        )
         let folderNode = try XCTUnwrap(patched.root.children?.first { $0.name == "Folder" })
-        XCTAssertEqual(folderNode.children?.map(\.name), ["Added.md", "Nested.md"])
+        XCTAssertEqual(folderNode.children?.map(\.name), ["Added.md", "analysis.ipynb", "Nested.md"])
     }
 
     func testRemovesDeletedFileWithoutFullScan() throws {

@@ -43,7 +43,11 @@ short completions.
 ## Capabilities
 
 - **Local files:** Monknot reads and writes supported files in place. It does
-  not import them into a separate library.
+  not import them into a separate library. The sidebar lists every file in the
+  folder except hidden ones; archives, Office documents and other binary files
+  open in their default app.
+- **Notebooks:** Jupyter notebooks (`.ipynb`) show their cells and outputs in
+  Preview and their JSON in the source.
 - **Markdown:** Edit with syntax highlighting, formatting shortcuts (⌘B, ⌘I,
   ⌘E, ⌘K), tabs, Quick Open, heading navigation, daily notes, and wikilinks.
 - **Editing in Preview:** Edit Markdown as rendered text in the full-width

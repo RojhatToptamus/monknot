@@ -462,6 +462,18 @@ pre code {
   white-space: pre;
 }
 
+/* A notebook cell's output (JupyterNotebookMarkdown) reads as plain text under its code, aligned
+   with the code's text, not as another code block. */
+pre:has(> code.language-output) {
+  padding-top: 0;
+  padding-bottom: 0;
+  background: transparent;
+}
+
+pre code.language-output {
+  color: var(--muted);
+}
+
 .tok-keyword {
   color: var(--tok-keyword);
 }

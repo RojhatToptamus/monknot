@@ -56,15 +56,17 @@ public enum WorkspaceScanResultPatcher {
                     rootNode = removingNode(id: url.path, from: rootNode)
                     continue
                 }
-                guard !shouldSkipFile(url, rootURL: rootURL, ignoredDirectoryNames: ignoredDirectoryNames),
-                      let classification = WorkspaceDocumentSupport.workspaceClassification(for: url)
-                else {
+                guard !shouldSkipFile(url, rootURL: rootURL, ignoredDirectoryNames: ignoredDirectoryNames) else {
                     documentsByID.removeValue(forKey: url.path)
                     rootNode = removingNode(id: url.path, from: rootNode)
                     continue
                 }
 
-                let document = WorkspaceDocument(url: url, rootURL: rootURL, classification: classification)
+                let document = WorkspaceDocument(
+                    url: url,
+                    rootURL: rootURL,
+                    classification: WorkspaceDocumentSupport.classification(for: url)
+                )
                 documentsByID[document.id] = document
                 rootNode = inserting(document, into: rootNode, rootURL: rootURL)
             } else {
@@ -232,11 +234,11 @@ public enum WorkspaceScanResultPatcher {
                 )
                 children.append(child)
             } else if values.isRegularFile == true, values.isSymbolicLink != true {
-                guard let classification = WorkspaceDocumentSupport.workspaceClassification(for: url) else {
-                    continue
-                }
-
-                let document = WorkspaceDocument(url: url, rootURL: rootURL, classification: classification)
+                let document = WorkspaceDocument(
+                    url: url,
+                    rootURL: rootURL,
+                    classification: WorkspaceDocumentSupport.classification(for: url)
+                )
                 documentsByID[document.id] = document
                 children.append(SidebarNode(
                     id: document.id,

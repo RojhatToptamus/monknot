@@ -153,10 +153,13 @@ final class MonknotContextMenuModel: ObservableObject {
                 isEnabled: menuItem.isEnabled && (menuItem.action != nil || menuItem.target != nil),
                 isDestructive: command?.isDestructive == true,
                 // The row holds its menu: the action runs after the menu has closed, when nothing
-                // else may.
-                perform: {
-                    guard menu.items.indices.contains(index) else { return }
-                    menu.performActionForItem(at: index)
+                // else may. SwiftUI may rebuild the menu's items meanwhile, so the row runs the item
+                // it showed, or the one in its place with its title, and never another command.
+                perform: { [title = menuItem.title] in
+                    let current = menu.items.firstIndex { $0 === menuItem }
+                        ?? (menu.items.indices.contains(index) ? index : nil)
+                    guard let current, menu.items[current].title == title else { return }
+                    menu.performActionForItem(at: current)
                 }
             )))
         }
@@ -475,6 +478,9 @@ final class MonknotContextMenuController: ObservableObject {
     static let exitDuration: Double = 0.09
     /// A press held this long before its button comes up away from the menu closes the menu.
     static let pressAndHoldInterval: TimeInterval = 0.5
+    /// The press that opened the menu chooses the row it comes up over only after this long: a
+    /// quicker release is a click that drifted, and leaves the menu open on that row.
+    static let releaseChoiceDelay: TimeInterval = 0.25
 
     private struct WindowAppearance {
         weak var window: NSWindow?
@@ -570,7 +576,7 @@ final class MonknotContextMenuController: ObservableObject {
         case .leftMouseUp, .rightMouseUp:
             if openingPressIsDown, !isInPanel {
                 openingPressIsDown = false
-                finishOpeningPress()
+                finishOpeningPress(at: Self.screenLocation(of: event))
                 return Handled(passThrough: false)
             }
             return Handled(passThrough: isInPanel)
@@ -823,16 +829,18 @@ final class MonknotContextMenuController: ObservableObject {
     // MARK: Pointer
 
     private func entryUnderPointer() -> Int? {
+        entry(atScreenPoint: NSEvent.mouseLocation)
+    }
+
+    private func entry(atScreenPoint location: NSPoint) -> Int? {
         guard let presentation else { return nil }
-        let location = NSEvent.mouseLocation
         let surface = presentation.surfaceFrame
         let point = CGPoint(x: location.x - surface.minX, y: surface.maxY - location.y)
         return presentation.layout.entry(at: point)
     }
 
-    private var pointerIsOverSurface: Bool {
-        guard let presentation else { return false }
-        return presentation.surfaceFrame.contains(NSEvent.mouseLocation)
+    private static func screenLocation(of event: NSEvent) -> NSPoint {
+        event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
     }
 
     func pointerMoved() {
@@ -854,25 +862,34 @@ final class MonknotContextMenuController: ObservableObject {
 
     func pointerUp() {
         guard let model = presentation?.model else { return }
-        let index = entryUnderPointer()
         model.pressed = nil
-        openingPressIsDown = false
-        if let index, model.isEnabled(index) {
+        if openingPressIsDown {
+            openingPressIsDown = false
+            finishOpeningPress(at: NSEvent.mouseLocation)
+            return
+        }
+        if let index = entryUnderPointer(), model.isEnabled(index) {
             choose(index)
         }
     }
 
-    /// The button that opened the menu came up outside the panel's own events: over a row it chooses
-    /// it, as a held right-click does in a system menu; held a while and let go away from the menu, it
-    /// closes it; a quick click leaves it open.
-    private func finishOpeningPress() {
+    /// The button that opened the menu came up at `location`. Held a while and let go over a row,
+    /// it chooses the row, as a held right-click does in a system menu, unless the row destroys
+    /// something: that takes a click of its own. A quick release over a row (a click that drifted
+    /// as the menu opened under it) only highlights the row. Held a while and let go away from the
+    /// menu, it closes it; a quick click elsewhere leaves it open.
+    private func finishOpeningPress(at location: NSPoint) {
         guard let presentation else { return }
-        if let index = entryUnderPointer(), presentation.model.isEnabled(index) {
-            choose(index)
+        let held = ProcessInfo.processInfo.systemUptime - presentation.openedAt
+        if let index = entry(atScreenPoint: location), let item = presentation.model.entries[index].item, item.isEnabled {
+            if held >= Self.releaseChoiceDelay, !item.isDestructive {
+                choose(index)
+            } else {
+                presentation.model.highlighted = index
+            }
             return
         }
-        let held = ProcessInfo.processInfo.systemUptime - presentation.openedAt
-        if held > Self.pressAndHoldInterval, !pointerIsOverSurface {
+        if held > Self.pressAndHoldInterval, !presentation.surfaceFrame.contains(location) {
             close()
         }
     }

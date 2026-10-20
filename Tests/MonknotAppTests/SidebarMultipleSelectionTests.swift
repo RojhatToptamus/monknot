@@ -309,6 +309,48 @@ final class SidebarMultipleSelectionTests: FileOperationsTestCase {
         XCTAssertTrue(names("", in: f.root).contains("c.md"))
     }
 
+    /// Right-clicking a row outside a selection of several acts on that row alone: Move to Trash
+    /// and Duplicate never reach the selected items, and the selection stays.
+    func testARowMenuOutsideTheSelectionTrashesAndDuplicatesOnlyThatRow() async throws {
+        let f = try await makeFixture()
+        try await f.click("b.md")
+        try await f.click("d.md", modifiers: .command)
+        XCTAssertEqual(f.selected, ["b.md", "d.md"])
+
+        let c = try XCTUnwrap(f.rowPaths.firstIndex(of: "c.md"))
+        f.harness.perform("Move to Trash", in: f.harness.contextMenu(row: c))
+        await idle(f.store)
+        XCTAssertNil(f.store.errorMessage)
+        XCTAssertEqual(names("", in: f.root), ["Archive", "docs", "a.md", "b.md", "d.md"])
+        XCTAssertEqual(f.selected, ["b.md", "d.md"], "The selection stays")
+
+        let a = try XCTUnwrap(f.rowPaths.firstIndex(of: "a.md"))
+        f.harness.perform("Duplicate", in: f.harness.contextMenu(row: a))
+        await idle(f.store)
+        XCTAssertEqual(names("", in: f.root), ["Archive", "docs", "a.md", "a copy.md", "b.md", "d.md"])
+    }
+
+    /// Collapsing a folder hands its hidden selection, the open document included, to the folder's
+    /// row, so the keys act on what the tree shows selected and never on a hidden file.
+    func testCollapsingAFolderGivesItsHiddenSelectionToTheFolderRow() async throws {
+        let f = try await makeFixture()
+        try await f.click("docs")
+        try await f.click("docs/e.md")
+        XCTAssertEqual(f.store.selectedDocumentID, f.path("docs/e.md"))
+        XCTAssertEqual(f.selected, ["docs/e.md"], "The open document is the selection")
+        XCTAssertTrue(f.treeHasFocus())
+
+        await f.press(Key.left.0, keyCode: Key.left.1, modifiers: .command)
+        XCTAssertFalse(f.rowPaths.contains("docs/e.md"), "The folder closed")
+        XCTAssertEqual(f.selected, ["docs"], "The folder's row holds the selection")
+        XCTAssertEqual(f.store.selectedDocumentID, f.path("docs/e.md"), "The document stays open")
+
+        await f.press("d", keyCode: 2, modifiers: .command)
+        await idle(f.store)
+        XCTAssertTrue(names("", in: f.root).contains("docs copy"), "⌘D duplicates the folder shown selected")
+        XCTAssertEqual(names("docs", in: f.root), ["deep", "e.md", "f.md"], "Not the hidden file")
+    }
+
     // MARK: - Dragging
 
     func testDraggingOneOfSeveralSelectedRowsMovesThemAllAsOneStep() async throws {

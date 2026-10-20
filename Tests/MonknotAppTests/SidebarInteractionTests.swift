@@ -72,17 +72,6 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
 
     // MARK: - Sidebar drag to move
 
-    func testDragRootFileOntoFolderRowMovesIt() async throws {
-        let fixture = try await makeSidebarFixture()
-        defer { fixture.close() }
-        let source = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "top.md"))
-        let target = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "other"))
-        await fixture.drag(from: NSPoint(x: source.midX, y: source.midY), to: NSPoint(x: target.midX, y: target.midY))
-        _ = await waitUntil { fixture.listing().contains("other/top.md") }
-
-        XCTAssertEqual(fixture.listing().filter { $0.hasSuffix("top.md") }, ["other/top.md"])
-    }
-
     func testDragOntoFileRowMovesIntoThatFilesFolder() async throws {
         let fixture = try await makeSidebarFixture()
         defer { fixture.close() }
@@ -476,7 +465,8 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         let opened = await waitUntil { store.documents.count == 5 && !store.isBusy && store.rootNode != nil }
         XCTAssertTrue(opened)
 
-        let defaults = UserDefaults(suiteName: "Monknot.SidebarDrag.\(UUID().uuidString)")!
+        let defaultsSuiteName = "Monknot.SidebarDrag.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: defaultsSuiteName)!
         let newItemRequest = NewItemRequestBox()
         let library = WorkspaceLibraryStore(userDefaults: defaults)
         let search = WorkspaceSearchState()
@@ -530,7 +520,8 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
             editor: editor,
             store: store,
             workspaceURL: root,
-            newItemRequest: newItemRequest
+            newItemRequest: newItemRequest,
+            defaultsSuiteName: defaultsSuiteName
         )
     }
 }
@@ -558,6 +549,7 @@ private struct SidebarFixture {
     let store: WorkspaceStore
     let workspaceURL: URL
     let newItemRequest: NewItemRequestBox
+    let defaultsSuiteName: String
 
     func close() {
         if let sheet = window.attachedSheet {
@@ -566,6 +558,7 @@ private struct SidebarFixture {
         window.orderOut(nil)
         window.contentView = nil
         UserDefaults.standard.removeObject(forKey: WorkspaceTreeExpansionPersistence().key(for: workspaceURL))
+        UserDefaults().removePersistentDomain(forName: defaultsSuiteName)
     }
 
     func path(_ relativePath: String) -> String {

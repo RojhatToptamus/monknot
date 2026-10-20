@@ -135,9 +135,11 @@ final class WorkspaceFileOperationUndoTests: FileOperationsTestCase {
         try write("# a\n", "a.md", in: root)
         try mkdir("docs", in: root)
         let store = try await openStore(root)
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
 
-        store.cutItem(at: url("a.md", in: root))
-        store.pasteDocumentTransfer(into: url("docs", in: root))
+        store.putItemOnPasteboard(at: url("a.md", in: root), cutting: true, pasteboard: pasteboard)
+        store.pasteFromPasteboard(pasteboard, into: url("docs", in: root))
         await settle(store)
         XCTAssertEqual(names("docs", in: root), ["a.md"])
         XCTAssertEqual(store.fileOperationUndo.undoActionName, "Move “a.md”")
@@ -154,10 +156,12 @@ final class WorkspaceFileOperationUndoTests: FileOperationsTestCase {
         let second = try makeRoot()
         try mkdir("Inbox", in: second)
         let cutting = try await openStore(first)
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
         let pasting = try await openStore(second)
 
-        cutting.cutItem(at: url("a.md", in: first))
-        pasting.pasteCut(from: cutting, into: url("Inbox", in: second))
+        cutting.putItemOnPasteboard(at: url("a.md", in: first), cutting: true, pasteboard: pasteboard)
+        pasting.pasteFromPasteboard(pasteboard, into: url("Inbox", in: second))
         await idle(pasting)
         XCTAssertEqual(names("Inbox", in: second), ["a.md"])
         XCTAssertEqual(pasting.fileOperationUndo.undoActionName, "Move “a.md”")
@@ -465,6 +469,176 @@ final class WorkspaceFileOperationUndoTests: FileOperationsTestCase {
         store.deleteDocument(try XCTUnwrap(doc(store, "a.md")))
         await idle(store)
         XCTAssertFalse(store.canUndoWorkspaceReplace)
+    }
+
+    // MARK: - Move to Trash
+
+    /// ⌘Z after Move to Trash brings the items back from the Trash to their names, selected and
+    /// none opened; ⇧⌘Z moves them to the Trash again.
+    func testUndoBringsTrashedItemsBackAndRedoTrashesThemAgain() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        try write("# n\n", "docs/n.md", in: root)
+        try write("# keep\n", "keep.md", in: root)
+        let store = try await openStore(root, selecting: "keep.md")
+
+        store.deleteItems(at: [url("a.md", in: root), url("docs", in: root)])
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names("", in: root), ["keep.md"])
+        XCTAssertEqual(store.fileOperationUndo.undoActionName, "Move 2 Items to Trash")
+
+        store.undoFileOperation()
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(text("a.md", in: root), "# a\n")
+        XCTAssertEqual(text("docs/n.md", in: root), "# n\n", "A folder comes back whole")
+        XCTAssertNotNil(doc(store, "docs/n.md"), "The sidebar lists what came back")
+        XCTAssertEqual(Set(store.sidebarSelectionIDs), [url("a.md", in: root).path, url("docs", in: root).path])
+        XCTAssertEqual(store.selectedDocument?.displayName, "keep.md", "Nothing that came back opens")
+        XCTAssertEqual(store.fileOperationUndo.redoActionName, "Move 2 Items to Trash")
+
+        store.redoFileOperation()
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names("", in: root), ["keep.md"])
+        XCTAssertNil(doc(store, "a.md"))
+
+        store.undoFileOperation()
+        await idle(store)
+        XCTAssertNil(store.errorMessage, "Undo follows the items to where the Trash keeps them now")
+        XCTAssertEqual(names("", in: root), ["a.md", "docs", "keep.md"])
+    }
+
+    func testUndoOfOneTrashedFileIsNamedForIt() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        let store = try await openStore(root, selecting: "a.md")
+
+        store.deleteDocument(try XCTUnwrap(doc(store, "a.md")))
+        await idle(store)
+        XCTAssertEqual(store.fileOperationUndo.undoActionName, "Move “a.md” to Trash")
+        XCTAssertNil(store.selectedDocumentID, "The trashed document closed")
+
+        store.undoFileOperation()
+        await idle(store)
+        XCTAssertEqual(text("a.md", in: root), "# a\n")
+        XCTAssertEqual(store.fileOperationLanding?.itemID, url("a.md", in: root).path, "It lands in the tree")
+    }
+
+    /// Undo never puts an item back over another that took its name since, nor finds one the Trash
+    /// no longer holds; either way it changes nothing, says why, and the step leaves the history.
+    func testUndoOfMoveToTrashRefusesWhenTheNameIsTakenOrTheTrashWasEmptied() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        try write("# b\n", "b.md", in: root)
+        var trashed: [URL] = []
+        let trash = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotTrash")
+        let store = makeWorkspaceStore { url in
+            let destination = trash.appendingPathComponent("\(UUID().uuidString)-\(url.lastPathComponent)")
+            try FileManager.default.moveItem(at: url, to: destination)
+            trashed.append(destination)
+            return destination
+        }
+        store.openWorkspace(root)
+        _ = await wait { !store.isBusy && store.rootNode != nil }
+        store.testing_stopFileWatcher()
+
+        store.deleteDocument(try XCTUnwrap(doc(store, "a.md")))
+        await idle(store)
+        try write("# new a\n", "a.md", in: root)
+        store.undoFileOperation()
+        await idle(store)
+        XCTAssertEqual(store.errorMessage, "Could not undo Move “a.md” to Trash: Another item is now named “a.md” in “\(root.lastPathComponent)”.")
+        XCTAssertEqual(text("a.md", in: root), "# new a\n", "The new file is never overwritten")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(trashed.first).path), "The trashed one stays in the Trash")
+        XCTAssertFalse(store.canUndoFileOperation)
+
+        store.deleteDocument(try XCTUnwrap(doc(store, "b.md")))
+        await idle(store)
+        try FileManager.default.removeItem(at: try XCTUnwrap(trashed.last))
+        store.undoFileOperation()
+        await idle(store)
+        XCTAssertEqual(store.errorMessage, "Could not undo Move “b.md” to Trash: “b.md” is no longer in the Trash.")
+        XCTAssertFalse(exists("b.md", in: root))
+        XCTAssertFalse(store.canUndoFileOperation)
+    }
+
+    func testRedoOfMoveToTrashWaitsForUnsavedChanges() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        let store = try await openStore(root)
+
+        store.deleteDocument(try XCTUnwrap(doc(store, "a.md")))
+        await idle(store)
+        store.undoFileOperation()
+        await idle(store)
+        let a = try XCTUnwrap(doc(store, "a.md"))
+        store.selectDocument(id: a.id)
+        _ = await wait { store.documentText == "# a\n" }
+        store.setOpenDocumentIDs([a.id])
+        store.setDocumentText("# a, edited\n")
+
+        store.redoFileOperation()
+        await idle(store)
+        XCTAssertEqual(store.errorMessage, "Could not redo Move “a.md” to Trash: Save or close a.md first: redoing moves it to the Trash.")
+        XCTAssertTrue(exists("a.md", in: root))
+        XCTAssertTrue(store.canRedoFileOperation, "The step waits for the save")
+    }
+
+    /// A Move to Trash that fails part way keeps what reached the Trash undoable; a failure on the
+    /// first item changes nothing and records nothing. Nothing is ever deleted outright.
+    func testAFailedMoveToTrashKeepsWhatItTrashedUndoable() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        try write("# b\n", "b.md", in: root)
+        let trash = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotTrash")
+        let store = makeWorkspaceStore { url in
+            guard url.lastPathComponent != "b.md" else {
+                throw CocoaError(.fileWriteNoPermission)
+            }
+            let destination = trash.appendingPathComponent(url.lastPathComponent)
+            try FileManager.default.moveItem(at: url, to: destination)
+            return destination
+        }
+        store.openWorkspace(root)
+        _ = await wait { !store.isBusy && store.rootNode != nil }
+        store.testing_stopFileWatcher()
+
+        store.deleteItems(at: [url("b.md", in: root)])
+        await idle(store)
+        XCTAssertNotNil(store.errorMessage)
+        XCTAssertTrue(exists("b.md", in: root))
+        XCTAssertFalse(store.canUndoFileOperation, "Nothing reached the Trash")
+
+        store.deleteItems(at: [url("a.md", in: root), url("b.md", in: root)])
+        await idle(store)
+        XCTAssertEqual(store.errorMessage?.hasPrefix("Could not move b.md to the Trash"), true)
+        XCTAssertFalse(exists("a.md", in: root))
+        XCTAssertTrue(exists("b.md", in: root), "The item that failed stays where it was")
+        XCTAssertEqual(store.fileOperationUndo.undoActionName, "Move “a.md” to Trash")
+
+        store.undoFileOperation()
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(text("a.md", in: root), "# a\n")
+    }
+
+    /// Where there is no Trash (a volume without one), Move to Trash fails; it never falls back to
+    /// deleting, and the item stays.
+    func testWithoutATrashNothingIsDeleted() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "a.md", in: root)
+        let store = makeWorkspaceStore { _ in throw CocoaError(.featureUnsupported) }
+        store.openWorkspace(root)
+        _ = await wait { !store.isBusy && store.rootNode != nil }
+        store.testing_stopFileWatcher()
+
+        store.deleteDocument(try XCTUnwrap(doc(store, "a.md")))
+        await idle(store)
+        XCTAssertEqual(store.errorMessage?.hasPrefix("Could not move a.md to the Trash"), true)
+        XCTAssertEqual(text("a.md", in: root), "# a\n")
+        XCTAssertNotNil(doc(store, "a.md"))
     }
 
     // MARK: - Unsaved text

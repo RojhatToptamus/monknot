@@ -31,6 +31,7 @@ struct EditorPaneView: View {
     private var onDeviceProseCompletions = EditorTextCheckingOptions.defaultOnDeviceProseCompletions
     /// Preview's undo history; it outlives the page, so switching to Source and back keeps it.
     @State private var visualEditingSession = MarkdownVisualEditingSession()
+    @State private var notebookMarkdown = NotebookMarkdownCache()
     /// Writing Tools asked for in Preview; Source opens them once it is showing.
     @State private var sourceWritingToolsRequested = false
     @State private var splitScrollSyncLock = false
@@ -301,6 +302,8 @@ struct EditorPaneView: View {
         case .text:
             if selectedDocument.capabilities.canPreviewHTML {
                 htmlEditor(for: selectedDocument)
+            } else if selectedDocument.capabilities.canPreviewNotebook {
+                notebookEditor(for: selectedDocument)
             } else {
                 textEditor(for: selectedDocument)
             }
@@ -355,7 +358,7 @@ struct EditorPaneView: View {
             // One player per document, so switching tabs releases the previous file.
             MediaPlayerView(document: selectedDocument, theme: theme, zoomScale: zoomScale)
                 .id(selectedDocument.id)
-        case .nativePreview, .unsupported:
+        case .unsupported:
             UnsupportedDocumentView(
                 document: selectedDocument,
                 theme: theme,
@@ -435,6 +438,61 @@ struct EditorPaneView: View {
             onVisibleSourceLineChange: { line in
                 syncSourceScroll(to: line)
             }
+        )
+    }
+
+    /// A notebook's source is its JSON; Preview renders its cells read-only. The two have no lines
+    /// in common, so split view does not sync their scrolling.
+    @ViewBuilder
+    private func notebookEditor(for selectedDocument: WorkspaceDocument) -> some View {
+        if isSplitViewEnabled {
+            HSplitView {
+                textEditor(for: selectedDocument)
+                    .frame(minWidth: 240)
+                    .background(
+                        splitViewRatioAccessor(for: selectedDocument)
+                    )
+                notebookPreviewPane(for: selectedDocument)
+                    .frame(minWidth: 240)
+            }
+        } else {
+            switch editorMode {
+            case .source:
+                textEditor(for: selectedDocument)
+            case .preview:
+                notebookPreviewPane(for: selectedDocument)
+            }
+        }
+    }
+
+    private func notebookPreviewPane(for selectedDocument: WorkspaceDocument) -> some View {
+        MarkdownPreviewView(
+            documentID: selectedDocument.id,
+            markdown: notebookMarkdown.markdown(forNotebookText: store.documentText),
+            baseURL: URL(fileURLWithPath: selectedDocument.id).deletingLastPathComponent(),
+            resourceRoot: store.workspaceURL,
+            theme: theme,
+            zoomScale: zoomScale,
+            codeFontSize: Double(codeFontSize),
+            contentWidthPercent: contentWidthPercent,
+            usePointerCursors: usePointerCursors,
+            fontSmoothing: fontSmoothing,
+            scrollPosition: activeViewportState?.markdownPreviewScrollPosition,
+            syncScrollEnabled: false,
+            syncScrollTargetLine: nil,
+            openingTopLine: nil,
+            sourceLocation: $previewLocation,
+            searchState: $documentSearch,
+            searchOptions: searchOptions,
+            // The page's lines are the rendered notebook's, not the JSON's.
+            onSourceJump: { _ in },
+            onLinkRequest: onMarkdownPreviewLinkRequest,
+            onTaskRequest: { _ in },
+            onScrollPositionChange: { position in
+                updateViewportState(selectedDocument.id, .markdownPreviewScrollPosition(position))
+            },
+            onVisibleSourceLineChange: { _ in },
+            editing: nil
         )
     }
 
@@ -532,7 +590,6 @@ struct EditorPaneView: View {
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
             searchOptions: searchOptions,
-            commandRequest: nil,
             wikilinkDocuments: store.markdownDocuments,
             onSelectionChange: onMarkdownSelectionChange,
             onOpenLink: onMarkdownLinkRequest,
@@ -673,11 +730,36 @@ struct EditorPaneView: View {
 
 }
 
+/// The Markdown of the last notebook text the preview showed, so the view's other updates (a
+/// scroll, a theme change) do not parse the notebook again.
+@MainActor
+private final class NotebookMarkdownCache {
+    private var text: String?
+    private var markdown = ""
+
+    func markdown(forNotebookText text: String) -> String {
+        if text != self.text {
+            self.text = text
+            markdown = JupyterNotebookMarkdown.markdown(fromNotebookText: text)
+        }
+        return markdown
+    }
+}
+
+/// A file Monknot lists but does not show (an archive, an Office document, a binary file), or one
+/// whose bytes could not be read as text: it opens in the app macOS uses for it.
 private struct UnsupportedDocumentView: View {
     let document: WorkspaceDocument
-    var detail = "Preview is not available for this file type."
+    var detail = "Monknot can't show this kind of file."
     let theme: AppTheme
     let zoomScale: Double
+
+    /// The name of the app macOS opens the file with, or nil when none is set.
+    private var defaultApplicationName: String? {
+        guard let applicationURL = NSWorkspace.shared.urlForApplication(toOpen: document.url) else { return nil }
+        let name = FileManager.default.displayName(atPath: applicationURL.path)
+        return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
+    }
 
     var body: some View {
         MonknotEmptyState(
@@ -687,14 +769,26 @@ private struct UnsupportedDocumentView: View {
             theme: theme,
             zoomScale: zoomScale
         ) {
-            MonknotActionButton(
-                title: "Reveal in Finder",
-                systemImage: MonknotWorkspaceIcons.revealInFinder,
-                role: .secondary,
-                theme: theme,
-                zoomScale: zoomScale
-            ) {
-                NSWorkspace.shared.activateFileViewerSelecting([document.url])
+            VStack(spacing: MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: zoomScale)) {
+                if let defaultApplicationName {
+                    MonknotActionButton(
+                        title: "Open in \(defaultApplicationName)",
+                        role: .primary,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    ) {
+                        NSWorkspace.shared.open(document.url)
+                    }
+                }
+                MonknotActionButton(
+                    title: "Reveal in Finder",
+                    systemImage: MonknotWorkspaceIcons.revealInFinder,
+                    role: defaultApplicationName == nil ? .secondary : .quiet,
+                    theme: theme,
+                    zoomScale: zoomScale
+                ) {
+                    NSWorkspace.shared.activateFileViewerSelecting([document.url])
+                }
             }
         }
         .background(theme.surfaceColor)

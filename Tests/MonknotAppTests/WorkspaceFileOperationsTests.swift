@@ -6,28 +6,12 @@ import XCTest
 
 /// Workspace file and folder operations at the `WorkspaceStore` level.
 ///
-/// Stores come from `makeWorkspaceStore`, whose Move to Trash moves items into a temporary
-/// folder rather than the user's Trash.
+/// Stores come from `FileOperationsTestCase.openStore`, whose Move to Trash moves items into a
+/// temporary folder rather than the user's Trash.
 @MainActor
-final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
+final class WorkspaceFileOperationsTests: FileOperationsTestCase {
 
     // MARK: - Helpers
-
-    private func wait(
-        timeout: TimeInterval = 6,
-        _ condition: @escaping @MainActor () -> Bool
-    ) async -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if condition() { return true }
-            try? await Task.sleep(nanoseconds: 20_000_000)
-        }
-        return condition()
-    }
-
-    private func makeRoot() throws -> URL {
-        try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotFileOps").standardizedFileURL
-    }
 
     private func write(_ text: String, to url: URL) throws {
         try FileManager.default.createDirectory(
@@ -50,29 +34,6 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         Set((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
     }
 
-    private func openStore(_ root: URL) async throws -> WorkspaceStore {
-        let store = makeWorkspaceStore()
-        store.openWorkspace(root)
-        let loaded = await wait { !store.isBusy && store.rootNode != nil && store.workspaceURL != nil }
-        XCTAssertTrue(loaded, "Workspace did not load")
-        // Keep the real FSEvents watcher from racing the assertions; tests drive events directly.
-        store.testing_stopFileWatcher()
-        return store
-    }
-
-    private func idle(_ store: WorkspaceStore) async {
-        _ = await wait { !store.isBusy }
-    }
-
-    /// Waits for a rename/move to plan; confirms the link review if one appears.
-    private func settleMove(_ store: WorkspaceStore) async {
-        _ = await wait { !store.isBusy }
-        if let review = store.pendingMarkdownLinkMoveReview {
-            store.confirmMarkdownLinkMoveReview(id: review.id)
-            _ = await wait { !store.isBusy }
-        }
-    }
-
     private func node(_ store: WorkspaceStore, _ relativePath: String) -> SidebarNode? {
         func find(_ node: SidebarNode) -> SidebarNode? {
             if node.relativePath == relativePath { return node }
@@ -84,12 +45,8 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         return store.rootNode.flatMap(find)
     }
 
-    private func document(_ store: WorkspaceStore, _ relativePath: String) -> WorkspaceDocument? {
-        store.documents.first { $0.relativePath == relativePath }
-    }
-
     private func select(_ store: WorkspaceStore, _ relativePath: String) async throws -> WorkspaceDocument {
-        let document = try XCTUnwrap(self.document(store, relativePath), "Missing \(relativePath)")
+        let document = try XCTUnwrap(self.doc(store, relativePath), "Missing \(relativePath)")
         store.selectDocument(id: document.id)
         _ = await wait { !store.isDocumentLoading && store.selectedDocumentID == document.id }
         return document
@@ -168,7 +125,8 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
     }
 
     /// A folder name the scanner hides ("dist", "node_modules", dot-folders) would never appear.
-    func testCreatingFolderWithNameTheScannerHidesIsVisibleOrRefused() async throws {
+    /// A folder the sidebar would hide (an ignored or hidden name) is refused before it is made.
+    func testCreatingAFolderTheSidebarWouldHideIsRefused() async throws {
         let root = try makeRoot()
         let store = try await openStore(root)
 
@@ -176,12 +134,8 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
             store.errorMessage = nil
             store.createFolder(named: name)
             await idle(store)
-            let visible = node(store, name) != nil
-            let refused = store.errorMessage != nil && !exists(root.appendingPathComponent(name))
-            XCTAssertTrue(
-                visible || refused,
-                "\(name): created on disk=\(exists(root.appendingPathComponent(name))), visible=\(visible), error=\(store.errorMessage ?? "nil")"
-            )
+            XCTAssertNotNil(store.errorMessage, name)
+            XCTAssertFalse(exists(root.appendingPathComponent(name)), name)
         }
     }
 
@@ -206,7 +160,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         store.createFile(named: "  Ünïcødé note.md ", in: root.appendingPathComponent("Sub", isDirectory: true))
         await idle(store)
         XCTAssertNil(store.errorMessage)
-        let created = try XCTUnwrap(document(store, "Sub/Ünïcødé note.md"))
+        let created = try XCTUnwrap(doc(store, "Sub/Ünïcødé note.md"))
         XCTAssertEqual(store.selectedDocumentID, created.id)
         XCTAssertEqual(store.documentText, "")
         XCTAssertFalse(store.hasUnsavedChanges)
@@ -230,15 +184,15 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("Note.md"), encoding: .utf8), "x")
     }
 
-    /// A file the scanner skips (dotfile, unsupported type) is refused before it is created, so
-    /// the current document stays selected and loaded.
-    func testCreatingFileTheScannerSkipsKeepsSelectionOrIsVisible() async throws {
+    /// A hidden file would not show, so it is refused before it is created and the current
+    /// document stays selected and loaded. A file of any other type is created and listed.
+    func testCreatingAHiddenFileIsRefusedAndAnyOtherTypeIsListed() async throws {
         let root = try makeRoot()
         try write("# Keep\n", to: root.appendingPathComponent("Keep.md"))
         let store = try await openStore(root)
         let keep = try await select(store, "Keep.md")
 
-        for name in [".env", "archive.xyz"] {
+        for name in [".env", ".notes.md"] {
             store.errorMessage = nil
             store.createFile(named: name)
             await idle(store)
@@ -246,6 +200,14 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
             XCTAssertFalse(exists(root.appendingPathComponent(name)), name)
             XCTAssertEqual(store.selectedDocumentID, keep.id)
             XCTAssertEqual(store.documentText, "# Keep\n")
+        }
+
+        for name in ["init.lua", "data.xyz"] {
+            store.createFile(named: name)
+            await idle(store)
+            XCTAssertNil(store.errorMessage, name)
+            XCTAssertEqual(doc(store, name)?.kind, .text, name)
+            XCTAssertEqual(store.selectedDocument?.url.lastPathComponent, name)
         }
     }
 
@@ -259,6 +221,8 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertEqual(WorkspaceStore.newFileName(" Meeting notes "), "Meeting notes.md")
         XCTAssertEqual(WorkspaceStore.newFileName("Notes.txt"), "Notes.txt")
         XCTAssertEqual(WorkspaceStore.newFileName(".env"), ".env")
+        XCTAssertEqual(WorkspaceStore.newFileName("init.lua"), "init.lua")
+        XCTAssertEqual(WorkspaceStore.newFileName("Release 1.2"), "Release 1.2.md", "A version number is not an extension")
         store.createFile(named: "Meeting notes")
         await idle(store)
         XCTAssertNil(store.errorMessage)
@@ -279,12 +243,13 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertNil(store.validationMessage(forNewItemNamed: "Drafts", in: sub, isDirectory: true))
         XCTAssertNil(store.validationMessage(forNewItemNamed: "Drafts", in: nil, isDirectory: true))
         for (name, isDirectory) in [("", false), ("..", true), ("a/b", false), ("B.md", false), (".git", true),
-                                    ("node_modules", true), (".notes.md", false), ("data.xyz", false)] {
+                                    ("node_modules", true), (".notes.md", false)] {
             XCTAssertNotNil(
                 store.validationMessage(forNewItemNamed: name, in: sub, isDirectory: isDirectory),
                 name.debugDescription
             )
         }
+        XCTAssertNil(store.validationMessage(forNewItemNamed: "data.xyz", in: sub, isDirectory: false))
         let outside = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotFileOpsOutside")
         XCTAssertNotNil(store.validationMessage(forNewItemNamed: "x.md", in: outside, isDirectory: false))
 
@@ -321,11 +286,14 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
             ("Release 1.2", "Release 1.2.md"),
             ("archive.tar", "archive.tar.md"),
             ("Plain.txt", "Plain.txt"),
+            ("init.lua", "init.lua"),
             ("Back.md", "Back.md"),
+            ("  Trimmed  ", "Trimmed.md"),
+            ("Meeting 10.30", "Meeting 10.30.md"),
         ] {
             let current = try XCTUnwrap(store.documents.first)
             store.renameDocument(id: current.id, to: proposed)
-            await settleMove(store)
+            await settle(store)
             XCTAssertNil(store.errorMessage, proposed)
             XCTAssertEqual(names(in: root), [expected], proposed)
         }
@@ -353,9 +321,9 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
             ("clip.mov", "Clip Final", "Clip Final.mov"),
             ("Clip Final.mov", "Clip Final.md", "Clip Final.md.mov"),
         ] {
-            let document = try XCTUnwrap(self.document(store, source), source)
+            let document = try XCTUnwrap(self.doc(store, source), source)
             store.renameDocument(id: document.id, to: proposed)
-            await settleMove(store)
+            await settle(store)
             XCTAssertNil(store.errorMessage, proposed)
             XCTAssertTrue(names(in: root).contains(expected), "\(proposed): \(names(in: root))")
         }
@@ -375,78 +343,42 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertFalse(exists(outside.appendingPathComponent("EscapeFolder")), "Folder created outside the workspace")
     }
 
-    func testCreateWhileBusyIsIgnored() async throws {
-        let root = try makeRoot()
-        let store = try await openStore(root)
-
-        store.createFolder(named: "First")
-        XCTAssertTrue(store.isBusy)
-        store.createFolder(named: "Second")
-        store.createFile(named: "Third.md")
-        await idle(store)
-
-        XCTAssertNotNil(node(store, "First"))
-        XCTAssertFalse(exists(root.appendingPathComponent("Second")))
-        XCTAssertFalse(exists(root.appendingPathComponent("Third.md")))
-    }
-
     // MARK: - Rename
 
-    func testRenameFileKeepsExtensionWhenOmitted() async throws {
-        let root = try makeRoot()
-        try write("# A\n", to: root.appendingPathComponent("A.md"))
-        let store = try await openStore(root)
-        let a = try XCTUnwrap(document(store, "A.md"))
-
-        store.renameDocument(id: a.id, to: "  Renamed  ")
-        await settleMove(store)
-        XCTAssertNil(store.errorMessage)
-        XCTAssertEqual(names(in: root), ["Renamed.md"])
-        XCTAssertNotNil(document(store, "Renamed.md"))
-    }
-
-    func testRenameFileWithDotInNewNameKeepsMarkdownExtension() async throws {
-        let root = try makeRoot()
-        try write("# A\n", to: root.appendingPathComponent("A.md"))
-        let store = try await openStore(root)
-        let a = try XCTUnwrap(document(store, "A.md"))
-
-        store.renameDocument(id: a.id, to: "Meeting 10.30")
-        await settleMove(store)
-        XCTAssertEqual(
-            names(in: root), ["Meeting 10.30.md"],
-            "on disk: \(names(in: root)), documents: \(store.documents.map(\.relativePath))"
-        )
-    }
-
-    /// A dot-name would hide the file from the sidebar and from any open tab.
-    func testRenameFileToDotNameIsRefused() async throws {
+    /// A name that is empty, a path, or one the sidebar hides (a dot-name would hide the file
+    /// from the sidebar and from any open tab) is refused, and nothing on disk changes.
+    func testRenameFileRefusesInvalidAndHiddenNames() async throws {
         let root = try makeRoot()
         try write("# A\n", to: root.appendingPathComponent("A.md"))
         try write("# B\n", to: root.appendingPathComponent("B.md"))
         let store = try await openStore(root)
+        let a = try XCTUnwrap(doc(store, "A.md"))
 
-        let a = try XCTUnwrap(document(store, "A.md"))
-        store.renameDocument(id: a.id, to: ".")
-        await settleMove(store)
-        let b = try XCTUnwrap(document(store, "B.md"))
-        store.renameDocument(id: b.id, to: ".hidden")
-        await settleMove(store)
-
+        for name in ["", "  ", ".", "..", ".hidden", "a/b", "a:b", "../escape"] {
+            store.errorMessage = nil
+            store.renameDocument(id: a.id, to: name)
+            await settle(store)
+            XCTAssertNotNil(store.errorMessage, "\(name.debugDescription) was not refused")
+        }
         XCTAssertEqual(names(in: root), ["A.md", "B.md"], "on disk: \(names(in: root))")
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("A.md"), encoding: .utf8), "# A\n")
     }
 
-    /// A name the scanner hides would make the folder and every document inside it vanish.
-    func testRenamingFolderToHiddenNameIsVisibleOrRefused() async throws {
+    /// A name the scanner hides would make the folder and every document inside it vanish, so it
+    /// is refused and the folder stays as it was.
+    func testRenamingAFolderToAHiddenNameIsRefused() async throws {
         let root = try makeRoot()
         try write("# N\n", to: root.appendingPathComponent("Folder/N.md"))
         let store = try await openStore(root)
 
-        store.renameFolder(id: root.appendingPathComponent("Folder").path, to: "node_modules")
-        await settleMove(store)
-        let visible = node(store, "node_modules") != nil
-        let refused = store.errorMessage != nil && exists(root.appendingPathComponent("Folder"))
-        XCTAssertTrue(visible || refused, "on disk: \(names(in: root)), documents: \(store.documents.map(\.relativePath))")
+        for name in ["node_modules", ".git", "Notes.rtfd"] {
+            store.errorMessage = nil
+            store.renameFolder(id: root.appendingPathComponent("Folder").path, to: name)
+            await settle(store)
+            XCTAssertNotNil(store.errorMessage, name)
+        }
+        XCTAssertEqual(names(in: root), ["Folder"])
+        XCTAssertNotNil(doc(store, "Folder/N.md"))
     }
 
     func testRenameFolderRejectsInvalidNames() async throws {
@@ -458,7 +390,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         for name in ["", "  ", ".", "..", "a/b", "a:b"] {
             store.errorMessage = nil
             store.renameFolder(id: folderID, to: name)
-            await settleMove(store)
+            await settle(store)
             XCTAssertNotNil(store.errorMessage, "\(name.debugDescription) was not refused")
         }
         XCTAssertEqual(names(in: root), ["Folder"])
@@ -476,15 +408,15 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         try makeFolder(root.appendingPathComponent("X"))
         try makeFolder(root.appendingPathComponent("Y"))
         let store = try await openStore(root)
-        let a = try XCTUnwrap(document(store, "A.md"))
+        let a = try XCTUnwrap(doc(store, "A.md"))
 
         store.renameDocument(id: a.id, to: "b")
-        await settleMove(store)
+        await settle(store)
         XCTAssertNotNil(store.errorMessage)
 
         store.errorMessage = nil
         store.renameFolder(id: root.appendingPathComponent("X").path, to: "y")
-        await settleMove(store)
+        await settle(store)
         XCTAssertNotNil(store.errorMessage)
         XCTAssertEqual(names(in: root), ["A.md", "B.md", "X", "Y"])
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("B.md"), encoding: .utf8), "# B\n")
@@ -494,42 +426,27 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         let root = try makeRoot()
         try write("# Note\n", to: root.appendingPathComponent("folder/note.md"))
         let store = try await openStore(root)
-        let note = try XCTUnwrap(document(store, "folder/note.md"))
+        let note = try XCTUnwrap(doc(store, "folder/note.md"))
 
         store.renameDocument(id: note.id, to: "NOTE.md")
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(names(in: root.appendingPathComponent("folder")), ["NOTE.md"])
 
         store.renameFolder(id: root.appendingPathComponent("folder").path, to: "Folder")
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(names(in: root), ["Folder"])
-        XCTAssertNotNil(document(store, "Folder/NOTE.md"))
+        XCTAssertNotNil(doc(store, "Folder/NOTE.md"))
         XCTAssertNotNil(node(store, "Folder"))
         XCTAssertNil(node(store, "folder"))
     }
 
-    func testRenameDirtyMarkdownDocumentCarriesUnsavedText() async throws {
-        let root = try makeRoot()
-        try write("# A\n", to: root.appendingPathComponent("A.md"))
-        let store = try await openStore(root)
-        let a = try await select(store, "A.md")
-        store.setOpenDocumentIDs([a.id])
-        store.setDocumentText("# A\nedited\n")
-        XCTAssertTrue(store.hasUnsavedChanges)
-
-        store.renameDocument(id: a.id, to: "B")
-        await settleMove(store)
-        XCTAssertNil(store.errorMessage)
-        XCTAssertEqual(names(in: root), ["B.md"])
-        let renamedID = root.appendingPathComponent("B.md").path
-        XCTAssertEqual(store.selectedDocumentID, renamedID)
-        XCTAssertEqual(store.documentText, "# A\nedited\n")
-        XCTAssertFalse(store.saveState(for: renamedID).isClean)
-    }
-
-    func testRenameIsRefusedWhileADirtyDocumentWouldHaveItsLinksRewritten() async throws {
+    /// Renaming a note with unsaved changes carries its text, its selection and its unsaved state
+    /// to the new name; its own links are not another file's to rewrite, so nothing refuses it.
+    /// (A rename that would rewrite the links in another unsaved note is refused:
+    /// `FileOperationsScenarioTests.testMovingAnItemAnUnsavedNoteLinksToIsRefusedUntilTheNoteIsSaved`.)
+    func testRenamingANoteWithUnsavedChangesCarriesThem() async throws {
         let root = try makeRoot()
         try write("# A\n[b](B.md)\n", to: root.appendingPathComponent("A.md"))
         try write("# B\n", to: root.appendingPathComponent("B.md"))
@@ -537,20 +454,16 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         let a = try await select(store, "A.md")
         store.setOpenDocumentIDs([a.id])
         store.setDocumentText("# A\n[b](B.md)\nedited\n")
-        let b = try XCTUnwrap(document(store, "B.md"))
 
-        store.renameDocument(id: b.id, to: "C")
-        await settleMove(store)
-        XCTAssertEqual(store.errorMessage, "Save A.md first: this move updates the links in it.")
-        XCTAssertEqual(names(in: root), ["A.md", "B.md"])
-        XCTAssertEqual(store.documentText, "# A\n[b](B.md)\nedited\n")
-
-        // Renaming the unsaved note itself rewrites no other file, so its text moves with it.
         store.renameDocument(id: a.id, to: "Renamed")
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(names(in: root), ["Renamed.md", "B.md"])
+        let renamedID = root.appendingPathComponent("Renamed.md").path
+        XCTAssertEqual(store.selectedDocumentID, renamedID)
         XCTAssertEqual(store.documentText, "# A\n[b](B.md)\nedited\n")
+        XCTAssertFalse(store.saveState(for: renamedID).isClean)
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("Renamed.md"), encoding: .utf8), "# A\n[b](B.md)\n", "Nothing was saved")
     }
 
     func testRenameDirtyPlainTextDocumentCarriesUnsavedTextAndSelection() async throws {
@@ -562,7 +475,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         store.setDocumentText("edited\n")
 
         store.renameDocument(id: notes.id, to: "renamed")
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         let renamedID = root.appendingPathComponent("renamed.txt").path
         XCTAssertEqual(store.selectedDocumentID, renamedID)
@@ -584,11 +497,11 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         try write("# Deep\n", to: root.appendingPathComponent("A/Inner/Deep.md"))
         try write("# AB\n", to: root.appendingPathComponent("AB/Other.md"))
         let store = try await openStore(root)
-        let doc = try await select(store, "A/Doc.md")
-        store.setOpenDocumentIDs([doc.id])
+        let selected = try await select(store, "A/Doc.md")
+        store.setOpenDocumentIDs([selected.id])
 
         store.renameFolder(id: root.appendingPathComponent("A").path, to: "Renamed")
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
 
         XCTAssertEqual(store.selectedDocumentID, root.appendingPathComponent("Renamed/Doc.md").path)
@@ -600,7 +513,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         ], "Sibling folder AB (shared prefix) must not be remapped")
         XCTAssertNotNil(node(store, "Renamed/Inner"))
         XCTAssertNil(node(store, "A"))
-        XCTAssertNotNil(document(store, "AB/Other.md"))
+        XCTAssertNotNil(doc(store, "AB/Other.md"))
     }
 
     // MARK: - Markdown link updates on move
@@ -613,7 +526,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         let store = try await openStore(root)
 
         store.moveItem(id: root.appendingPathComponent("Target.md").path, toDirectory: root.appendingPathComponent("Sub"))
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("Source.md"), encoding: .utf8), "[t](Sub/Target.md)\n")
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("Sub/Target.md"), encoding: .utf8), "# T\n[s](../Source.md)\n")
@@ -626,7 +539,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         let store = try await openStore(root)
 
         store.renameFolder(id: root.appendingPathComponent("Docs").path, to: "Manual")
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(
             try String(contentsOf: root.appendingPathComponent("Index.md"), encoding: .utf8),
@@ -643,15 +556,15 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         let store = try await openStore(root)
 
         store.moveItem(id: root.appendingPathComponent("a.txt").path, toDirectory: root.appendingPathComponent("Sub"))
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
-        XCTAssertNotNil(document(store, "Sub/a.txt"))
-        XCTAssertNil(document(store, "a.txt"))
+        XCTAssertNotNil(doc(store, "Sub/a.txt"))
+        XCTAssertNil(doc(store, "a.txt"))
 
         store.moveItem(id: root.appendingPathComponent("Sub/a.txt").path, toDirectory: nil)
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
-        XCTAssertNotNil(document(store, "a.txt"))
+        XCTAssertNotNil(doc(store, "a.txt"))
         XCTAssertEqual(node(store, "Sub")?.children ?? [], [], "Emptied folder stays in the tree")
     }
 
@@ -664,13 +577,8 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         for target in [a, a.appendingPathComponent("B"), a.appendingPathComponent("B/C")] {
             store.errorMessage = nil
             store.moveItem(id: a.path, toDirectory: target)
-            await settleMove(store)
-            if target == a {
-                // Moving into its own folder is "already there"; must still be harmless.
-                XCTAssertTrue(exists(a.appendingPathComponent("B/C/x.txt")))
-            } else {
-                XCTAssertNotNil(store.errorMessage, "Move into \(target.lastPathComponent) not refused")
-            }
+            await settle(store)
+            XCTAssertEqual(store.errorMessage, "A folder cannot be moved into itself.", "Move into \(target.lastPathComponent)")
         }
         XCTAssertEqual(names(in: root), ["A"])
         XCTAssertTrue(exists(a.appendingPathComponent("B/C/x.txt")))
@@ -686,19 +594,19 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
 
         // Onto a file row.
         store.moveItem(id: root.appendingPathComponent("Other.txt").path, toDirectory: root.appendingPathComponent("Note.txt"))
-        await settleMove(store)
+        await settle(store)
         XCTAssertNotNil(store.errorMessage)
 
         // Case-variant collision in the destination.
         store.errorMessage = nil
         store.moveItem(id: root.appendingPathComponent("Note.txt").path, toDirectory: root.appendingPathComponent("Sub"))
-        await settleMove(store)
+        await settle(store)
         XCTAssertNotNil(store.errorMessage)
 
         // Outside the workspace.
         store.errorMessage = nil
         store.moveItem(id: root.appendingPathComponent("Other.txt").path, toDirectory: outside)
-        await settleMove(store)
+        await settle(store)
         XCTAssertNotNil(store.errorMessage)
 
         XCTAssertEqual(names(in: root), ["Note.txt", "Sub", "Other.txt"])
@@ -728,7 +636,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         store.setDocumentText("v2\n")
 
         store.moveItem(id: root.appendingPathComponent("Proj").path, toDirectory: root.appendingPathComponent("Archive"))
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         let newID = root.appendingPathComponent("Archive/Proj/todo.txt").path
         XCTAssertEqual(store.selectedDocumentID, newID)
@@ -739,41 +647,25 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
 
     // MARK: - Copy / cut / paste inside the workspace
 
-    func testCopyPasteCreatesCopySuffixesAndCarriesUnsavedText() async throws {
+    /// A file without an extension takes " copy" at the end of its name. (Copies of files with
+    /// extensions and their unsaved text: `FileOperationsScenarioTests`.)
+    func testACopyOfAnExtensionlessFileIsNamedCopy() async throws {
         let root = try makeRoot()
-        try write("disk\n", to: root.appendingPathComponent("a.txt"))
         try write("make\n", to: root.appendingPathComponent("Makefile"))
         try makeFolder(root.appendingPathComponent("Sub"))
         let store = try await openStore(root)
-        let a = try await select(store, "a.txt")
-        store.setOpenDocumentIDs([a.id])
-        store.setDocumentText("unsaved\n")
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+        let makefile = try XCTUnwrap(doc(store, "Makefile"))
 
-        store.copyItem(at: a.url)
-        store.pasteDocumentTransfer()
+        store.putItemOnPasteboard(at: makefile.url, cutting: false, pasteboard: pasteboard)
+        store.pasteFromPasteboard(pasteboard, into: nil)
         await idle(store)
-        XCTAssertNil(store.errorMessage)
-        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("a copy.txt"), encoding: .utf8), "unsaved\n")
-        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("a.txt"), encoding: .utf8), "disk\n")
-        XCTAssertEqual(store.selectedDocumentID, root.appendingPathComponent("a copy.txt").path)
-        store.pasteDocumentTransfer()
+        store.pasteFromPasteboard(pasteboard, into: nil)
         await idle(store)
-        XCTAssertTrue(exists(root.appendingPathComponent("a copy 2.txt")), "A Copy can be pasted again")
-
-        // The original's unsaved text survives the selection change.
-        XCTAssertFalse(store.saveState(for: a.id).isClean)
-
-        let makefile = try XCTUnwrap(document(store, "Makefile"))
-        store.copyItem(at: makefile.url)
-        store.pasteDocumentTransfer()
+        store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Sub"))
         await idle(store)
-        store.copyItem(at: makefile.url)
-        store.pasteDocumentTransfer()
-        await idle(store)
-        store.copyItem(at: makefile.url)
-        store.pasteDocumentTransfer(into: root.appendingPathComponent("Sub"))
-        await idle(store)
-        XCTAssertTrue(names(in: root).isSuperset(of: ["Makefile copy", "Makefile copy 2"]))
+        XCTAssertEqual(names(in: root), ["Makefile", "Makefile copy", "Makefile copy 2", "Sub"])
         XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), ["Makefile"])
     }
 
@@ -782,35 +674,14 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         try write("x\n", to: root.appendingPathComponent("a.txt"))
         let outside = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotFileOpsOutside")
         let store = try await openStore(root)
-        let a = try XCTUnwrap(document(store, "a.txt"))
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+        let a = try XCTUnwrap(doc(store, "a.txt"))
 
-        store.copyItem(at: a.url)
-        store.pasteDocumentTransfer(into: outside)
+        store.putItemOnPasteboard(at: a.url, cutting: false, pasteboard: pasteboard)
+        store.pasteFromPasteboard(pasteboard, into: outside)
         await idle(store)
         XCTAssertEqual(names(in: outside), [], "Copied outside the workspace")
-    }
-
-    func testCutPasteMovesAndSameFolderPasteIsNoop() async throws {
-        let root = try makeRoot()
-        try write("x\n", to: root.appendingPathComponent("a.txt"))
-        try makeFolder(root.appendingPathComponent("Sub"))
-        let store = try await openStore(root)
-        let a = try XCTUnwrap(document(store, "a.txt"))
-
-        store.cutItem(at: a.url)
-        store.pasteDocumentTransfer() // same folder
-        XCTAssertFalse(store.isBusy)
-        XCTAssertTrue(exists(root.appendingPathComponent("a.txt")))
-        XCTAssertFalse(store.hasPendingCut)
-
-        store.cutItem(at: a.url)
-        store.pasteDocumentTransfer(into: root.appendingPathComponent("Sub"))
-        await settleMove(store)
-        XCTAssertNil(store.errorMessage)
-        XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), ["a.txt"])
-        XCTAssertFalse(exists(root.appendingPathComponent("a.txt")))
-        XCTAssertEqual(store.selectedDocumentID, root.appendingPathComponent("Sub/a.txt").path)
-        XCTAssertFalse(store.hasPendingCut)
     }
 
     func testCutPasteOntoExistingNameRenamesWithCopySuffix() async throws {
@@ -818,11 +689,13 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         try write("root\n", to: root.appendingPathComponent("a.txt"))
         try write("sub\n", to: root.appendingPathComponent("Sub/a.txt"))
         let store = try await openStore(root)
-        let a = try XCTUnwrap(document(store, "a.txt"))
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+        let a = try XCTUnwrap(doc(store, "a.txt"))
 
-        store.cutItem(at: a.url)
-        store.pasteDocumentTransfer(into: root.appendingPathComponent("Sub"))
-        await settleMove(store)
+        store.putItemOnPasteboard(at: a.url, cutting: true, pasteboard: pasteboard)
+        store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Sub"))
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), ["a.txt", "a copy.txt"])
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("Sub/a.txt"), encoding: .utf8), "sub\n")
@@ -833,22 +706,20 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         try write("x\n", to: root.appendingPathComponent("a.txt"))
         try makeFolder(root.appendingPathComponent("Sub"))
         let store = try await openStore(root)
-        let a = try XCTUnwrap(document(store, "a.txt"))
-        store.cutItem(at: a.url)
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+        let a = try XCTUnwrap(doc(store, "a.txt"))
+        store.putItemOnPasteboard(at: a.url, cutting: true, pasteboard: pasteboard)
 
         try FileManager.default.moveItem(at: root.appendingPathComponent("a.txt"), to: root.appendingPathComponent("b.txt"))
         store.refresh()
-        _ = await wait { self.document(store, "b.txt") != nil }
+        _ = await wait { self.doc(store, "b.txt") != nil }
 
-        store.pasteDocumentTransfer(into: root.appendingPathComponent("Sub"))
-        await settleMove(store)
+        store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Sub"))
+        await settle(store)
         XCTAssertNotNil(store.errorMessage)
         XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), [])
         XCTAssertTrue(exists(root.appendingPathComponent("b.txt")))
-    }
-
-    private func makePasteboard() -> NSPasteboard {
-        NSPasteboard(name: NSPasteboard.Name("MonknotFileOps-\(UUID().uuidString)"))
     }
 
     /// ⌘X then ⌘V (and the Paste menu items) move the file. The moved item then leaves the
@@ -874,7 +745,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertEqual(try WorkspacePasteboardImportService.importItems(from: pasteboard).count, 1)
 
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Sub")))
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), ["a.txt"])
         XCTAssertFalse(exists(root.appendingPathComponent("a.txt")))
@@ -897,7 +768,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
 
         store.putItemOnPasteboard(at: root.appendingPathComponent("Folder"), cutting: true, pasteboard: pasteboard)
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Archive")))
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertFalse(store.pasteFromPasteboard(pasteboard, into: nil))
         await idle(store)
@@ -973,23 +844,6 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertNil(store.pendingTransferPasteboardStamp)
     }
 
-    func testPasteFromAForeignClipboardImportsItsFiles() async throws {
-        let root = try makeRoot()
-        try makeFolder(root.appendingPathComponent("Sub"))
-        let outside = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotFileOpsOutside")
-        try write("o\n", to: outside.appendingPathComponent("o.txt"))
-        let store = try await openStore(root)
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotFileOps-\(UUID().uuidString)"))
-        defer { pasteboard.releaseGlobally() }
-
-        pasteboard.clearContents()
-        XCTAssertFalse(store.pasteFromPasteboard(pasteboard, into: nil), "Nothing to paste")
-        pasteboard.writeObjects([outside.appendingPathComponent("o.txt") as NSURL])
-        XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Sub")))
-        await idle(store)
-        XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), ["o.txt"])
-    }
-
     /// Video and audio are workspace documents, so they copy, duplicate and import like any other.
     func testMediaFilesCopyDuplicateAndImportFromFinder() async throws {
         let root = try makeRoot()
@@ -998,25 +852,27 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         try Data("RIFF".utf8).write(to: root.appendingPathComponent("tone.wav"))
         try Data([0x00, 0x00, 0x00, 0x14]).write(to: outside.appendingPathComponent("Trip.MOV"))
         let store = try await openStore(root)
-        let tone = try XCTUnwrap(document(store, "tone.wav"))
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+        let tone = try XCTUnwrap(doc(store, "tone.wav"))
         XCTAssertEqual(tone.kind, .media)
 
         store.duplicateItem(at: tone.url)
         await idle(store)
         XCTAssertNil(store.errorMessage)
-        XCTAssertEqual(document(store, "tone copy.wav")?.kind, .media)
+        XCTAssertEqual(doc(store, "tone copy.wav")?.kind, .media)
         XCTAssertEqual(store.selectedDocumentID, root.appendingPathComponent("tone copy.wav").path)
 
-        store.copyItem(at: tone.url)
-        store.pasteDocumentTransfer(into: root.appendingPathComponent("Sub"))
+        store.putItemOnPasteboard(at: tone.url, cutting: false, pasteboard: pasteboard)
+        store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Sub"))
         await idle(store)
         XCTAssertNil(store.errorMessage)
-        XCTAssertEqual(document(store, "Sub/tone.wav")?.kind, .media)
+        XCTAssertEqual(doc(store, "Sub/tone.wav")?.kind, .media)
 
         store.dropFileURLs([outside.appendingPathComponent("Trip.MOV")], into: root.appendingPathComponent("Sub"))
         await idle(store)
         XCTAssertNil(store.errorMessage)
-        XCTAssertEqual(document(store, "Sub/Trip.MOV")?.kind, .media)
+        XCTAssertEqual(doc(store, "Sub/Trip.MOV")?.kind, .media)
     }
 
     func testCopyCutAndDuplicateFolders() async throws {
@@ -1024,31 +880,33 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         try write("# N\n", to: root.appendingPathComponent("Folder/N.md"))
         try makeFolder(root.appendingPathComponent("Archive"))
         let store = try await openStore(root)
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
         let folder = root.appendingPathComponent("Folder", isDirectory: true)
         let selected = store.selectedDocumentID
 
         store.duplicateItem(at: folder)
         await idle(store)
         XCTAssertNil(store.errorMessage)
-        XCTAssertNotNil(document(store, "Folder copy/N.md"))
+        XCTAssertNotNil(doc(store, "Folder copy/N.md"))
         XCTAssertEqual(store.selectedDocumentID, selected, "Copying a folder keeps the selection")
 
-        store.copyItem(at: folder)
-        store.pasteDocumentTransfer(into: folder.appendingPathComponent("Inner"))
+        store.putItemOnPasteboard(at: folder, cutting: false, pasteboard: pasteboard)
+        store.pasteFromPasteboard(pasteboard, into: folder.appendingPathComponent("Inner"))
         XCTAssertNotNil(store.errorMessage, "A folder cannot be pasted into itself")
         store.errorMessage = nil
-        store.pasteDocumentTransfer(into: root.appendingPathComponent("Archive"))
+        store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Archive"))
         await idle(store)
-        XCTAssertNotNil(document(store, "Archive/Folder/N.md"))
-        XCTAssertNotNil(document(store, "Folder/N.md"))
+        XCTAssertNotNil(doc(store, "Archive/Folder/N.md"))
+        XCTAssertNotNil(doc(store, "Folder/N.md"))
 
-        store.cutItem(at: folder)
-        store.pasteDocumentTransfer(into: folder)
+        store.putItemOnPasteboard(at: folder, cutting: true, pasteboard: pasteboard)
+        store.pasteFromPasteboard(pasteboard, into: folder)
         XCTAssertNotNil(store.errorMessage, "A folder cannot be moved into itself")
         store.errorMessage = nil
-        store.cutItem(at: folder)
-        store.pasteDocumentTransfer(into: root.appendingPathComponent("Archive"))
-        await settleMove(store)
+        store.putItemOnPasteboard(at: folder, cutting: true, pasteboard: pasteboard)
+        store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Archive"))
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(names(in: root.appendingPathComponent("Archive")), ["Folder", "Folder copy"])
         XCTAssertFalse(exists(folder))
@@ -1063,35 +921,25 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         try write("# N\n", to: root.appendingPathComponent("Folder/N.md"))
         try makeFolder(root.appendingPathComponent("Archive"))
         let store = try await openStore(root)
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
         _ = try await select(store, "Other.md")
 
-        store.cutItem(at: root.appendingPathComponent("Folder"))
-        store.pasteDocumentTransfer(into: root.appendingPathComponent("Archive"))
-        await settleMove(store)
+        store.putItemOnPasteboard(at: root.appendingPathComponent("Folder"), cutting: true, pasteboard: pasteboard)
+        store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Archive"))
+        await settle(store)
         XCTAssertNil(store.errorMessage)
-        XCTAssertNotNil(document(store, "Archive/Folder/N.md"))
+        XCTAssertNotNil(doc(store, "Archive/Folder/N.md"))
         XCTAssertEqual(store.selectedDocumentID, root.appendingPathComponent("Other.md").path)
 
         _ = try await select(store, "Archive/Folder/N.md")
-        store.cutItem(at: root.appendingPathComponent("Archive/Folder"))
-        store.pasteDocumentTransfer(into: nil)
-        await settleMove(store)
+        store.putItemOnPasteboard(at: root.appendingPathComponent("Archive/Folder"), cutting: true, pasteboard: pasteboard)
+        store.pasteFromPasteboard(pasteboard, into: nil)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(store.selectedDocumentID, root.appendingPathComponent("Folder/N.md").path)
         _ = await wait { !store.isDocumentLoading }
         XCTAssertEqual(store.documentText, "# N\n")
-    }
-
-    func testDuplicateFolderWithADotKeepsItsWholeName() async throws {
-        let root = try makeRoot()
-        try write("# N\n", to: root.appendingPathComponent("v1.2/N.md"))
-        let store = try await openStore(root)
-
-        store.duplicateItem(at: root.appendingPathComponent("v1.2"))
-        await idle(store)
-        XCTAssertNil(store.errorMessage)
-        XCTAssertEqual(names(in: root), ["v1.2", "v1.2 copy"])
-        XCTAssertNotNil(document(store, "v1.2 copy/N.md"))
     }
 
     /// Whatever a failed folder copy left on disk shows in the sidebar right away.
@@ -1145,14 +993,14 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         store.importPasteboardItems([.fileURL(externalFile), .fileURL(externalFolder)])
         await idle(store)
         XCTAssertNil(store.errorMessage)
-        XCTAssertNotNil(document(store, "Doc copy.md"))
-        XCTAssertNotNil(document(store, "Bundle/Inner.md"))
+        XCTAssertNotNil(doc(store, "Doc copy.md"))
+        XCTAssertNotNil(doc(store, "Bundle/Inner.md"))
         XCTAssertNotNil(node(store, "Bundle/EmptyChild"))
         XCTAssertEqual(store.selectedDocumentID, selectedBefore, "File imports keep selection")
 
         store.importPasteboardItems([.fileURL(externalFile)], into: root.appendingPathComponent("Sub"))
         await idle(store)
-        XCTAssertNotNil(document(store, "Sub/Doc.md"))
+        XCTAssertNotNil(doc(store, "Sub/Doc.md"))
         XCTAssertTrue(exists(externalFile), "Import copies, never moves")
     }
 
@@ -1189,7 +1037,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         let store = try await openStore(root)
 
         store.dropFileURLs([root.appendingPathComponent("Sub/a.md")], into: root.appendingPathComponent("Other"))
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(names(in: root.appendingPathComponent("Other")), ["a.md"])
         XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), [])
@@ -1199,7 +1047,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         try makeFolder(root.appendingPathComponent("Other/Deeper"))
         store.dropFileURLs([root.appendingPathComponent("Other/a.md"), root.appendingPathComponent("Other/Deeper")])
         for _ in 0..<2 {
-            await settleMove(store)
+            await settle(store)
         }
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(names(in: root), ["Index.md", "Sub", "Other", "a.md", "Deeper"])
@@ -1226,20 +1074,6 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertTrue(exists(root.appendingPathComponent("b.md")))
     }
 
-    func testFinderDropImportsIntoTheTargetFolder() async throws {
-        let root = try makeRoot()
-        try makeFolder(root.appendingPathComponent("Sub"))
-        let outside = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotFileOpsOutside")
-        try write("o\n", to: outside.appendingPathComponent("o.txt"))
-        let store = try await openStore(root)
-
-        store.dropFileURLs([outside.appendingPathComponent("o.txt")], into: root.appendingPathComponent("Sub"))
-        await idle(store)
-        XCTAssertNil(store.errorMessage)
-        XCTAssertNotNil(document(store, "Sub/o.txt"))
-        XCTAssertTrue(exists(outside.appendingPathComponent("o.txt")))
-    }
-
     func testDroppingSeveralFoldersWithoutAWorkspaceIsRefused() throws {
         let first = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotFileOpsFirst")
         let second = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotFileOpsSecond")
@@ -1263,11 +1097,8 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         store.importPasteboardItems([.fileURL(good), .fileURL(missing)])
         await idle(store)
         XCTAssertNotNil(store.errorMessage)
-        let onDisk = exists(root.appendingPathComponent("Good.md"))
-        XCTAssertTrue(
-            !onDisk || document(store, "Good.md") != nil,
-            "Good.md on disk=\(onDisk) but in documents=\(document(store, "Good.md") != nil)"
-        )
+        XCTAssertTrue(exists(root.appendingPathComponent("Good.md")))
+        XCTAssertNotNil(doc(store, "Good.md"), "What was copied shows in the sidebar")
     }
 
     func testPastedTextLandsInInboxOfTargetAndIsSelected() async throws {
@@ -1320,48 +1151,53 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         store.createFolder(named: "Busy")
         XCTAssertTrue(store.isBusy)
         store.importPasteboardItems([.fileURL(outside.appendingPathComponent("drop.txt"))])
-        let messageWhileBusy = store.errorMessage
+        XCTAssertEqual(store.errorMessage, "Wait for the current file operation to finish, then try again.")
         await idle(store)
-        XCTAssertTrue(
-            exists(root.appendingPathComponent("drop.txt")) || messageWhileBusy != nil,
-            "Dropped file neither imported nor reported"
-        )
+        XCTAssertFalse(exists(root.appendingPathComponent("drop.txt")), "A refused import copies nothing")
     }
 
     // MARK: - Delete (guard paths only) and post-delete refresh
 
+    /// Move to Trash refuses, touching nothing and recording nothing, for an open document with
+    /// unsaved changes (alone, in a folder, or among several items), a document not in the
+    /// workspace, the workspace itself and folders outside it.
     func testDeleteGuardsRefuseWithoutTouchingDisk() async throws {
         let root = try makeRoot()
-        try write("# A\n", to: root.appendingPathComponent("A.md"))
-        try write("# B\n", to: root.appendingPathComponent("Folder/B.md"))
+        try write("# A\n", to: root.appendingPathComponent("Folder/A.md"))
+        try write("# B\n", to: root.appendingPathComponent("B.md"))
+        let sibling = URL(fileURLWithPath: root.path + "-sibling")
+        try makeFolder(sibling)
+        defer { try? FileManager.default.removeItem(at: sibling) }
         let store = try await openStore(root)
-        let a = try await select(store, "A.md")
+        let a = try await select(store, "Folder/A.md")
         store.setOpenDocumentIDs([a.id])
         store.setDocumentText("# A\nedited\n")
 
         store.deleteDocument(a)
-        XCTAssertFalse(store.isBusy)
+        XCTAssertEqual(store.errorMessage, "Save or close A.md before moving it to the Trash.")
+        store.deleteFolder(at: root.appendingPathComponent("Folder"))
+        XCTAssertEqual(store.errorMessage, "Save or close A.md before moving Folder to the Trash.")
+        store.deleteItems(at: [root.appendingPathComponent("B.md"), root.appendingPathComponent("Folder")])
         XCTAssertEqual(store.errorMessage, "Save or close A.md before moving it to the Trash.")
 
-        // A document that is not part of the workspace is ignored.
+        store.errorMessage = nil
         let foreign = WorkspaceDocument(
             url: URL(fileURLWithPath: "/nonexistent/Foreign.md"),
             rootURL: URL(fileURLWithPath: "/nonexistent")
         )
-        store.errorMessage = nil
         store.deleteDocument(foreign)
-        XCTAssertFalse(store.isBusy)
-
-        // Root, outside, and prefix-sibling folders are refused.
         store.deleteFolder(at: root)
-        XCTAssertFalse(store.isBusy)
         store.deleteFolder(at: root.deletingLastPathComponent())
-        XCTAssertFalse(store.isBusy)
-        store.deleteFolder(at: URL(fileURLWithPath: root.path + "-sibling"))
-        XCTAssertFalse(store.isBusy)
+        store.deleteFolder(at: sibling)
+        store.deleteItems(at: [root, sibling])
+        XCTAssertFalse(store.isBusy, "Nothing started")
+        XCTAssertNil(store.errorMessage)
 
-        XCTAssertTrue(exists(root.appendingPathComponent("A.md")))
-        XCTAssertTrue(exists(root.appendingPathComponent("Folder/B.md")))
+        XCTAssertEqual(names(in: root), ["B.md", "Folder"])
+        XCTAssertTrue(exists(root.appendingPathComponent("Folder/A.md")))
+        XCTAssertTrue(exists(sibling))
+        XCTAssertEqual(store.documentText, "# A\nedited\n", "The unsaved text stays")
+        XCTAssertFalse(store.canUndoFileOperation)
     }
 
     func testRefreshAfterExternalRemovalUpdatesTreeAndSelection() async throws {
@@ -1376,7 +1212,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         store.refresh()
         let refreshed = await wait { self.node(store, "Folder") == nil }
         XCTAssertTrue(refreshed)
-        XCTAssertNil(document(store, "Folder/B.md"))
+        XCTAssertNil(doc(store, "Folder/B.md"))
         // The window's tabs show the tab that takes its place; the sidebar selects none of them.
         XCTAssertNil(store.selectedDocumentID, "No other document is opened in its place")
         XCTAssertNil(store.sidebarSelectionID)
@@ -1393,11 +1229,134 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
 
         try FileManager.default.removeItem(at: keep.url)
         store.refresh()
-        _ = await wait { self.document(store, "keep.txt") == nil }
+        _ = await wait { self.doc(store, "keep.txt") == nil }
         XCTAssertEqual(store.selectedDocumentID, keep.id)
         XCTAssertEqual(store.documentText, "two\n")
         XCTAssertTrue(store.removedDirtyOpenDocumentIDs.contains(keep.id))
         XCTAssertTrue(store.selectedDocumentExternalChange)
+        XCTAssertTrue(store.isSelectedDocumentRemovedExternally)
+        XCTAssertNotNil(store.document(id: keep.id), "The kept document is still found by its id")
+    }
+
+    /// While Monknot keeps the unsaved text of a note removed outside it, nothing new or moved may
+    /// take that note's name: New File, a rename, a move and an undone Move to Trash refuse, and
+    /// names Monknot picks itself skip it. The kept text is never replaced.
+    func testNothingTakesTheNameOfARemovedNoteWhoseUnsavedTextIsKept() async throws {
+        let root = try makeRoot()
+        try write("# Untitled\n", to: root.appendingPathComponent("Untitled.md"))
+        try write("# other\n", to: root.appendingPathComponent("other.md"))
+        try write("# sub\n", to: root.appendingPathComponent("Sub/Untitled.md"))
+        let store = try await openStore(root)
+        let kept = try await select(store, "Untitled.md")
+        store.setOpenDocumentIDs([kept.id])
+        store.setDocumentText("# Untitled, unsaved\n")
+        try FileManager.default.removeItem(at: kept.url)
+        store.refresh()
+        _ = await wait { self.doc(store, "Untitled.md") == nil && !store.isBusy }
+        XCTAssertTrue(store.removedDirtyOpenDocumentIDs.contains(kept.id))
+        let refusal = "Untitled.md was removed from disk, but its unsaved changes are still open. Save or discard them first."
+
+        store.createFile(named: "Untitled")
+        await idle(store)
+        XCTAssertEqual(store.errorMessage, refusal)
+        XCTAssertEqual(store.validationMessage(forNewItemNamed: "Untitled.md", in: nil, isDirectory: false), refusal)
+
+        store.errorMessage = nil
+        store.renameDocument(id: try XCTUnwrap(doc(store, "other.md")).id, to: "Untitled")
+        await settle(store)
+        XCTAssertEqual(store.errorMessage, refusal)
+
+        store.errorMessage = nil
+        XCTAssertFalse(store.moveItem(id: try XCTUnwrap(doc(store, "Sub/Untitled.md")).id, toDirectory: root))
+        XCTAssertEqual(store.errorMessage, refusal)
+
+        store.errorMessage = nil
+        store.createMarkdownFile(in: root)
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertNotNil(doc(store, "Untitled 2.md"), "Monknot's own name skips the kept one")
+        XCTAssertFalse(exists(root.appendingPathComponent("Untitled.md")))
+
+        store.duplicateItem(at: root.appendingPathComponent("Sub/Untitled.md"), into: root)
+        await idle(store)
+        XCTAssertNotNil(doc(store, "Untitled copy.md"), "A copy's name skips the kept one too")
+        XCTAssertFalse(exists(root.appendingPathComponent("Untitled.md")))
+
+        XCTAssertTrue(store.selectDocument(id: kept.id))
+        _ = await wait { !store.isDocumentLoading }
+        XCTAssertEqual(store.documentText, "# Untitled, unsaved\n", "The kept text is untouched")
+    }
+
+    /// Operations the disk refuses (a folder without write permission) fail with a reason and leave
+    /// every item where it was, with nothing recorded to undo.
+    func testOperationsTheDiskRefusesChangeNothing() async throws {
+        let root = try makeRoot()
+        try write("# a\n", to: root.appendingPathComponent("a.md"))
+        try write("# locked\n", to: root.appendingPathComponent("Locked/inside.md"))
+        let locked = root.appendingPathComponent("Locked")
+        let store = try await openStore(root)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+
+        XCTAssertTrue(store.moveItem(id: try XCTUnwrap(doc(store, "a.md")).id, toDirectory: locked))
+        await settle(store)
+        XCTAssertNotNil(store.errorMessage, "Moving into a folder without write permission")
+
+        store.errorMessage = nil
+        store.renameDocument(id: try XCTUnwrap(doc(store, "Locked/inside.md")).id, to: "renamed")
+        await settle(store)
+        XCTAssertNotNil(store.errorMessage, "Renaming inside it")
+
+        store.errorMessage = nil
+        store.createFile(named: "new", in: locked)
+        await idle(store)
+        XCTAssertNotNil(store.errorMessage, "Creating inside it")
+
+        store.errorMessage = nil
+        store.duplicateItem(at: root.appendingPathComponent("a.md"), into: locked)
+        await idle(store)
+        XCTAssertNotNil(store.errorMessage, "Copying into it")
+
+        XCTAssertEqual(names(in: root), ["a.md", "Locked"])
+        XCTAssertEqual(names(in: locked), ["inside.md"])
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("a.md"), encoding: .utf8), "# a\n")
+        XCTAssertEqual(try String(contentsOf: locked.appendingPathComponent("inside.md"), encoding: .utf8), "# locked\n")
+        XCTAssertNotNil(doc(store, "a.md"))
+        XCTAssertNotNil(doc(store, "Locked/inside.md"))
+        XCTAssertFalse(store.canUndoFileOperation, "A failed operation is nothing to undo")
+    }
+
+    /// A save and a file operation never run at once: a save written while its file moves would
+    /// put the file back at its old path.
+    func testSavesAndFileOperationsWaitForEachOther() async throws {
+        let root = try makeRoot()
+        try write("# a\n", to: root.appendingPathComponent("a.md"))
+        let scanner = GatedWorkspaceScanner()
+        let store = try await openStore(root, scanner: scanner)
+        let a = try await select(store, "a.md")
+        store.setOpenDocumentIDs([a.id])
+        store.setDocumentText("# a, edited\n")
+
+        scanner.hold()
+        store.renameDocument(id: a.id, to: "b")
+        XCTAssertTrue(store.isBusy)
+        store.saveSelectedFile()
+        XCTAssertEqual(store.errorMessage, "Wait for the current file operation to finish, then try again.")
+        let saved = await store.saveDocument(id: a.id)
+        XCTAssertFalse(saved)
+        scanner.release()
+        await settle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names(in: root), ["b.md"], "Nothing was written back at the old path")
+        XCTAssertEqual(store.documentText, "# a, edited\n")
+
+        store.saveSelectedFile()
+        XCTAssertTrue(store.isSaving)
+        store.createFolder(named: "New")
+        XCTAssertEqual(store.errorMessage, "Wait for the save to finish, then try again.")
+        _ = await wait { !store.isSaving }
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("b.md"), encoding: .utf8), "# a, edited\n")
+        XCTAssertEqual(names(in: root), ["b.md"])
     }
 
     // MARK: - External changes (FSEvents patching)
@@ -1445,7 +1404,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
             modifiedOnlyPaths: [],
             requiresFullRescan: false
         ))
-        _ = await wait { !store.isBusy && self.document(store, "Manual/Sub/C.md") != nil }
+        _ = await wait { !store.isBusy && self.doc(store, "Manual/Sub/C.md") != nil }
 
         let full = try WorkspaceDocumentScanner().scan(rootURL: root)
         XCTAssertEqual(Set(store.documents.map(\.id)), Set(full.documents.map(\.id)))
@@ -1468,7 +1427,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
             modifiedOnlyPaths: [],
             requiresFullRescan: false
         ))
-        let seen = await wait(timeout: 3) { self.document(store, "FromTerminal.md") != nil }
+        let seen = await wait(timeout: 3) { self.doc(store, "FromTerminal.md") != nil }
         XCTAssertTrue(seen, "External file created during the watcher suppression window never appeared")
     }
 
@@ -1508,9 +1467,9 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
             requiresFullRescan: false
         ))
         await idle(store)
-        _ = await wait { self.document(store, "External.md") != nil }
+        _ = await wait { self.doc(store, "External.md") != nil }
         XCTAssertNotNil(node(store, "Mine"))
-        XCTAssertNotNil(document(store, "External.md"))
+        XCTAssertNotNil(doc(store, "External.md"))
     }
 
     func testExternalRenameWhileLinkReviewIsPendingMakesConfirmStale() async throws {
@@ -1604,7 +1563,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         store.selectFolder(id: box.appendingPathComponent("Inner").path)
         store.putItemOnPasteboard(at: box.appendingPathComponent("Inner"), cutting: true, pasteboard: pasteboard)
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: nil))
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(store.selectedFolderID, root.appendingPathComponent("Inner").path, "A pasted folder is selected")
 
@@ -1648,39 +1607,50 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
 
         store.selectFolder(id: root.appendingPathComponent("Projects/Plans").path)
         store.renameFolder(id: root.appendingPathComponent("Projects/Plans").path, to: "Ideas")
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(store.selectedFolderID, root.appendingPathComponent("Projects/Ideas").path)
 
         store.renameFolder(id: root.appendingPathComponent("Projects").path, to: "Work")
-        await settleMove(store)
+        await settle(store)
         XCTAssertEqual(store.selectedFolderID, root.appendingPathComponent("Work/Ideas").path, "It follows its parent")
 
         store.moveItem(id: root.appendingPathComponent("Work/Ideas").path, toDirectory: root.appendingPathComponent("Archive"))
-        await settleMove(store)
+        await settle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(store.selectedFolderID, root.appendingPathComponent("Archive/Ideas").path)
 
         store.moveItem(id: root.appendingPathComponent("Work").path, toDirectory: root.appendingPathComponent("Archive"))
-        await settleMove(store)
+        await settle(store)
         XCTAssertEqual(store.selectedFolderID, root.appendingPathComponent("Archive/Ideas").path, "Other moves leave it")
     }
 
-    func testRemovedFolderSelectionMovesUpAndClearsOnWorkspaceSwitch() async throws {
+    /// A selected item removed outside Monknot (git, the terminal) leaves nothing selected: not its
+    /// folder, which ⌘⌫ would then trash whole, and not the open document.
+    func testRemovedSelectionClearsAndClearsOnWorkspaceSwitch() async throws {
         let root = try makeRoot()
         try write("# N\n", to: root.appendingPathComponent("A/B/C/N.md"))
-        let store = try await openStore(root)
+        try write("# Open\n", to: root.appendingPathComponent("Open.md"))
+        let store = try await openStore(root, selecting: "Open.md")
 
         store.selectFolder(id: root.appendingPathComponent("A/B/C").path)
         try FileManager.default.removeItem(at: root.appendingPathComponent("A/B/C"))
         store.refresh()
         _ = await wait { self.node(store, "A/B/C") == nil }
-        XCTAssertEqual(store.selectedFolderID, root.appendingPathComponent("A/B").path, "The nearest remaining folder")
+        XCTAssertNil(store.selectedFolderID, "Not the folder above it")
+        XCTAssertEqual(store.sidebarSelectionIDs, [], "Not the open document either")
+        XCTAssertEqual(store.selectedDocument?.displayName, "Open.md", "The open document stays open")
 
-        try FileManager.default.removeItem(at: root.appendingPathComponent("A"))
+        let b = root.appendingPathComponent("A/B").path
+        let n = root.appendingPathComponent("A/B/N2.md")
+        try write("# N2\n", to: n)
         store.refresh()
-        _ = await wait { self.node(store, "A") == nil }
-        XCTAssertNil(store.selectedFolderID, "Nothing above it but the root")
+        _ = await wait { self.node(store, "A/B/N2.md") != nil }
+        store.selectSidebarItems(SidebarSelection(single: b).toggling(n.path))
+        try FileManager.default.removeItem(at: n)
+        store.refresh()
+        _ = await wait { self.node(store, "A/B/N2.md") == nil }
+        XCTAssertEqual(store.sidebarSelectionIDs, [b], "Of several, those that remain stay selected")
 
         let other = try makeRoot()
         try makeFolder(other.appendingPathComponent("A"))

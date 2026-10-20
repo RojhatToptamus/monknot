@@ -19,7 +19,6 @@ struct NativeMarkdownEditorView: View {
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
     let searchOptions: MonknotSearchOptions
-    let commandRequest: MarkdownTextEditorCommandRequest?
     let wikilinkDocuments: [WorkspaceDocument]
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
     let onVisibleTopLineChange: ((Int) -> Void)?
@@ -50,7 +49,6 @@ struct NativeMarkdownEditorView: View {
         sourceLocation: Binding<MarkdownSourceLocation?>,
         searchState: Binding<DocumentSearchState>,
         searchOptions: MonknotSearchOptions = MonknotSearchOptions(),
-        commandRequest: MarkdownTextEditorCommandRequest?,
         wikilinkDocuments: [WorkspaceDocument],
         onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)? = nil,
         onOpenLink: ((MarkdownEditorLinkRequest) -> Void)? = nil,
@@ -80,7 +78,6 @@ struct NativeMarkdownEditorView: View {
         self._sourceLocation = sourceLocation
         self._searchState = searchState
         self.searchOptions = searchOptions
-        self.commandRequest = commandRequest
         self.wikilinkDocuments = wikilinkDocuments
         self.onSelectionChange = onSelectionChange
         self.onOpenLink = onOpenLink
@@ -116,7 +113,6 @@ struct NativeMarkdownEditorView: View {
                     syncScrollTargetLine: syncScrollTargetLine,
                     openingTopLine: openingTopLine,
                     onVisibleTopLineChange: onVisibleTopLineChange,
-                    commandRequest: commandRequest,
                     markdownShortcutsEnabled: true,
                     flowSourceMode: flowSourceMode,
                     wikilinkDocuments: wikilinkDocuments,

@@ -12,6 +12,9 @@ import SwiftUI
 final class SidebarDragSession: NSObject, NSDraggingSource {
     struct Item {
         let rowID: String
+        /// The row's own item when the drag began. The drop moves the items the drag picked up,
+        /// never whatever the row shows by then.
+        let url: URL
         /// The row's item, or every selected item when the row is one of several selected.
         let urls: [URL]
         let title: String

@@ -171,7 +171,7 @@ public struct WorkspaceSearchService: Sendable {
                     limit: collector.perFileQueryLimit,
                     pdfData: dirtyPDFDataByDocumentID[document.id]
                 )
-            case .image, .media, .nativePreview, .unsupported:
+            case .image, .media, .unsupported:
                 continue
             }
 

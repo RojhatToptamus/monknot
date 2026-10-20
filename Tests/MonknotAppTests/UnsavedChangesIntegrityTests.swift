@@ -22,53 +22,6 @@ final class UnsavedChangesIntegrityTests: WorkspaceStoreTestCase {
         try await super.tearDown()
     }
 
-    // MARK: - Markdown toolbar
-
-    /// `EditorPaneView` keeps the last toolbar request in its state while Source, Preview,
-    /// split and tab changes rebuild the editor, as this harness does.
-    func testAToolbarCommandIsNotAppliedAgainWhenTheEditorIsRebuilt() async throws {
-        let (store, url) = try await openNote("word\n", named: "A.md")
-        let controls = ToolbarEditorControls()
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
-            styleMask: [.titled, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.isReleasedWhenClosed = false
-        let host = NSHostingView(rootView: ToolbarEditorHarness(store: store, controls: controls))
-        window.contentView = host
-        window.orderFront(nil)
-        hostWindows.append(window)
-
-        let shown = await waitUntil { self.documentTextView(in: host)?.string == "word\n" }
-        XCTAssertTrue(shown)
-        documentTextView(in: host)?.setSelectedRange(NSRange(location: 0, length: 4))
-        controls.commandRequest = MarkdownTextEditorCommandRequest(serial: 1, command: .bold)
-        let applied = await waitUntil { store.documentText == "**word**\n" }
-        XCTAssertTrue(applied, store.documentText)
-        store.saveSelectedFile()
-        let saved = await waitUntil { !store.isSaving && store.saveState(for: url.path).isClean }
-        XCTAssertTrue(saved)
-
-        for _ in 0..<2 {
-            controls.showsEditor = false
-            await settle()
-            controls.showsEditor = true
-            let remounted = await waitUntil { self.documentTextView(in: host) != nil }
-            XCTAssertTrue(remounted)
-            await settle()
-        }
-        XCTAssertEqual(store.documentText, "**word**\n")
-        assertClean(store, "after rebuilding the editor")
-
-        documentTextView(in: host)?.setSelectedRange(NSRange(location: 0, length: 0))
-        controls.commandRequest = MarkdownTextEditorCommandRequest(serial: 2, command: .italic)
-        let appliedAgain = await waitUntil { store.documentText != "**word**\n" }
-        XCTAssertTrue(appliedAgain, "a new toolbar command still edits the document")
-        XCTAssertTrue(store.hasUnsavedChanges)
-    }
-
     // MARK: - Undo
 
     func testUndoAfterSwitchingDocumentsDoesNotEditTheOtherDocument() async throws {
@@ -606,40 +559,5 @@ private struct UnsavedChangesPaneHarness: View {
             onMarkdownTaskRequest: { _ in }
         )
         .frame(minWidth: 300, minHeight: 200)
-    }
-}
-
-@MainActor
-private final class ToolbarEditorControls: ObservableObject {
-    @Published var showsEditor = true
-    @Published var commandRequest: MarkdownTextEditorCommandRequest?
-    @Published var sourceLocation: MarkdownSourceLocation?
-    @Published var documentSearch = DocumentSearchState()
-}
-
-private struct ToolbarEditorHarness: View {
-    @ObservedObject var store: WorkspaceStore
-    @ObservedObject var controls: ToolbarEditorControls
-
-    var body: some View {
-        if controls.showsEditor, let documentID = store.selectedDocumentID {
-            MarkdownTextEditor(
-                documentID: documentID,
-                text: Binding(get: { store.documentText }, set: { store.setDocumentText($0) }),
-                theme: .defaultLight,
-                fontSize: 13,
-                zoomScale: 1,
-                contentWidthPercent: 100,
-                fontSmoothing: true,
-                scrollPosition: nil,
-                sourceLocation: $controls.sourceLocation,
-                searchState: $controls.documentSearch,
-                onScrollPositionChange: { _ in },
-                commandRequest: controls.commandRequest,
-                markdownShortcutsEnabled: true
-            )
-        } else {
-            Color.clear
-        }
     }
 }

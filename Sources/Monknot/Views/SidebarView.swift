@@ -574,6 +574,7 @@ struct SidebarView: View {
         case .rename:
             guard store.sidebarSelectionIDs.count == 1,
                   let selectionID = sidebarSelectionID,
+                  shownSelectionURLs() != nil,
                   let item = store.rootNode?.node(withID: selectionID)
             else {
                 NSSound.beep()
@@ -581,15 +582,13 @@ struct SidebarView: View {
             }
             beginRename(item)
         case .duplicate:
-            let urls = store.sidebarSelectionURLs
-            guard !urls.isEmpty else {
+            guard let urls = shownSelectionURLs() else {
                 NSSound.beep()
                 return true
             }
             store.duplicateItems(at: urls)
         case .moveToTrash:
-            let urls = store.sidebarSelectionURLs
-            guard !urls.isEmpty else {
+            guard let urls = shownSelectionURLs() else {
                 NSSound.beep()
                 return true
             }
@@ -678,17 +677,35 @@ struct SidebarView: View {
         return SidebarSelection(single: documentID)
     }
 
-    /// Selected items a collapse hid leave the selection, so nothing acts on an item the tree no
-    /// longer shows. When none stays shown, the row that now holds the lead is selected instead.
-    private func dropHiddenSelectedItems() {
-        let selection = store.sidebarItemSelection
-        guard !selection.isEmpty else { return }
-        let nodes = displayedVisibleNodes
+    /// The paths of every item a row of the tree shows, a compact row's folders included.
+    private func shownItemIDs(in nodes: [VisibleSidebarNode]) -> Set<String> {
         var shownIDs = Set<String>()
         for node in nodes {
             shownIDs.insert(node.node.id)
             shownIDs.formUnion(node.folderNodeIDs)
         }
+        return shownIDs
+    }
+
+    /// What Return, ⌘D and ⌘⌫ act on: the selected items, or nil unless a row shows every one of
+    /// them, so a key never changes an item the tree does not show as selected.
+    private func shownSelectionURLs() -> [URL]? {
+        let selectedIDs = store.sidebarSelectionIDs
+        let shownIDs = shownItemIDs(in: displayedVisibleNodes)
+        guard !selectedIDs.isEmpty, selectedIDs.allSatisfy(shownIDs.contains) else { return nil }
+        return store.sidebarSelectionURLs
+    }
+
+    /// Selected items a collapse hid leave the selection, so nothing acts on an item the tree no
+    /// longer shows. When none stays shown, the row that now holds the lead is selected instead;
+    /// that includes the open document the sidebar selects while nothing else is picked.
+    private func dropHiddenSelectedItems() {
+        let selection = store.sidebarItemSelection.isEmpty
+            ? (store.sidebarSelectionID.map(SidebarSelection.init(single:)) ?? SidebarSelection())
+            : store.sidebarItemSelection
+        guard !selection.isEmpty else { return }
+        let nodes = displayedVisibleNodes
+        let shownIDs = shownItemIDs(in: nodes)
         let shown = selection.filtered { shownIDs.contains($0) }
         guard shown != selection else { return }
         if shown.isEmpty, let leadID = selection.leadID,
@@ -1066,6 +1083,7 @@ struct SidebarView: View {
         dragSession.begin(
             item: SidebarDragSession.Item(
                 rowID: row.id,
+                url: item.url,
                 urls: urls,
                 title: urls.count > 1 ? "\(urls.count) Items" : row.displayName,
                 systemImage: systemImage
@@ -1144,7 +1162,7 @@ struct SidebarView: View {
         let point = dragSession.treePoint ?? location
         guard !store.isBusy,
               sidebarNodeFrames[id] != nil,
-              let row = displayedVisibleNodes.first(where: { $0.id == id }),
+              let dragged = dragSession.item,
               let target = moveDropTarget(forRow: id, at: point, copies: copies)
         else {
             // Nowhere to land: the copy glides back, and nothing changes on disk.
@@ -1158,10 +1176,9 @@ struct SidebarView: View {
         case .root: nil
         case .folder(let folderURL): folderURL
         }
-        let item = row.dropTargetNode
-        let urls = dragSession.item?.urls ?? [item.url]
+        let urls = dragged.urls
         let destinationPath = (folderURL ?? store.workspaceURL)?.standardizedFileURL.path ?? ""
-        let landedID = (destinationPath as NSString).appendingPathComponent(item.url.lastPathComponent)
+        let landedID = (destinationPath as NSString).appendingPathComponent(dragged.url.lastPathComponent)
         closeSpringOpenedFolders(keeping: ancestorFolderIDs(of: landedID))
         dragSession.finishDropped()
         endDrag()
@@ -1175,7 +1192,7 @@ struct SidebarView: View {
             store.dropFileURLs(urls, into: folderURL)
         } else {
             pendingLanding = SidebarPendingLanding(itemID: landedID, deadline: Date().addingTimeInterval(10))
-            store.moveItem(id: item.id, toDirectory: folderURL)
+            store.moveItem(id: dragged.url.standardizedFileURL.path, toDirectory: folderURL)
         }
         resolvePendingLanding()
     }

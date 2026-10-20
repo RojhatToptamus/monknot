@@ -28,10 +28,14 @@ public enum WorkspaceReplaceScope: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// What undoing a workspace Replace puts back: each file's text before the replace, written only
+/// while the file still holds the text the replace wrote.
 public struct WorkspaceReplaceUndoSnapshot: Equatable, Sendable {
     public let previousTextsByDocumentID: [String: String]
+    public let replacedTextsByDocumentID: [String: String]
 
-    public init(previousTextsByDocumentID: [String: String]) {
+    public init(previousTextsByDocumentID: [String: String], replacedTextsByDocumentID: [String: String]) {
         self.previousTextsByDocumentID = previousTextsByDocumentID
+        self.replacedTextsByDocumentID = replacedTextsByDocumentID
     }
 }

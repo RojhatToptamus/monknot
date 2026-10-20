@@ -21,7 +21,7 @@ final class MonknotContextMenuTests: FileOperationsTestCase {
         try write("# top\n", "top.md", in: root)
         let store = try await openStore(root, selecting: "docs/a.md")
         let h = SidebarMenuHarness(store: store, root: root, theme: theme)
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        await h.waitUntilLaidOut()
         controller.setAppearance(theme: theme, zoomScale: zoomScale, for: h.window)
         addTeardownBlock { @MainActor in
             MonknotContextMenuController.shared.close(animated: false)
@@ -98,6 +98,62 @@ final class MonknotContextMenuTests: FileOperationsTestCase {
         XCTAssertFalse(controller.isOpen, "Choosing closes the menu")
         let copied = await wait(timeout: 2) { h.copiedPaths.last == root.appendingPathComponent("docs/b.md").standardizedFileURL }
         XCTAssertTrue(copied, "Copy Path acted on \(String(describing: h.copiedPaths.last)), not the right-clicked row")
+    }
+
+    /// Where the open menu's row titled `title` is, in the harness window's coordinates.
+    private func rowPoint(_ title: String, in h: SidebarMenuHarness) throws -> NSPoint {
+        let model = try XCTUnwrap(controller.openModel)
+        let index = try XCTUnwrap(model.entries.firstIndex { $0.item?.title == title })
+        let frame = MonknotContextMenuLayout(entries: model.entries, theme: .defaultDark, zoomScale: 1).frames[index]
+        let surface = try XCTUnwrap(controller.openSurfaceFrame)
+        return h.window.convertPoint(fromScreen: NSPoint(x: surface.minX + frame.midX, y: surface.maxY - frame.midY))
+    }
+
+    private func release(_ h: SidebarMenuHarness, over title: String) throws {
+        let event = try XCTUnwrap(mouse(.rightMouseUp, h, at: try rowPoint(title, in: h)))
+        XCTAssertTrue(controller.handleForTesting(event), "The release of the press that opened the menu is the menu's")
+    }
+
+    /// A right-click whose button comes up over a row at once (a click that drifted as the menu
+    /// opened under it) only highlights that row: nothing runs.
+    func testAQuickReleaseOverARowOnlyHighlightsIt() async throws {
+        let (_, _, h) = try await makeFixture()
+        let top = try XCTUnwrap(h.rowCenter(try XCTUnwrap(rowIndex(h, "top.md"))))
+        // Finding rows copies their paths; what counts is what follows.
+        let copiedBefore = h.copiedPaths.count
+        XCTAssertTrue(rightClick(h, at: top))
+
+        try release(h, over: "Copy Path")
+        XCTAssertTrue(controller.isOpen, "A click leaves the menu open")
+        XCTAssertEqual(highlightedTitle, "Copy Path")
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(h.copiedPaths.count, copiedBefore, "Nothing ran")
+    }
+
+    /// Held, the release chooses the row under it, as in a system menu; but Move to Trash never runs
+    /// from the release that opened the menu, however long it was held. It takes a click of its own.
+    func testReleasingOverMoveToTrashNeverTrashes() async throws {
+        let (root, store, h) = try await makeFixture()
+        let top = try XCTUnwrap(h.rowCenter(try XCTUnwrap(rowIndex(h, "top.md"))))
+
+        for _ in 0..<2 {
+            XCTAssertTrue(rightClick(h, at: top))
+            try await Task.sleep(nanoseconds: 300_000_000)
+            try release(h, over: "Move to Trash")
+            XCTAssertTrue(controller.isOpen)
+            XCTAssertEqual(highlightedTitle, "Move to Trash")
+            try await Task.sleep(nanoseconds: 300_000_000)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("top.md").path))
+            XCTAssertFalse(store.isBusy)
+            controller.close(animated: false)
+        }
+
+        XCTAssertTrue(rightClick(h, at: top))
+        try await Task.sleep(nanoseconds: 300_000_000)
+        try release(h, over: "Copy Path")
+        XCTAssertFalse(controller.isOpen, "A held release chooses a row that destroys nothing")
+        let copied = await wait(timeout: 2) { h.copiedPaths.last == root.appendingPathComponent("top.md").standardizedFileURL }
+        XCTAssertTrue(copied)
     }
 
     func testAControlClickOpensTheSameMenu() async throws {

@@ -80,6 +80,19 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
         XCTAssertTrue(html.contains(#"<span class="tok-comment">// comment</span>"#))
     }
 
+    /// A notebook cell's output is printed text: nothing in it is highlighted as code.
+    func testANotebookOutputBlockIsPlainText() throws {
+        let html = try renderMarkdown(
+            """
+            ```output
+            # rows: 42 <ok>
+            ```
+            """
+        )
+
+        XCTAssertTrue(html.contains(#"<code class="language-output"># rows: 42 &lt;ok&gt;</code>"#), html)
+    }
+
     func testShorterFenceDoesNotCloseLongerFenceOrExposeHiddenReferenceDefinition() throws {
         let html = try renderMarkdown(
             """

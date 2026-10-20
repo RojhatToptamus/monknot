@@ -22,11 +22,12 @@ final class SidebarMenuHarness {
     var copiedRelativePaths: [URL] = []
     var exportedPDFs: [String] = []
     var openedDocumentIDs: [String] = []
+    private let defaultsSuiteName = "Monknot.SidebarTests.\(UUID().uuidString)"
 
     init(store: WorkspaceStore, root: URL, theme: AppTheme = .defaultDark) {
         self.store = store
         self.root = root
-        let defaults = UserDefaults(suiteName: "Monknot.SidebarTests.\(UUID().uuidString)")!
+        let defaults = UserDefaults(suiteName: defaultsSuiteName)!
         let library = WorkspaceLibraryStore(userDefaults: defaults)
         let search = WorkspaceSearchState()
         var copiedPathsSink: (URL) -> Void = { _ in }
@@ -81,6 +82,8 @@ final class SidebarMenuHarness {
         }
     }
 
+    /// Closes the window and removes what the sidebar saved: its library's defaults and the
+    /// folders it kept open for this workspace.
     func close() {
         if let sheet = window.attachedSheet {
             window.endSheet(sheet)
@@ -88,6 +91,25 @@ final class SidebarMenuHarness {
         window.orderOut(nil)
         window.contentView = nil
         pasteboard.releaseGlobally()
+        UserDefaults().removePersistentDomain(forName: defaultsSuiteName)
+        UserDefaults.standard.removeObject(forKey: WorkspaceTreeExpansionPersistence().key(for: root))
+    }
+
+    /// Waits until the tree shows its rows and its height holds still for a moment: the sidebar
+    /// opens its saved folders and reports row frames after it first appears.
+    func waitUntilLaidOut(timeout: TimeInterval = 3) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastHeight: CGFloat = -1
+        var stableChecks = 0
+        while Date() < deadline {
+            let height = treeDocumentView?.bounds.height ?? 0
+            if height > 0, rowCenter(0).flatMap(contextMenu(at:)) != nil {
+                stableChecks = height == lastHeight ? stableChecks + 1 : 0
+                if stableChecks >= 3 { return }
+            }
+            lastHeight = height
+            try? await Task.sleep(nanoseconds: 30_000_000)
+        }
     }
 
     // MARK: Geometry
@@ -428,7 +450,7 @@ class FileOperationsTestCase: WorkspaceStoreTestCase {
 
     func harness(_ store: WorkspaceStore, _ root: URL) async -> SidebarMenuHarness {
         let harness = SidebarMenuHarness(store: store, root: root)
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        await harness.waitUntilLaidOut()
         return harness
     }
 }

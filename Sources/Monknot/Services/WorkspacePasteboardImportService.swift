@@ -248,7 +248,7 @@ enum WorkspacePasteboardImportService {
                     isDirectory: false,
                     in: directoryURL
                 )
-                try data.write(to: destinationURL, options: .atomic)
+                try data.write(to: destinationURL, options: .withoutOverwriting)
                 importedURLs.append(destinationURL)
             case .capturedMarkdown(let markdown, let suggestedName):
                 let inboxURL = directoryURL.appendingPathComponent("inbox", isDirectory: true)
@@ -258,7 +258,7 @@ enum WorkspacePasteboardImportService {
                     isDirectory: false,
                     in: inboxURL
                 )
-                try markdown.write(to: destinationURL, atomically: true, encoding: .utf8)
+                try Data(markdown.utf8).write(to: destinationURL, options: .withoutOverwriting)
                 importedURLs.append(destinationURL)
             }
         }
@@ -599,7 +599,7 @@ enum MarkdownImageAssetService {
             let isExternal = !isContained(resolvedURL, in: root)
             let isImage = values.contentType?.conforms(to: .image) == true ||
                 UTType(filenameExtension: sourceURL.pathExtension)?.conforms(to: .image) == true
-            guard !isExternal || isImage || WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(sourceURL) else {
+            guard !isExternal || isImage || !sourceURL.lastPathComponent.hasPrefix(".") else {
                 throw MarkdownImageAssetError.unsupportedDroppedFile(sourceURL.lastPathComponent)
             }
             if isExternal, (values.fileSize ?? 0) > maximumExternalFileBytes {
@@ -850,7 +850,7 @@ private enum MarkdownImageAssetError: LocalizedError {
         case .noDroppedFiles:
             return "There are no new files to insert."
         case .unsupportedDroppedFile(let name):
-            return "\(name) is not a supported file. Folders, aliases, and binary files cannot be inserted."
+            return "\(name) can't be inserted. Folders, aliases and hidden files can't be added to a note."
         case .droppedFileTooLarge(let name):
             return "\(name) is too large to import."
         case .droppedFilesChanged:

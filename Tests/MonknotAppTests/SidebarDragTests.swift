@@ -71,6 +71,32 @@ final class SidebarDragTests: FileOperationsTestCase {
 
     // MARK: - The drag
 
+    /// The drop moves what the drag picked up, even when the tree changes under it: a compact row
+    /// (pack/inner) that splits because another app added a file to its outer folder still drops
+    /// the inner folder, never the outer one with everything in it.
+    func testADropMovesWhatTheDragPickedUpWhenTheTreeChangesUnderIt() async throws {
+        let (root, store, h) = try await makeFixture()
+        try write("# x\n", "pack/inner/x.md", in: root)
+        store.refresh()
+        _ = await wait { self.doc(store, "pack/inner/x.md") != nil && !store.isBusy }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        let start = try rowCenter(h, "pack/inner")
+        let target = try rowCenter(h, "docs")
+
+        await press(h, from: start, to: target)
+        try write("# new\n", "pack/new.md", in: root)
+        store.refresh()
+        _ = await wait { self.doc(store, "pack/new.md") != nil && !store.isBusy }
+        send(.leftMouseDragged, h, at: target)
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        send(.leftMouseUp, h, at: target)
+        await settle(store)
+
+        XCTAssertEqual(names("pack", in: root), ["new.md"], "The outer folder and its new file stay")
+        XCTAssertEqual(names("docs", in: root), ["a.md", "b.md", "inner"])
+        XCTAssertEqual(names("docs/inner", in: root), ["x.md"])
+    }
+
     func testTheRowLiftsACopyThatLandsAndTheDestinationOpensWithoutOpeningTheFile() async throws {
         let (root, store, h) = try await makeFixture()
         let selectedBefore = store.selectedDocumentID

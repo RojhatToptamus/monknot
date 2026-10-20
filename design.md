@@ -578,6 +578,11 @@ switcher, so a menu looks the same wherever it opens (`MonknotContextMenuControl
   skipped by the keys, no highlight.
 - **The clicked row** holds its open state (`press`, `ink`) while its menu shows, as a control does
   while its menu is open (§5.1), so the menu visibly belongs to it.
+- **Choosing by letting go.** A right-click held 0.25 s and let go over a row chooses that row, as a
+  system menu does. A quicker release is a click whose pointer drifted as the menu opened under it:
+  it only highlights the row it ends on. A destructive command never runs from the release that
+  opened the menu — it takes a click of its own — so a menu flipped up under the pointer can never
+  trash the file just right-clicked.
 - **Where:** the surface's top-left corner at the pointer; flipped left or up where the screen ends,
   6 clear of its edge. It floats in a panel that never takes focus, so the window keeps its key
   appearance and its selection.
@@ -1037,8 +1042,11 @@ the tree does not show; when none is left, the row that holds the last one picke
 - Typing a name selects the first row from the lead on whose name starts with what was typed within a
   second (case and accents ignored, Space only once a name has started).
 - Return renames the one selected item, ⌘D duplicates and ⌘⌫ moves to the Trash what is selected,
-  once per press however long the key is held; ⌘Z and ⇧⌘Z undo and redo the last move or copy
-  (Moving files, below). With the editor, terminal or a field focused, all of these stay theirs.
+  once per press however long the key is held, and only items a row shows selected: collapsing a
+  folder hands the selection (the open document's too) to the folder's row, and a selected item
+  removed outside Monknot leaves nothing selected rather than its folder. ⌘Z and ⇧⌘Z undo and redo
+  the last move, copy or Move to Trash (Moving files, below). With the editor, terminal or a field
+  focused, all of these stay theirs.
 
 **Row menus.** Folder and file rows start with New File and New Folder (in the folder, or beside the
 file), then Rename and the location items, then Copy, Cut, Paste and Duplicate, then Move to Trash.
@@ -1082,11 +1090,13 @@ several selected; the whole drag is designed, frame by frame (`SidebarDragSessio
   the workspace. Brought back over the tree, it targets as a drag from Finder does.
 - **From Finder** (or another window): the same targets, tint, spring-loading and refusals; files from
   outside are copied in, files already in the workspace are moved.
-- **Undo.** Edit › Undo takes back the last move, rename or copy made in the sidebar — a drag, an
-  Option-drag, Cut and Paste, Duplicate, or a drop of items already in the workspace — as one step
-  named for it: Undo Move “a.md”, Undo Duplicate “a.md”, Undo Move 3 Items. Redo makes it again, and a
-  new move or copy ends what Redo held. Undoing a move puts the item back and the links the move
-  rewrote back as they were, without asking again; undoing a copy moves the copy to the Trash. ⌘Z and
+- **Undo.** Edit › Undo takes back the last move, rename, copy or Move to Trash made in the sidebar —
+  a drag, an Option-drag, Cut and Paste, Duplicate, a drop of items already in the workspace, or ⌘⌫ —
+  as one step named for it: Undo Move “a.md”, Undo Duplicate “a.md”, Undo Move 3 Items, Undo Move
+  “a.md” to Trash. Redo makes it again, and a new move or copy ends what Redo held. Undoing a move
+  puts the item back and the links the move rewrote back as they were, without asking again; undoing
+  a copy moves the copy to the Trash; undoing Move to Trash brings the items back from the Trash to
+  the names they had, selected. ⌘Z and
   ⇧⌘Z reach it with keyboard focus anywhere but text (Source, Preview, a field), the terminal and a
   document view (a PDF, an image, the player), which keep their own undo, so typing's undo never moves
   a file (`monknotUndoCommandDestination`). Of a move and a workspace Replace All, the newer is undone
@@ -1097,10 +1107,11 @@ several selected; the whole drag is designed, frame by frame (`SidebarDragSessio
   name it goes back to, every rewritten note holds the text the move wrote, a copy is as it was made —
   and otherwise changes nothing and says why; it never overwrites. Such a step leaves the history,
   since the disk no longer matches it. One that would rewrite or trash unsaved text, or leave a link in
-  unsaved text pointing where the item no longer is, waits until that text is saved. A copy or
-  transfer of several items that fails part way can still undo what it made. What goes back lands as a
-  drop does: its folders open, it scrolls into view and its row holds the tint. Files copied in from
-  outside the workspace and items moved to the Trash stay. The history is the window's, ends when its
+  unsaved text pointing where the item no longer is, waits until that text is saved. A copy, transfer
+  or Move to Trash of several items that fails part way can still undo what it made. What goes back
+  lands as a drop does: its folders open, it scrolls into view and its row holds the tint. Files
+  copied in from outside the workspace stay, and an item emptied from the Trash cannot come back
+  (the step says so). The history is the window's, ends when its
   workspace changes, and keeps at most 50 operations and 16 MB of rewritten notes; a move that rewrote
   more than that cannot be undone, so the history ends there rather than skip past it
   (`WorkspaceFileOperationHistory`, `WorkspaceStore.undoFileOperation`).

@@ -15,8 +15,6 @@ extension WorkspaceDocumentKind {
             return "photo"
         case .media:
             return "play.rectangle.fill"
-        case .nativePreview:
-            return "doc.viewfinder"
         case .unsupported:
             return "doc"
         }

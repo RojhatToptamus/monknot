@@ -16,7 +16,7 @@ final class WorkspaceStore: ObservableObject {
         didSet {
             rootNodeRevision &+= 1
             sidebarNodeKinds = Self.nodeKinds(in: rootNode)
-            reconcileSelectedFolder()
+            reconcileSidebarSelection()
         }
     }
     /// Every item of the tree, the root left out, by its path: what selection checks look up, once
@@ -79,7 +79,7 @@ final class WorkspaceStore: ObservableObject {
     private var replaceUndoSerial = 0
 
     private let scanner: any WorkspaceDocumentScanning
-    private let moveItemToTrash: @Sendable (URL) throws -> Void
+    private let moveItemToTrash: @Sendable (URL) throws -> URL?
     private let recentDocumentStore: RecentDocumentStore
     private let fileWatcher = WorkspaceFileWatcher()
     private var lastSavedText = ""
@@ -120,6 +120,7 @@ final class WorkspaceStore: ObservableObject {
     private var saveGeneration = 0
     private var markdownLinkMoveReviewSerial = 0
     private static let busyMessage = "Wait for the current file operation to finish, then try again."
+    private static let savingMessage = "Wait for the save to finish, then try again."
     nonisolated static let interactiveTextOpenMaxBytes: Int64 = 4 * 1024 * 1024
     private static let recentDocumentRecordDelayNanoseconds: UInt64 = 350_000_000
     @Published private var pendingDocumentTransfer: WorkspaceDocumentTransfer?
@@ -129,13 +130,16 @@ final class WorkspaceStore: ObservableObject {
     /// The store of every open window, so a Paste in one window can finish a Cut made in another.
     private static let openStores = NSHashTable<WorkspaceStore>.weakObjects()
 
-    /// `moveItemToTrash` moves a file or folder to the Trash; tests pass one that leaves the
-    /// user's Trash alone.
+    /// `moveItemToTrash` moves a file or folder to the Trash and returns where the Trash keeps it,
+    /// which Edit › Undo puts it back from; tests pass one that leaves the user's Trash alone. It
+    /// never deletes: where there is no Trash (some network volumes) it fails.
     init(
         scanner: any WorkspaceDocumentScanning = WorkspaceDocumentScanner(),
         userDefaults: UserDefaults = .standard,
-        moveItemToTrash: @escaping @Sendable (URL) throws -> Void = { url in
-            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        moveItemToTrash: @escaping @Sendable (URL) throws -> URL? = { url in
+            var trashedURL: NSURL?
+            try FileManager.default.trashItem(at: url, resultingItemURL: &trashedURL)
+            return trashedURL as URL?
         }
     ) {
         self.scanner = scanner
@@ -217,31 +221,20 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    /// Keeps the selected items in the tree. One item that is gone gives way to the nearest folder
-    /// above it that remains, and nothing when that is the root; of several, those that remain stay
-    /// selected. Moving the selection to the Trash from Monknot selects nothing instead
-    /// (`SidebarSelectionAfterLoad.cleared`).
-    private func reconcileSelectedFolder() {
+    /// Keeps the selected items in the tree: those that remain stay selected. When none remains
+    /// (deleted or moved outside Monknot), nothing is selected, not its folder or the open document,
+    /// so a key pressed next never acts on more than the user picked.
+    private func reconcileSidebarSelection() {
         guard !sidebarItemSelection.isEmpty else { return }
-        guard let rootNode else {
-            sidebarItemSelection = SidebarSelection()
-            return
+        let remaining = rootNode == nil
+            ? SidebarSelection()
+            : sidebarItemSelection.filtered { sidebarNodeKinds[$0] != nil }
+        guard remaining != sidebarItemSelection else { return }
+        if remaining.isEmpty {
+            clearSidebarSelection()
+        } else {
+            sidebarItemSelection = remaining
         }
-        let remaining = sidebarItemSelection.filtered { sidebarNodeKinds[$0] != nil }
-        guard remaining.isEmpty, sidebarItemSelection.count == 1, var itemID = sidebarItemSelection.itemIDs.first else {
-            if remaining != sidebarItemSelection {
-                sidebarItemSelection = remaining
-            }
-            return
-        }
-        while itemID != rootNode.id, WorkspaceDocumentSupport.isPath(itemID, containedIn: rootNode.id) {
-            itemID = (itemID as NSString).deletingLastPathComponent
-            if sidebarNodeKinds[itemID] == .folder {
-                sidebarItemSelection = SidebarSelection(single: itemID)
-                return
-            }
-        }
-        sidebarItemSelection = SidebarSelection()
     }
 
     /// The sidebar's selected items follow the item moved from `sourcePath` to `destinationPath`.
@@ -403,16 +396,13 @@ final class WorkspaceStore: ObservableObject {
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                let batch = try WorkspaceReplaceService().restoreAndWrite(
-                    previousTextsByDocumentID: restoreSnapshot.previousTextsByDocumentID,
-                    documents: documentSnapshot
-                )
+                let batch = try WorkspaceReplaceService().restoreAndWrite(restoreSnapshot, documents: documentSnapshot)
                 guard !Task.isCancelled else { return }
-                await self?.finishWorkspaceReplace(
-                    batch: batch,
-                    generation: generation,
-                    summary: "Undid replace in \(batch.fileResults.count) file(s)."
-                )
+                var summary = "Undid replace in \(batch.fileResults.count) file(s)."
+                if batch.skippedChangedCount > 0 {
+                    summary += " Left \(batch.skippedChangedCount) that changed since the replace."
+                }
+                await self?.finishWorkspaceReplace(batch: batch, generation: generation, summary: summary)
             } catch {
                 await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not undo workspace replace")
             }
@@ -539,7 +529,7 @@ final class WorkspaceStore: ObservableObject {
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
             do {
-                try await Self.writeText(initialText, to: fileURL)
+                try Self.writeNewFile(initialText, to: fileURL)
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
                 await self?.finishCreatedFile(
@@ -588,7 +578,7 @@ final class WorkspaceStore: ObservableObject {
                     workspaceURL: workspaceURL
                 )
                 try Task.checkCancellation()
-                try Data(initialText.utf8).write(to: revalidatedURL, options: .withoutOverwriting)
+                try Self.writeNewFile(initialText, to: revalidatedURL)
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
                 await self?.finishCreatedFile(
@@ -628,6 +618,10 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
+        if let kept = keptUnsavedDocument(inItemAt: fileURL) {
+            errorMessage = WorkspaceDocumentOperationError.keepsUnsavedText(kept.displayName).localizedDescription
+            return
+        }
         if FileManager.default.fileExists(atPath: fileURL.path) {
             noteInternalFileMutation()
             let generation = beginWorkspaceOperation()
@@ -654,7 +648,7 @@ final class WorkspaceStore: ObservableObject {
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
             do {
-                try await Self.writeText(initialText, to: fileURL)
+                try Self.writeNewFile(initialText, to: fileURL)
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
                 await self?.finishCreatedFile(
@@ -767,15 +761,28 @@ final class WorkspaceStore: ObservableObject {
             throw WorkspaceDocumentOperationError.invalidCreation("Create items inside the current workspace.")
         }
         let name = isDirectory ? proposedName : Self.newFileName(proposedName)
-        return try Self.childURL(in: targetDirectory, proposedName: name, isDirectory: isDirectory)
+        let url = try Self.childURL(in: targetDirectory, proposedName: name, isDirectory: isDirectory)
+        if let kept = keptUnsavedDocument(inItemAt: url) {
+            throw WorkspaceDocumentOperationError.keepsUnsavedText(kept.displayName)
+        }
+        return url
     }
 
-    /// New files are Markdown: a name typed without an extension gets `.md`. A name with an
-    /// extension is kept, and names refused anyway (empty, dotfiles, paths) pass through unchanged.
+    /// A note Monknot keeps unsaved text for at `url`, or inside it, after its file was removed
+    /// outside Monknot. No new or moved item may take that place, or the kept text would be lost
+    /// to it.
+    private func keptUnsavedDocument(inItemAt url: URL) -> WorkspaceDocument? {
+        let path = url.standardizedFileURL.path
+        return removedDirtyDocuments.values.first { WorkspaceDocumentSupport.isPath($0.id, containedIn: path) }
+    }
+
+    /// New files are Markdown: a name typed without an extension gets `.md`, as does one whose last
+    /// dot ends in digits ("Release 1.2"). A name with an extension is kept, and names refused
+    /// anyway (empty, dotfiles, paths) pass through unchanged.
     nonisolated static func newFileName(_ proposedName: String) -> String {
         let name = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, !name.hasPrefix("."), !name.contains("/"), !name.contains(":"),
-              (name as NSString).pathExtension.isEmpty
+              !WorkspaceDocumentSupport.readsAsFileExtension((name as NSString).pathExtension)
         else { return proposedName }
         return name + ".md"
     }
@@ -801,9 +808,7 @@ final class WorkspaceStore: ObservableObject {
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
             do {
-                guard FileManager.default.createFile(atPath: fileURL.path, contents: Data()) else {
-                    throw WorkspaceDocumentOperationError.couldNotCreateFile(fileURL.lastPathComponent)
-                }
+                try Self.writeNewFile("", to: fileURL)
 
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
@@ -954,25 +959,15 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    /// Marks a workspace file or folder to be copied by each later paste. A Copy made through the
-    /// pasteboard passes the stamp of the item it wrote there.
-    func copyItem(at url: URL, pasteboardStamp: WorkspacePasteboardTransferStamp? = nil) {
-        copyItems(at: [url], pasteboardStamp: pasteboardStamp)
-    }
-
-    /// Marks workspace files and folders to be copied by each later paste.
-    func copyItems(at urls: [URL], pasteboardStamp: WorkspacePasteboardTransferStamp? = nil) {
+    /// Marks workspace files and folders to be copied by each later paste, as long as the pasteboard
+    /// holds the item stamped `pasteboardStamp` (`putItemsOnPasteboard`).
+    func copyItems(at urls: [URL], pasteboardStamp: WorkspacePasteboardTransferStamp) {
         setPendingTransfer(for: urls, operation: .copy, pasteboardStamp: pasteboardStamp)
     }
 
-    /// Marks a workspace file or folder to be moved by the next paste. A Cut made through the
-    /// pasteboard passes the stamp of the item it wrote there.
-    func cutItem(at url: URL, pasteboardStamp: WorkspacePasteboardTransferStamp? = nil) {
-        cutItems(at: [url], pasteboardStamp: pasteboardStamp)
-    }
-
-    /// Marks workspace files and folders to be moved by the next paste.
-    func cutItems(at urls: [URL], pasteboardStamp: WorkspacePasteboardTransferStamp? = nil) {
+    /// Marks workspace files and folders to be moved by the next paste, as long as the pasteboard
+    /// holds the item stamped `pasteboardStamp` (`putItemsOnPasteboard`).
+    func cutItems(at urls: [URL], pasteboardStamp: WorkspacePasteboardTransferStamp) {
         setPendingTransfer(for: urls, operation: .cut, pasteboardStamp: pasteboardStamp)
     }
 
@@ -1131,7 +1126,11 @@ final class WorkspaceStore: ObservableObject {
         if movesWithinWorkspace, sourceURLs.count == 1, let sourceURL = sourceURLs.first {
             requestMarkdownLinkAwareMove(
                 sourceURL: sourceURL,
-                destinationURL: Self.uniqueDocumentURL(for: sourceURL, in: targetDirectory),
+                destinationURL: Self.uniqueDocumentURL(
+                    for: sourceURL,
+                    in: targetDirectory,
+                    reservedPaths: Set(removedDirtyDocuments.keys)
+                ),
                 workspaceURL: workspaceURL,
                 failureMessage: "Could not paste \(displayName)",
                 selectDestinationAfterMove: true,
@@ -1277,6 +1276,7 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         let copyTexts = dirtyCopyTexts
+        let reservedPaths = Set(removedDirtyDocuments.keys)
         let preserveSelection = selectedDocumentID
         noteInternalFileMutation()
         let generation = beginDocumentFileOperation()
@@ -1287,7 +1287,11 @@ final class WorkspaceStore: ObservableObject {
             do {
                 for source in sources {
                     let sourceURL = source.url
-                    let destinationURL = Self.uniqueDocumentURL(for: sourceURL, in: source.targetDirectory).standardizedFileURL
+                    let destinationURL = Self.uniqueDocumentURL(
+                        for: sourceURL,
+                        in: source.targetDirectory,
+                        reservedPaths: reservedPaths
+                    ).standardizedFileURL
                     let isFolder = Self.isDirectory(sourceURL)
                     if moving {
                         try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
@@ -1809,9 +1813,16 @@ final class WorkspaceStore: ObservableObject {
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner, moveItemToTrash] in
             var failure: (url: URL, error: Error)?
+            var trashed: [WorkspaceFileOperationStep] = []
             for url in urls {
                 do {
-                    try moveItemToTrash(url)
+                    if let trashedURL = try moveItemToTrash(url) {
+                        trashed.append(.trash(WorkspaceFileTrashStep(
+                            originalURL: url.standardizedFileURL,
+                            trashedURL: trashedURL,
+                            isDirectory: url.hasDirectoryPath || Self.isDirectory(trashedURL)
+                        )))
+                    }
                 } catch {
                     failure = (url, error)
                     break
@@ -1821,6 +1832,8 @@ final class WorkspaceStore: ObservableObject {
                 await self?.finishWorkspaceFailure(failure.error, generation: generation, message: "Could not move \(failure.url.lastPathComponent) to the Trash")
                 return
             }
+            // What went to the Trash, before a failure too, is one step of Edit › Undo.
+            await self?.recordTrash(trashed, generation: generation)
             do {
                 // Whatever went to the Trash before a failure stays there, so a failure rescans too.
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
@@ -1844,6 +1857,11 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    private func recordTrash(_ steps: [WorkspaceFileOperationStep], generation: Int) {
+        guard generation == workspaceGeneration else { return }
+        recordFileOperation(.trash, steps: steps)
+    }
+
     private func reportTrashFailure(_ error: Error, url: URL, generation: Int) {
         guard generation == workspaceGeneration else { return }
         errorMessage = "Could not move \(url.lastPathComponent) to the Trash: \(error.localizedDescription)"
@@ -1865,6 +1883,11 @@ final class WorkspaceStore: ObservableObject {
         undoVerb: WorkspaceFileOperationVerb = .move
     ) -> Bool {
         guard ensureNotBusy(), ensureWritingToolsInactive(for: "renaming or moving files") else { return false }
+        if destinationURL.standardizedFileURL != sourceURL.standardizedFileURL,
+           let kept = keptUnsavedDocument(inItemAt: destinationURL) {
+            errorMessage = WorkspaceDocumentOperationError.keepsUnsavedText(kept.displayName).localizedDescription
+            return false
+        }
 
         let mappings = Self.documentIDMappings(forMoving: sourceURL, to: destinationURL, documents: documents)
         let preserveSelection = selectedDocumentID
@@ -2344,6 +2367,13 @@ final class WorkspaceStore: ObservableObject {
                 if direction == .undo, let unsaved = unsavedDocument(at: copy.copyURL) {
                     return "Save or close \(unsaved.displayName) first: undoing the copy moves it to the Trash."
                 }
+            case .trash(let trash):
+                if direction == .redo, let unsaved = unsavedDocument(at: trash.originalURL) {
+                    return "Save or close \(unsaved.displayName) first: redoing moves it to the Trash."
+                }
+                if direction == .undo, let kept = keptUnsavedDocument(inItemAt: trash.originalURL) {
+                    return WorkspaceDocumentOperationError.keepsUnsavedText(kept.displayName).localizedDescription
+                }
             }
         }
         return nil
@@ -2399,6 +2429,15 @@ final class WorkspaceStore: ObservableObject {
                 } else {
                     effect.createdCopies.append(copy)
                     effect.landingItemID = copy.copyURL.standardizedFileURL.path
+                }
+            case .trash(let trash):
+                let path = trash.originalURL.standardizedFileURL.path
+                effect.changedPaths.append(path)
+                if direction == .undo {
+                    effect.restoredPaths.append(path)
+                    effect.landingItemID = path
+                } else {
+                    effect.removedPaths.append(path)
                 }
             }
         }
@@ -2462,7 +2501,10 @@ final class WorkspaceStore: ObservableObject {
         var sidebarSelection: SidebarSelectionAfterLoad = sidebarSelectionIsRemoved ? .cleared : .unchanged
         // Copies made again are selected as the copy first selected them: one file opens and one
         // folder is selected; several are selected in the sidebar, none opened.
-        if effect.createdCopies.count > 1 {
+        if !effect.restoredPaths.isEmpty {
+            // Items back from the Trash are selected, none opened.
+            sidebarSelection = .items(effect.restoredPaths)
+        } else if effect.createdCopies.count > 1 {
             sidebarSelection = .items(effect.createdCopies.map(\.copyURL.standardizedFileURL.path))
         } else if let copy = effect.createdCopies.first {
             if copy.isDirectory {
@@ -2724,7 +2766,7 @@ final class WorkspaceStore: ObservableObject {
                     isDirectory: false,
                     in: notesURL
                 )
-                try await Self.writeText(markdown, to: destinationURL)
+                try Self.writeNewFile(markdown, to: destinationURL)
 
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
@@ -2781,7 +2823,7 @@ final class WorkspaceStore: ObservableObject {
                     isDirectory: false,
                     in: notesURL
                 )
-                try await Self.writeText(markdown, to: destinationURL)
+                try Self.writeNewFile(markdown, to: destinationURL)
 
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
@@ -2848,6 +2890,11 @@ final class WorkspaceStore: ObservableObject {
 
     func saveSelectedFile() {
         guard let selectedDocument else { return }
+        // A file operation may be moving this file; the text stays unsaved until it ends.
+        guard !isBusy else {
+            errorMessage = Self.busyMessage
+            return
+        }
 
         guard writingToolsDocumentID != selectedDocument.id else {
             errorMessage = "Finish Writing Tools before saving \(selectedDocument.displayName)."
@@ -2899,6 +2946,10 @@ final class WorkspaceStore: ObservableObject {
     @discardableResult
     func saveDocument(id documentID: String) async -> Bool {
         guard let file = document(id: documentID) else { return false }
+        guard !isBusy else {
+            errorMessage = Self.busyMessage
+            return false
+        }
         guard writingToolsDocumentID != documentID else {
             errorMessage = "Finish Writing Tools before saving \(file.displayName)."
             return false
@@ -3761,7 +3812,8 @@ final class WorkspaceStore: ObservableObject {
             workspaceReplaceSummary = Self.replaceSummary(for: batch)
             if batch.totalReplacements > 0, !batch.previousTextsByDocumentID.isEmpty {
                 replaceUndoSnapshot = WorkspaceReplaceUndoSnapshot(
-                    previousTextsByDocumentID: batch.previousTextsByDocumentID
+                    previousTextsByDocumentID: batch.previousTextsByDocumentID,
+                    replacedTextsByDocumentID: batch.updatedTextsByDocumentID
                 )
                 canUndoWorkspaceReplace = true
                 workspaceUndoSerial &+= 1
@@ -3779,6 +3831,9 @@ final class WorkspaceStore: ObservableObject {
 
     private static func replaceSummary(for batch: WorkspaceReplaceBatch) -> String {
         if batch.totalReplacements == 0 {
+            if batch.skippedChangedCount > 0 {
+                return "Replaced nothing: \(batch.skippedChangedCount) file(s) changed on disk during the replace."
+            }
             if batch.skippedDirtyCount > 0 {
                 return "No matches in clean files. \(batch.skippedDirtyCount) unsaved file(s) skipped."
             }
@@ -3791,6 +3846,9 @@ final class WorkspaceStore: ObservableObject {
         }
         if batch.skippedLargeFileCount > 0 {
             summary += " Skipped \(batch.skippedLargeFileCount) large."
+        }
+        if batch.skippedChangedCount > 0 {
+            summary += " Skipped \(batch.skippedChangedCount) changed on disk."
         }
         return summary
     }
@@ -4990,9 +5048,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     /// Whether no file operation is running; otherwise says to wait for it.
+    /// File operations wait for each other and for a save: a save written while its file moves
+    /// would put the file back at its old path and split the edits across two files.
     private func ensureNotBusy() -> Bool {
-        guard !isBusy else {
-            errorMessage = Self.busyMessage
+        guard !isBusy, !isSaving else {
+            errorMessage = isBusy ? Self.busyMessage : Self.savingMessage
             return false
         }
         return true
@@ -5204,11 +5264,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func nextAvailableMarkdownURL(in rootURL: URL) -> URL {
-        let fileManager = FileManager.default
         let baseName = "Untitled"
         var candidate = rootURL.appendingPathComponent("\(baseName).md")
+        // A name whose file is gone but whose unsaved text Monknot keeps is taken too.
+        func isTaken(_ url: URL) -> Bool {
+            FileManager.default.fileExists(atPath: url.path) || keptUnsavedDocument(inItemAt: url) != nil
+        }
 
-        guard fileManager.fileExists(atPath: candidate.path) else {
+        guard isTaken(candidate) else {
             return candidate
         }
 
@@ -5216,7 +5279,7 @@ final class WorkspaceStore: ObservableObject {
         repeat {
             candidate = rootURL.appendingPathComponent("\(baseName) \(index).md")
             index += 1
-        } while fileManager.fileExists(atPath: candidate.path)
+        } while isTaken(candidate)
 
         return candidate
     }
@@ -5242,6 +5305,12 @@ final class WorkspaceStore: ObservableObject {
         try await Task.detached(priority: .utility) {
             try WorkspaceTextFileGuard.writeUTF8Text(text, to: url)
         }.value
+    }
+
+    /// Writes a new file, failing rather than replacing one that appeared at `url` since its name
+    /// was chosen (another app, a sync client).
+    nonisolated private static func writeNewFile(_ text: String, to url: URL) throws {
+        try Data(text.utf8).write(to: url, options: .withoutOverwriting)
     }
 
     nonisolated private static func fileSignature(for url: URL) -> FileSignature? {
@@ -5396,9 +5465,6 @@ final class WorkspaceStore: ObservableObject {
         if name.hasPrefix(".") {
             throw WorkspaceDocumentOperationError.hiddenName(name)
         }
-        guard isDirectory else {
-            throw WorkspaceDocumentOperationError.unsupportedFileType(name)
-        }
         if WorkspaceDocumentSupport.isPackageName(name) {
             throw WorkspaceDocumentOperationError.packageFolderName(name)
         }
@@ -5444,9 +5510,8 @@ final class WorkspaceStore: ObservableObject {
     /// Whether a file named with `pathExtension` holds the same kind of content as `sourceURL`:
     /// both are text that the editor opens, or both are the same file type (`.jpg` and `.jpeg`).
     nonisolated private static func isSameKindOfDocument(extension pathExtension: String, as sourceURL: URL) -> Bool {
-        guard !pathExtension.isEmpty,
-              let typed = WorkspaceDocumentSupport.workspaceClassification(for: URL(fileURLWithPath: "_.\(pathExtension)"))
-        else { return false }
+        guard WorkspaceDocumentSupport.readsAsFileExtension(pathExtension) else { return false }
+        let typed = WorkspaceDocumentSupport.classification(for: URL(fileURLWithPath: "_.\(pathExtension)"))
         let source = WorkspaceDocumentSupport.classification(for: sourceURL)
         if typed.capabilities.canEditText && source.capabilities.canEditText {
             return true
@@ -5458,11 +5523,16 @@ final class WorkspaceStore: ObservableObject {
 
     /// Where a copy or move of `sourceURL` into `directoryURL` lands: its own name, or a "copy"
     /// name when that is taken.
-    nonisolated private static func uniqueDocumentURL(for sourceURL: URL, in directoryURL: URL) -> URL {
+    nonisolated private static func uniqueDocumentURL(
+        for sourceURL: URL,
+        in directoryURL: URL,
+        reservedPaths: Set<String> = []
+    ) -> URL {
         WorkspaceDocumentSupport.availableCopyURL(
             named: sourceURL.lastPathComponent,
             isDirectory: isDirectory(sourceURL),
-            in: directoryURL
+            in: directoryURL,
+            reservedPaths: reservedPaths
         )
     }
 
@@ -5757,12 +5827,14 @@ private struct WorkspaceItemMoveRemap {
 /// What an undo or redo of a file operation changes for the window (`fileOperationEffect`).
 private struct WorkspaceFileOperationEffect {
     var itemMoves: [WorkspaceItemMoveRemap] = []
-    /// Copies going to the Trash and items going back to another workspace.
+    /// Items going to the Trash and items going back to another workspace.
     var removedPaths: [String] = []
     /// The notes whose links it rewrites, by their paths before it.
     var rewrittenDocumentIDs: Set<String> = []
     /// The copies a redo makes again, which are selected as the copy selected them.
     var createdCopies: [WorkspaceFileCopyStep] = []
+    /// The items an undo puts back from the Trash, which are selected.
+    var restoredPaths: [String] = []
     var landingItemID: String?
     var changedPaths: [String] = []
 }
@@ -5841,7 +5913,6 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
     case nestedName
     case invalidName(String)
     case nameTooLong
-    case couldNotCreateFile(String)
     case unsupportedPDFExport(String)
     case writingToolsActive(String)
     case unsupportedPDFAnnotationExport(String)
@@ -5852,7 +5923,7 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
     case hiddenName(String)
     case ignoredFolderName(String)
     case packageFolderName(String)
-    case unsupportedFileType(String)
+    case keepsUnsavedText(String)
 
     var errorDescription: String? {
         switch self {
@@ -5864,8 +5935,6 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
             return "\(name) is not a valid file name."
         case .nameTooLong:
             return "This name is longer than macOS allows. Shorten it."
-        case .couldNotCreateFile(let name):
-            return "Could not create \(name)."
         case .unsupportedPDFExport(let name):
             return "\(name) is not a Markdown file."
         case .writingToolsActive(let name):
@@ -5886,8 +5955,8 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
             return "Monknot hides folders named \(name)."
         case .packageFolderName(let name):
             return "\(name) would be a package, which Finder shows as one file, so Monknot hides it."
-        case .unsupportedFileType(let name):
-            return "Monknot does not show files like \(name). Add an extension such as .md or .txt."
+        case .keepsUnsavedText(let name):
+            return "\(name) was removed from disk, but its unsaved changes are still open. Save or discard them first."
         }
     }
 }

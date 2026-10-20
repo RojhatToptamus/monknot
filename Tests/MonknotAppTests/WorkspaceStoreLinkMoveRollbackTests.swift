@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import MonknotCore
 import XCTest
@@ -381,14 +382,18 @@ final class WorkspaceStoreLinkMoveRollbackTests: WorkspaceStoreLinkTestCase {
         try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
 
         let store = makeWorkspaceStore()
+
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotLinkMove-\(UUID().uuidString)"))
+
+        defer { pasteboard.releaseGlobally() }
         store.openWorkspace(fixture.root)
         await assertEventually { !store.isBusy && store.documents.count == 2 }
         guard let target = store.documents.first(where: { $0.url == fixture.target }) else {
             return XCTFail("Expected target document")
         }
 
-        store.cutItem(at: target.url)
-        store.pasteDocumentTransfer(into: destinationFolder)
+        store.putItemOnPasteboard(at: target.url, cutting: true, pasteboard: pasteboard)
+        store.pasteFromPasteboard(pasteboard, into: destinationFolder)
         await assertEventually {
             !store.isBusy && store.pendingMarkdownLinkMoveReview != nil
         }

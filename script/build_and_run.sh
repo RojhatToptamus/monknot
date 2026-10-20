@@ -337,6 +337,7 @@ CORE_SOURCES=(
   "Sources/MonknotCore/Services/ExternalDocumentReconciliationService.swift"
   "Sources/MonknotCore/Services/FlowProtectedRangeService.swift"
   "Sources/MonknotCore/Services/HTMLScrollSync.swift"
+  "Sources/MonknotCore/Services/JupyterNotebookMarkdown.swift"
   "Sources/MonknotCore/Services/MonknotCaptureURLBuilder.swift"
   "Sources/MonknotCore/Services/MarkdownOutlineParser.swift"
   "Sources/MonknotCore/Services/MarkdownRenderService.swift"

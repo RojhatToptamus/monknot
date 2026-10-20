@@ -1568,6 +1568,8 @@
   }
 
   function highlightCode(code, language) {
+    // A notebook cell's output is what the code printed, not code.
+    if (language === "output") return escapeHTML(code);
     const keywordSet = new Set([
       "actor", "as", "async", "await", "break", "case", "catch", "class", "const",
       "continue", "default", "defer", "do", "else", "enum", "export", "extends",

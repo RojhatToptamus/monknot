@@ -182,7 +182,9 @@ final class MarkdownImageAssetServiceTests: XCTestCase {
         }
     }
 
-    func testDropRejectsFoldersSymlinksAndUnsupportedFilesWithoutCreatingAssets() throws {
+    /// A note takes any file dropped on it as a File block, binary ones too, as the sidebar lists
+    /// them; folders, aliases and hidden files are refused, and nothing is copied while planning.
+    func testDropRejectsFoldersSymlinksAndHiddenFilesWithoutCreatingAssets() throws {
         let container = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: container) }
         let workspace = container.appendingPathComponent("workspace", isDirectory: true)
@@ -190,10 +192,12 @@ final class MarkdownImageAssetServiceTests: XCTestCase {
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         let document = workspace.appendingPathComponent("Draft.md")
-        let unsupported = outside.appendingPathComponent("archive.bin")
+        let hidden = outside.appendingPathComponent(".env")
+        let binary = outside.appendingPathComponent("archive.bin")
         let symlink = outside.appendingPathComponent("alias.txt")
         try "# Draft\n".write(to: document, atomically: true, encoding: .utf8)
-        try Data([1, 2, 3]).write(to: unsupported)
+        try Data([1, 2, 3]).write(to: hidden)
+        try Data([1, 2, 3]).write(to: binary)
         try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: document)
 
         XCTAssertThrowsError(try MarkdownImageAssetService.planFileDrop(
@@ -207,10 +211,16 @@ final class MarkdownImageAssetServiceTests: XCTestCase {
             markdownDocumentURL: document
         ))
         XCTAssertThrowsError(try MarkdownImageAssetService.planFileDrop(
-            [unsupported],
+            [hidden],
             workspaceURL: workspace,
             markdownDocumentURL: document
         ))
+        let plan = try MarkdownImageAssetService.planFileDrop(
+            [binary],
+            workspaceURL: workspace,
+            markdownDocumentURL: document
+        )
+        XCTAssertEqual(plan.items.map(\.sourceURL.lastPathComponent), ["archive.bin"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("assets").path))
     }
 

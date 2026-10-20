@@ -24,6 +24,9 @@ public struct WorkspaceReplaceBatch: Sendable {
     public let totalReplacements: Int
     public let skippedDirtyCount: Int
     public let skippedLargeFileCount: Int
+    /// Files left as they are because they changed on disk after they were read, or could not be
+    /// written; nothing of theirs is overwritten.
+    public let skippedChangedCount: Int
     public let updatedTextsByDocumentID: [String: String]
     public let previousTextsByDocumentID: [String: String]
 
@@ -32,6 +35,7 @@ public struct WorkspaceReplaceBatch: Sendable {
         totalReplacements: Int,
         skippedDirtyCount: Int = 0,
         skippedLargeFileCount: Int = 0,
+        skippedChangedCount: Int = 0,
         updatedTextsByDocumentID: [String: String] = [:],
         previousTextsByDocumentID: [String: String] = [:]
     ) {
@@ -39,6 +43,7 @@ public struct WorkspaceReplaceBatch: Sendable {
         self.totalReplacements = totalReplacements
         self.skippedDirtyCount = skippedDirtyCount
         self.skippedLargeFileCount = skippedLargeFileCount
+        self.skippedChangedCount = skippedChangedCount
         self.updatedTextsByDocumentID = updatedTextsByDocumentID
         self.previousTextsByDocumentID = previousTextsByDocumentID
     }
@@ -73,20 +78,38 @@ public struct WorkspaceReplaceService: Sendable {
             limitToDocumentIDs: limitToDocumentIDs
         )
 
+        // Each file is written only while it still holds the text the plan read, so an edit made
+        // in the meantime is never overwritten; the batch (and its undo) holds the files written.
+        var written = Set<String>()
         for document in documents {
-            guard let updatedText = plan.updatedTexts[document.id] else { continue }
-            try WorkspaceTextFileGuard.writeUTF8Text(updatedText, to: document.url)
+            try Task.checkCancellation()
+            guard let updatedText = plan.updatedTexts[document.id],
+                  let previousText = plan.previousTexts[document.id],
+                  Self.write(updatedText, to: document.url, expecting: previousText)
+            else { continue }
             textCache.store(text: updatedText, for: document.url)
+            written.insert(document.id)
         }
 
+        let fileResults = plan.fileResults.filter { written.contains($0.documentID) }
         return WorkspaceReplaceBatch(
-            fileResults: plan.fileResults,
-            totalReplacements: plan.totalReplacements,
+            fileResults: fileResults,
+            totalReplacements: fileResults.reduce(0) { $0 + $1.replacementCount },
             skippedDirtyCount: plan.skippedDirtyCount,
             skippedLargeFileCount: plan.skippedLargeFileCount,
-            updatedTextsByDocumentID: plan.updatedTexts,
-            previousTextsByDocumentID: plan.previousTexts
+            skippedChangedCount: plan.fileResults.count - fileResults.count,
+            updatedTextsByDocumentID: plan.updatedTexts.filter { written.contains($0.key) },
+            previousTextsByDocumentID: plan.previousTexts.filter { written.contains($0.key) }
         )
+    }
+
+    /// Writes `text` only while the file holds `expectedText`; false leaves the file as it is.
+    private static func write(_ text: String, to url: URL, expecting expectedText: String) -> Bool {
+        let expected = WorkspaceTextRevision(
+            text: expectedText,
+            signature: WorkspaceFileSignature(modificationDate: nil, fileSize: nil)
+        )
+        return (try? WorkspaceConditionalTextWriter.write(text, to: url, expecting: .present(expected))) != nil
     }
 
     public func preview(
@@ -208,18 +231,26 @@ public struct WorkspaceReplaceService: Sendable {
         )
     }
 
+    /// Puts back the text each file held before a replace, only in files that still hold the text
+    /// the replace wrote: a file changed since (in another app, by git, by a sync client) keeps
+    /// its newer text and is counted in `skippedChangedCount`.
     public func restoreAndWrite(
-        previousTextsByDocumentID: [String: String],
+        _ snapshot: WorkspaceReplaceUndoSnapshot,
         documents: [WorkspaceDocument]
     ) throws -> WorkspaceReplaceBatch {
         var fileResults: [WorkspaceReplaceFileResult] = []
         var updatedTexts: [String: String] = [:]
+        var skippedChangedCount = 0
 
         for document in documents {
             try Task.checkCancellation()
-            guard let previousText = previousTextsByDocumentID[document.id] else { continue }
-
-            try WorkspaceTextFileGuard.writeUTF8Text(previousText, to: document.url)
+            guard let previousText = snapshot.previousTextsByDocumentID[document.id],
+                  let replacedText = snapshot.replacedTextsByDocumentID[document.id]
+            else { continue }
+            guard Self.write(previousText, to: document.url, expecting: replacedText) else {
+                skippedChangedCount += 1
+                continue
+            }
             textCache.store(text: previousText, for: document.url)
 
             fileResults.append(WorkspaceReplaceFileResult(
@@ -234,6 +265,7 @@ public struct WorkspaceReplaceService: Sendable {
         return WorkspaceReplaceBatch(
             fileResults: fileResults,
             totalReplacements: 0,
+            skippedChangedCount: skippedChangedCount,
             updatedTextsByDocumentID: updatedTexts
         )
     }

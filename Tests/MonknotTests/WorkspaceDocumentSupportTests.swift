@@ -183,42 +183,84 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
     }
 
     func testSupportedExtensionsAreCaseInsensitive() {
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/README.MD")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/spec.markdown")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/note.mdown")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/doc.mkd")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/diagram.MMD")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/Makefile")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/guide.PDF")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/notes.TXT")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/Preview.HTML")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/image.PNG")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/movie.MP4")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/sound.M4A")))
-        XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/movie.AVI")))
+        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        func kind(_ name: String) -> WorkspaceDocumentKind {
+            WorkspaceDocument(url: root.appendingPathComponent(name), rootURL: root).kind
+        }
+        for name in ["README.MD", "spec.markdown", "note.mdown", "doc.mkd"] {
+            XCTAssertEqual(kind(name), .markdown, name)
+        }
+        for name in ["diagram.MMD", "Makefile", "notes.TXT", "Preview.HTML"] {
+            XCTAssertEqual(kind(name), .text, name)
+        }
+        XCTAssertEqual(kind("guide.PDF"), .pdf)
+        XCTAssertEqual(kind("image.PNG"), .image)
+        XCTAssertEqual(kind("movie.MP4"), .media)
+        XCTAssertEqual(kind("sound.M4A"), .media)
+        XCTAssertEqual(kind("movie.AVI"), .unsupported)
+        XCTAssertEqual(kind("archive.ZIP"), .unsupported)
         XCTAssertTrue(WorkspaceDocumentSupport.isPDFDocument(URL(fileURLWithPath: "/tmp/guide.pdf")))
         XCTAssertTrue(WorkspaceDocumentSupport.isMarkdownDocument(URL(fileURLWithPath: "/tmp/doc.mkd")))
-        XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/archive.zip")))
-        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/diagram.mmd"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .text)
-        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/preview.html"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .text)
-        XCTAssertTrue(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/preview.html"), rootURL: URL(fileURLWithPath: "/tmp")).capabilities.canPreviewHTML)
-        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/Makefile"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .text)
-        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/image.png"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .image)
-        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/movie.mp4"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .media)
-        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/movie.avi"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
-        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/archive.zip"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
+        XCTAssertTrue(WorkspaceDocument(url: root.appendingPathComponent("preview.html"), rootURL: root).capabilities.canPreviewHTML)
     }
 
-    func testWorkspaceScanGateSkipsKnownUnsupportedExtensionsBeforeDocumentCreation() {
-        XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/README.md")))
-        XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/Guide.PDF")))
-        XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/Makefile")))
-        XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/image.PNG")))
-        XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/movie.MP4")))
-        XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/movie.avi")))
-        XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/movie.mkv")))
-        XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/movie.webm")))
-        XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/archive.zip")))
+    /// Every file is listed. Source formats the system does not know open as text; files the
+    /// system knows as binary, and common undeclared binary formats, open in their own app and are
+    /// never searched.
+    func testEveryFileIsClassifiedAsTextOrAsOpeningInItsOwnApp() {
+        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        for name in ["init.lua", "App.vue", "Card.svelte", "main.dart", "Main.scala", "paper.tex", "refs.bib",
+                     "index.rst", "Cargo.lock", "LICENSE-MIT", "Brewfile", "a.out", "Info.plist", "notes.final"] {
+            let document = WorkspaceDocument(url: root.appendingPathComponent(name), rootURL: root)
+            XCTAssertEqual(document.kind, .text, name)
+            XCTAssertTrue(document.capabilities.canEditText, name)
+            XCTAssertTrue(document.capabilities.canSearchText, name)
+            XCTAssertFalse(document.hasPreviewMode, name)
+        }
+        for name in ["archive.zip", "report.docx", "sheet.xlsx", "clip.avi", "font.ttf", "tool.exe", "lib.dylib",
+                     "module.pyc", "cache.sqlite", "font.woff2", "weights.safetensors", "data.parquet"] {
+            let document = WorkspaceDocument(url: root.appendingPathComponent(name), rootURL: root)
+            XCTAssertEqual(document.kind, .unsupported, name)
+            XCTAssertFalse(document.capabilities.canEditText, name)
+            XCTAssertFalse(document.capabilities.canSearchText, name)
+            XCTAssertFalse(document.capabilities.canPreview, name)
+        }
+    }
+
+    func testANotebookIsEditableJSONWithAPreview() {
+        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        for name in ["analysis.ipynb", "Analysis.IPYNB"] {
+            let notebook = WorkspaceDocument(url: root.appendingPathComponent(name), rootURL: root)
+            XCTAssertEqual(notebook.kind, .text, name)
+            XCTAssertTrue(notebook.capabilities.canPreviewNotebook, name)
+            XCTAssertTrue(notebook.capabilities.canEditText, name)
+            XCTAssertTrue(notebook.capabilities.canSearchText, name)
+            XCTAssertTrue(notebook.hasPreviewMode, name)
+            XCTAssertFalse(notebook.capabilities.canPreviewHTML, name)
+        }
+        XCTAssertFalse(WorkspaceDocument(url: root.appendingPathComponent("data.json"), rootURL: root).capabilities.canPreviewNotebook)
+    }
+
+    /// Capabilities saved before notebooks existed (open tabs, Recents) still decode.
+    func testCapabilitiesSavedWithoutTheNotebookFlagDecode() throws {
+        let saved = Data(#"{"canPreview":true,"canEditText":true,"canSearchText":true,"canSearchPDF":false,"canExportPDF":false,"canShowOutline":false,"canPreviewHTML":true}"#.utf8)
+        let capabilities = try JSONDecoder().decode(WorkspaceDocumentCapabilities.self, from: saved)
+        XCTAssertTrue(capabilities.canPreviewHTML)
+        XCTAssertFalse(capabilities.canPreviewNotebook)
+        let roundTrip = try JSONDecoder().decode(
+            WorkspaceDocumentCapabilities.self,
+            from: JSONEncoder().encode(capabilities)
+        )
+        XCTAssertEqual(roundTrip, capabilities)
+    }
+
+    func testAnExtensionNeedsALetter() {
+        for pathExtension in ["md", "lua", "mp3", "7z", "final"] {
+            XCTAssertTrue(WorkspaceDocumentSupport.readsAsFileExtension(pathExtension), pathExtension)
+        }
+        for pathExtension in ["", "2", "10", "001"] {
+            XCTAssertFalse(WorkspaceDocumentSupport.readsAsFileExtension(pathExtension), pathExtension)
+        }
     }
 
     func testDocumentCapabilitiesAreClassifiedByFormatGroup() {
@@ -262,7 +304,6 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
         for name in ["photo.JPG", "photo.jpeg", "shot.png", "anim.gif", "live.heic", "scan.tiff", "pic.webp", "icon.ico", "a.avif", "b.bmp"] {
             let url = root.appendingPathComponent(name)
-            XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(url), name)
             XCTAssertEqual(WorkspaceDocument(url: url, rootURL: root).kind, .image, name)
             XCTAssertTrue(WorkspaceDocumentKind.image.opensInPDFViewer)
         }
@@ -279,7 +320,6 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
             for name in ["clip.\(fileExtension)", "CLIP.\(fileExtension.uppercased())"] {
                 let url = root.appendingPathComponent(name)
                 let document = WorkspaceDocument(url: url, rootURL: root)
-                XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(url), name)
                 XCTAssertEqual(document.kind, .media, name)
                 XCTAssertFalse(document.kind.opensInPDFViewer, name)
                 let contentType = document.contentTypeIdentifier.flatMap(UTType.init)
@@ -293,23 +333,22 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
 
         // TypeScript keeps its extension, which UTType also reads as an MPEG-2 transport stream.
         XCTAssertEqual(WorkspaceDocument(url: root.appendingPathComponent("app.ts"), rootURL: root).kind, .text)
-        for skipped in ["clip.avi", "clip.mkv", "clip.webm", "clip.ogg", "clip.wmv"] {
-            XCTAssertNil(
-                WorkspaceDocumentSupport.workspaceClassification(for: root.appendingPathComponent(skipped)),
-                skipped
+        for unplayable in ["clip.avi", "clip.mkv", "clip.webm", "clip.ogg", "clip.wmv"] {
+            XCTAssertEqual(
+                WorkspaceDocument(url: root.appendingPathComponent(unplayable), rootURL: root).kind,
+                .unsupported,
+                unplayable
             )
         }
     }
 
-    func testExtensionlessFilesAreTextOnlyByConventionalName() {
+    /// An extensionless file opens as text; the editor says so when its bytes are not text.
+    func testExtensionlessFilesAreText() {
         let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
-        for name in ["LICENSE", "License", "README", "CHANGELOG", "AUTHORS", "NOTICE", "COPYING", "Makefile", "Dockerfile"] {
-            let classification = WorkspaceDocumentSupport.workspaceClassification(for: root.appendingPathComponent(name))
-            XCTAssertEqual(classification?.kind, .text, name)
-            XCTAssertEqual(classification?.capabilities.canEditText, true, name)
-        }
-        for name in ["data", "a.out", "Icon"] {
-            XCTAssertNil(WorkspaceDocumentSupport.workspaceClassification(for: root.appendingPathComponent(name)), name)
+        for name in ["LICENSE", "License", "README", "CHANGELOG", "AUTHORS", "NOTICE", "COPYING", "Makefile", "Dockerfile", "data", "Icon"] {
+            let classification = WorkspaceDocumentSupport.classification(for: root.appendingPathComponent(name))
+            XCTAssertEqual(classification.kind, .text, name)
+            XCTAssertTrue(classification.capabilities.canEditText, name)
         }
     }
 

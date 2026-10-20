@@ -328,7 +328,8 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
         let items = try XCTUnwrap(menu).items
         XCTAssertEqual(items.map(\.title), ["Close Tab", "Close Other Tabs", "", "Pin Tab"])
         XCTAssertEqual(items.map(\.isEnabled), [false, false, false, false])
-        _ = (closed, pinned)
+        XCTAssertEqual(closed, [], "Building the menu runs nothing")
+        XCTAssertEqual(pinned, [])
     }
 
     /// A tab's menu: Close Tab, Close Other Tabs while another unpinned tab is open, Pin Tab, then the

@@ -10,20 +10,21 @@ final class WorkspaceStoreTestContext {
     private var stores: [WorkspaceStore] = []
     private var temporaryRoots: [URL] = []
 
-    /// A store whose Move to Trash moves items into a temporary folder instead of the user's Trash.
+    /// A store whose Move to Trash moves items into a temporary folder instead of the user's Trash,
+    /// or does what `moveItemToTrash` does.
     func makeStore(
-        scanner: any WorkspaceDocumentScanning = WorkspaceDocumentScanner()
+        scanner: any WorkspaceDocumentScanning = WorkspaceDocumentScanner(),
+        moveItemToTrash: (@Sendable (URL) throws -> URL?)? = nil
     ) -> WorkspaceStore {
         let trashURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("MonknotTestTrash-\(UUID().uuidString)", isDirectory: true)
         temporaryRoots.append(trashURL)
-        let store = WorkspaceStore(scanner: scanner, userDefaults: userDefaults) { url in
+        let store = WorkspaceStore(scanner: scanner, userDefaults: userDefaults, moveItemToTrash: moveItemToTrash ?? { url in
             try FileManager.default.createDirectory(at: trashURL, withIntermediateDirectories: true)
-            try FileManager.default.moveItem(
-                at: url,
-                to: trashURL.appendingPathComponent("\(UUID().uuidString)-\(url.lastPathComponent)")
-            )
-        }
+            let trashedURL = trashURL.appendingPathComponent("\(UUID().uuidString)-\(url.lastPathComponent)")
+            try FileManager.default.moveItem(at: url, to: trashedURL)
+            return trashedURL
+        })
         stores.append(store)
         return store
     }
@@ -66,9 +67,10 @@ class WorkspaceStoreTestCase: XCTestCase {
     }
 
     func makeWorkspaceStore(
-        scanner: any WorkspaceDocumentScanning = WorkspaceDocumentScanner()
+        scanner: any WorkspaceDocumentScanning = WorkspaceDocumentScanner(),
+        moveItemToTrash: (@Sendable (URL) throws -> URL?)? = nil
     ) -> WorkspaceStore {
-        workspaceStoreTestContext.makeStore(scanner: scanner)
+        workspaceStoreTestContext.makeStore(scanner: scanner, moveItemToTrash: moveItemToTrash)
     }
 
     func makeWorkspaceStoreTemporaryDirectory(

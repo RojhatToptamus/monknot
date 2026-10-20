@@ -2,11 +2,6 @@ import AppKit
 import MonknotCore
 import SwiftUI
 
-struct MarkdownTextEditorCommandRequest: Equatable {
-    let serial: Int
-    let command: MarkdownTextEditorCommand
-}
-
 @MainActor
 enum MonknotNativeMarkdownCommand {
     static var canCopyRenderedSelection: Bool {
@@ -1787,7 +1782,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let searchOptions: MonknotSearchOptions
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
     let onVisibleTopLineChange: ((Int) -> Void)?
-    let commandRequest: MarkdownTextEditorCommandRequest?
     let markdownShortcutsEnabled: Bool
     let flowSourceMode: FlowSourceMode?
     let wikilinkDocuments: [WorkspaceDocument]
@@ -1821,7 +1815,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
         syncScrollTargetLine: Int? = nil,
         openingTopLine: Int? = nil,
         onVisibleTopLineChange: ((Int) -> Void)? = nil,
-        commandRequest: MarkdownTextEditorCommandRequest? = nil,
         markdownShortcutsEnabled: Bool = false,
         flowSourceMode: FlowSourceMode? = nil,
         wikilinkDocuments: [WorkspaceDocument] = [],
@@ -1852,7 +1845,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.searchOptions = searchOptions
         self.onScrollPositionChange = onScrollPositionChange
         self.onVisibleTopLineChange = onVisibleTopLineChange
-        self.commandRequest = commandRequest
         self.markdownShortcutsEnabled = markdownShortcutsEnabled
         self.flowSourceMode = flowSourceMode
         self.wikilinkDocuments = wikilinkDocuments
@@ -1958,7 +1950,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.configureFlow(mode: flowSourceMode, options: textCheckingOptions)
         context.coordinator.attach(to: scrollView)
         context.coordinator.ignoreSyncScrollLine(syncScrollTargetLine)
-        context.coordinator.acceptCurrentCommandRequest(commandRequest)
         applyTheme(theme, to: textView, in: scrollView)
         context.coordinator.markFontApplied(resolvedFont)
         context.coordinator.markThemeApplied(theme)
@@ -2006,9 +1997,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
             context.coordinator.externalTextDidChange()
         }
         if context.coordinator.isWritingToolsActive {
-            if let commandRequest {
-                context.coordinator.apply(commandRequest)
-            }
             return
         }
         context.coordinator.restoreSelectionIfNeeded(textSelection, in: textView)
@@ -2032,10 +2020,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.wikilinkDocuments = wikilinkDocuments
         if context.coordinator.shouldApplyTheme(theme) {
             applyTheme(theme, to: textView, in: scrollView)
-        }
-
-        if let commandRequest {
-            context.coordinator.apply(commandRequest)
         }
 
         context.coordinator.applySyntaxHighlighting(
@@ -2182,7 +2166,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var lastPublishedTopLine: Int?
         private var lastAppliedSyncScrollLine: Int?
         private var isRestoringScrollPosition = false
-        private var lastCommandSerial = 0
         private var lastAppliedFontName: String?
         private var lastAppliedFontSize: CGFloat?
         private var lastAppliedTheme: AppTheme?
@@ -3962,20 +3945,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
             textView.undoManager?.endUndoGrouping()
             textView.breakUndoCoalescing()
             return true
-        }
-
-        /// Treats the request in place when the editor is created as already applied: the pane
-        /// keeps its last toolbar request while Source, Preview, split and tab changes rebuild the
-        /// editor, and running it again would edit the document the user is now looking at.
-        func acceptCurrentCommandRequest(_ request: MarkdownTextEditorCommandRequest?) {
-            guard let request else { return }
-            lastCommandSerial = request.serial
-        }
-
-        func apply(_ request: MarkdownTextEditorCommandRequest) {
-            guard request.serial != lastCommandSerial else { return }
-            lastCommandSerial = request.serial
-            _ = apply(request.command)
         }
 
         func apply(_ command: MarkdownTextEditorCommand) -> Bool {

@@ -515,28 +515,6 @@ final class WritingToolsLifecycleTests: FlowEditorTestCase {
         XCTAssertTrue(nativeReleased)
     }
 
-    func testWritingToolsDropsDeferredToolbarCommandInsteadOfApplyingItAfterEnd() async throws {
-        guard #available(macOS 15.0, *) else {
-            throw XCTSkip("Writing Tools requires macOS 15.")
-        }
-        let source = "Draft"
-        let box = EditorTextBox(source)
-        let coordinator = makeCoordinator(box)
-        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
-        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
-        let writingToolsReady = await prepareWritingTools(coordinator, textView: textView)
-        XCTAssertTrue(writingToolsReady)
-
-        coordinator.textViewWritingToolsWillBegin(textView)
-        let request = MarkdownTextEditorCommandRequest(serial: 1, command: .bold)
-        coordinator.apply(request)
-        coordinator.textViewWritingToolsDidEnd(textView)
-        coordinator.apply(request)
-
-        XCTAssertEqual(textView.string, source)
-        XCTAssertEqual(box.value, source)
-    }
-
     func testWritingToolsRejectsImageAndFileDropInsertionsCapturedBeforeItStarts() async throws {
         guard #available(macOS 15.0, *) else {
             throw XCTSkip("Writing Tools requires macOS 15.")

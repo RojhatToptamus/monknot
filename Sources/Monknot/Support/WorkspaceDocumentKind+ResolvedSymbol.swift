@@ -38,8 +38,6 @@ extension WorkspaceDocumentKind {
             return MonknotSFSymbol.resolve("photo", fallback: systemImage)
         case .media:
             return MonknotSFSymbol.resolve("play.rectangle", fallback: systemImage)
-        case .nativePreview:
-            return MonknotSFSymbol.resolve("doc.viewfinder", fallback: systemImage)
         case .unsupported:
             return systemImage
         }

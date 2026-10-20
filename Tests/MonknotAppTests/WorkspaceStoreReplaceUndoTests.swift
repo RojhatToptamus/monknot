@@ -102,6 +102,33 @@ final class WorkspaceStoreReplaceUndoTests: WorkspaceStoreTestCase {
         XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "beta only")
     }
 
+    /// Undo writes a note back only while it still holds what the replace wrote: a note edited
+    /// since (in the terminal, by git, by a sync client) keeps the edit, and the summary says so.
+    func testUndoLeavesANoteEditedSinceTheReplaceAlone() async throws {
+        let root = try makeTemporaryDirectory()
+        let first = root.appendingPathComponent("first.md")
+        let second = root.appendingPathComponent("second.md")
+        try "alpha beta".write(to: first, atomically: true, encoding: .utf8)
+        try "beta only".write(to: second, atomically: true, encoding: .utf8)
+        let store = makeWorkspaceStore()
+        store.openWorkspace(root)
+        let didLoad = await waitUntil { !store.isBusy && store.documents.count == 2 }
+        XCTAssertTrue(didLoad)
+        store.testing_stopFileWatcher()
+
+        store.replaceInWorkspace(find: "beta", replacement: "gamma")
+        let didReplace = await waitUntil { store.canUndoWorkspaceReplace && !store.isBusy }
+        XCTAssertTrue(didReplace)
+        try "gamma only, then edited in the terminal".write(to: second, atomically: true, encoding: .utf8)
+
+        store.undoLastWorkspaceReplace()
+        let didUndo = await waitUntil { !store.canUndoWorkspaceReplace && !store.isBusy }
+        XCTAssertTrue(didUndo)
+        XCTAssertEqual(try String(contentsOf: first, encoding: .utf8), "alpha beta")
+        XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "gamma only, then edited in the terminal")
+        XCTAssertEqual(store.workspaceReplaceSummary, "Undid replace in 1 file(s). Left 1 that changed since the replace.")
+    }
+
     func testSearchResultsScopeSkipsFilesOutsideResults() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -161,11 +188,7 @@ final class WorkspaceStoreReplaceUndoTests: WorkspaceStoreTestCase {
     }
 
     private func makeTemporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("monknot-store-replace-tests")
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+        try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotStoreReplace")
     }
 
     private func waitUntil(
