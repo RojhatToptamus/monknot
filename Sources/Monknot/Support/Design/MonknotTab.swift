@@ -113,8 +113,10 @@ struct MonknotTab: View {
         }
         .background { background }
         .fixedSize()
-        .opacity(isDragging ? 0.45 : 1)
+        // A dragged tab stays at 35 %, as a dragged sidebar row or Preview block does.
+        .monknotStateOpacity(isDragging ? 0.35 : 1)
         .onHover { isHovered = $0 }
+        .monknotPointerCursor(enabled: !isDisabled)
         .onChange(of: contextMenu.presentationID) { _, id in
             holdsContextMenu = id != nil && isHovered
         }

@@ -2391,6 +2391,8 @@
       target.querySelectorAll(".monknot-source-reveal").forEach((element) => {
         element.classList.remove("monknot-source-reveal");
       });
+      // Laid out without the class first, so a second jump to the same heading flashes again.
+      void targetElement.offsetWidth;
       targetElement.classList.add("monknot-source-reveal");
       window.setTimeout(() => {
         targetElement.classList.remove("monknot-source-reveal");

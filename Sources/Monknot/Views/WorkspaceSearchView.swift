@@ -369,7 +369,7 @@ struct WorkspaceSearchView: View {
                     theme: theme,
                     isAnimating: state.isSearching
                 )
-                .opacity(state.isSearching ? 1 : 0)
+                .monknotStateOpacity(state.isSearching ? 1 : 0)
                 .frame(width: scaled(MonknotMetrics.rowIconColumnWidthBase))
                 .accessibilityHidden(!state.isSearching)
 

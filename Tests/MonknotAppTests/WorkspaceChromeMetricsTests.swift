@@ -275,64 +275,66 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         }
     }
 
-    func testVisuallyExpansiveSymbolsShareTheOpticalPointSizeCeiling() {
-        let expansiveSymbols = [
-            "magnifyingglass",
-            "doc.text",
-            "doc.richtext",
-            "arrow.up.left.and.arrow.down.right",
-            "arrow.down.right.and.arrow.up.left",
+    /// Every picture in a list of glyphs reads at one optical size (design.md §8.2): the context
+    /// menu's, Preview's menus', the sidebar's and the bars' glyphs, each within half a point of the
+    /// target unless its column or the scale range holds it.
+    func testPicturesAreSizedToOneOpticalSize() throws {
+        let sets: [(CGFloat, [String])] = [
+            (15, MonknotMenuCommand.allCases.map(\.systemImage) + [
+                "doc.text", "doc.richtext", "photo", "play.rectangle", "folder", "gearshape", "terminal",
+                "list.bullet", "list.number", "checklist", "doc", "text.bubble", "text.quote", "tablecells",
+                "speaker.wave.2", "paperclip", "list.bullet.rectangle", "calendar", "face.smiling", "info.circle",
+                "lightbulb", "exclamationmark.bubble", "exclamationmark.triangle", "exclamationmark.octagon",
+            ]),
+            (17, ["sidebar.left", "sidebar.right", "square.and.pencil", "magnifyingglass", "terminal",
+                  "arrow.up.left.and.arrow.down.right", "arrow.uturn.backward", "highlighter", "pencil.tip",
+                  "eraser", "externaldrive.badge.checkmark", "curlybraces", "link"]),
+            (13, ["magnifyingglass", "trash", "doc.text"]),
         ]
-
-        for systemImage in expansiveSymbols {
-            XCTAssertEqual(
-                MonknotSymbolOptics.pointSizeBase(for: systemImage, nominal: 16),
-                14,
-                "\(systemImage) escaped the shared optical-size policy"
-            )
+        for (nominal, names) in sets {
+            let target = MonknotSymbolOptics.targetOpticalSize(nominal: nominal)
+            for name in Set(names) where MonknotSymbolOptics.markCeiling(for: name) == nil {
+                let metrics = try XCTUnwrap(SymbolInkMetrics.metrics(for: name), "\(name) was not measured")
+                let size = MonknotSymbolOptics.pointSizeBase(for: name, nominal: nominal)
+                let optical = metrics.opticalSizePerPoint * size
+                let longest = metrics.longestSidePerPoint * size
+                let heldByColumn = abs(longest - MonknotSymbolOptics.longestSide(nominal: nominal)) < 0.01
+                let heldByRange = abs(size - nominal * MonknotSymbolOptics.scaleRange.lowerBound) < 0.01
+                    || abs(size - nominal * MonknotSymbolOptics.scaleRange.upperBound) < 0.01
+                    || size < nominal * MonknotSymbolOptics.scaleRange.lowerBound
+                if !heldByColumn && !heldByRange {
+                    XCTAssertEqual(optical, target, accuracy: 0.5, "\(name) at \(nominal) reads \(optical), not \(target)")
+                }
+                XCTAssertLessThanOrEqual(longest, MonknotSymbolOptics.longestSide(nominal: nominal) + 0.01, "\(name) spills out of its column")
+            }
         }
-        // Open strokes span their whole box, so they are capped too (design.md §8.6).
+    }
+
+    /// The context menu's glyphs, which looked ragged at one point size, now span at most a point
+    /// and a half of optical size between the lightest and the heaviest.
+    func testTheContextMenusGlyphsReadAsOneSet() throws {
+        let sizes = try MonknotMenuCommand.allCases.map(\.systemImage)
+            .filter { MonknotSymbolOptics.markCeiling(for: $0) == nil }
+            .map { name -> CGFloat in
+                let metrics = try XCTUnwrap(SymbolInkMetrics.metrics(for: name))
+                return metrics.opticalSizePerPoint * MonknotSymbolOptics.pointSizeBase(for: name, nominal: 15)
+            }
+        XCTAssertLessThanOrEqual((sizes.max() ?? 0) - (sizes.min() ?? 0), 1.5, "\(sizes)")
+    }
+
+    /// Marks — open strokes and lettering — are not pictures and keep their nominal size or ceiling.
+    func testMarksKeepTheirNominalSize() {
         XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "plus", nominal: 17), 15)
         XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "xmark", nominal: 17), 14)
         XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "plus", nominal: 13), 13)
-        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "doc.text", nominal: 12), 12)
+        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "chevron.right", nominal: 11), 11)
+        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "bold", nominal: 17), 17)
+        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "ellipsis", nominal: 17), 17)
+        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "character.cursor.ibeam", nominal: 17), 12.5)
     }
 
-    func testSharedChromeOpticalProfilesCoverMeasuredOutliersOnly() {
-        let measuredCeilings: [String: CGFloat] = [
-            "character.cursor.ibeam": 12.5,
-            "curlybraces": 13,
-            "link": 13,
-            "play.rectangle": 13,
-            "magnifyingglass": 14,
-            "doc.text": 14,
-            "doc.richtext": 14,
-            "checklist": 14,
-            "text.quote": 14,
-            "photo": 12,
-            "arrow.up.left.and.arrow.down.right": 14,
-            "arrow.down.right.and.arrow.up.left": 14,
-            "sidebar.left": 15,
-            "sidebar.right": 15,
-            "plus": 15,
-            "xmark": 14,
-            "exclamationmark.triangle.fill": 13,
-        ]
-
-        for (systemImage, expectedCeiling) in measuredCeilings {
-            XCTAssertEqual(
-                MonknotSymbolOptics.maximumPointSizeBase(for: systemImage),
-                expectedCeiling,
-                "\(systemImage) lost its measured optical ceiling"
-            )
-        }
-
-        for systemImage in ["bold", "italic", "list.bullet", "folder", "terminal"] {
-            XCTAssertNil(
-                MonknotSymbolOptics.maximumPointSizeBase(for: systemImage),
-                "\(systemImage) should retain its nominal point size"
-            )
-        }
+    func testAnUnknownSymbolKeepsItsNominalSize() {
+        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "not.a.real.symbol.name", nominal: 15), 15)
     }
 
     func testSearchOpticalCorrectionPreservesTheControlGeometry() {
@@ -341,12 +343,12 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
 
         let size = MonknotIconButton.IconButtonSize.regular
         XCTAssertEqual(size.iconPointSizeBase, 17)
-        XCTAssertEqual(
+        XCTAssertLessThanOrEqual(
             MonknotSymbolOptics.pointSizeBase(
                 for: MonknotWorkspaceIcons.searchWorkspace,
                 nominal: size.iconPointSizeBase
             ),
-            14
+            size.iconPointSizeBase
         )
         XCTAssertEqual(
             size.dimension(theme: .defaultDark, zoomScale: 1),

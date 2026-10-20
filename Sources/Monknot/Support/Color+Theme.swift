@@ -40,14 +40,14 @@ extension AppTheme {
     /// Hairline borders on controls and cards. Surface tone carries region
     /// separation, so borders stay subtle.
     var borderColor: Color {
-        foregroundColor.opacity(isDark ? 0.09 : 0.12)
+        foregroundColor.opacity(lineInkOpacity)
     }
 
     /// Structural separators (region edges, chrome rules). Derived from the
     /// theme ink rather than pure white/black so it stays stable when the
     /// window is inactive.
     var separatorColor: Color {
-        foregroundColor.opacity(isDark ? 0.06 : 0.08)
+        foregroundColor.opacity(dividerInkOpacity)
     }
 
     /// The window chrome around the cards: titlebar, sidebar and the gaps between cards (design.md
@@ -121,7 +121,7 @@ extension AppTheme {
     /// design.md §1.2 `on`: a toggle that is on, such as a format in the format bar. Neutral, so an
     /// active control never spends the accent.
     var onFillColor: Color {
-        foregroundColor.opacity(isDark ? 0.17 : 0.12)
+        foregroundColor.opacity(onInkOpacity)
     }
 
     /// Shadow hue for floating surfaces (`AppTheme.floatingShadowHex`), as Preview's page casts them.

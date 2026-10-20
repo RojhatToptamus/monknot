@@ -5649,16 +5649,18 @@
     if (!wasVisible) {
       element.classList.remove("mk-animate");
       if (animate) {
-        void element.offsetWidth;
+        // Its start (0.97, transparent) is laid out before it becomes visible, so it grows from there.
         element.classList.add("mk-animate");
+        void element.offsetWidth;
       }
     }
     element.classList.add("mk-visible");
   }
 
+  /// Hides a floating surface: a 90 ms fade, never a shrink, as a context menu leaves.
   function hide(element) {
     if (!element) return;
-    element.classList.remove("mk-visible");
+    element.classList.remove("mk-visible", "mk-animate");
     element.classList.add("mk-hidden");
   }
 

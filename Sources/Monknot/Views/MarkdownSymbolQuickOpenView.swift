@@ -76,7 +76,8 @@ struct MarkdownSymbolQuickOpenView: View {
                 ? "Add a Markdown heading, then try again."
                 : "Try a shorter part of the heading name.",
             theme: theme,
-            zoomScale: zoomScale
+            zoomScale: zoomScale,
+            hover: state.select(index:)
         ) { item, isSelected in
             MonknotCommandOverlayRow(
                 leading: .tag("H\(item.level)"),

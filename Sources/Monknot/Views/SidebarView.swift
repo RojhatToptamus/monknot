@@ -1743,13 +1743,15 @@ private struct SidebarWorkspaceChevron: View {
             .monknotStateStyle(
                 !isEnabled
                     ? theme.disabledForegroundColor
-                    : (isHighlighted ? theme.mutedForegroundColor : theme.tertiaryForegroundColor)
+                    // A value control's chevron rests at `ink3` and goes to `ink` with its control
+                    // (design.md §5.3), as the label beside it does.
+                    : (isHighlighted ? theme.foregroundColor : theme.tertiaryForegroundColor)
             )
     }
 }
 
-/// The workspace's initial on an accent tile, as Linear marks a workspace (design.md §10.4): it gives
-/// the header an anchor and tells windows on different folders apart at a glance.
+/// The workspace's initial on an accent tile (design.md §10.4): it gives the header an anchor and
+/// tells windows on different folders apart at a glance.
 private struct SidebarWorkspaceMonogram: View {
     let name: String
     let isDisabled: Bool
@@ -1905,7 +1907,9 @@ private struct WorkspaceSwitcherRow: View {
                     }
                 }
             }
-            .buttonStyle(MonknotMenuRowButtonStyle(theme: theme, zoomScale: zoomScale, isSelected: isActive))
+            // The current workspace is marked by its accent `folder.fill` alone (design.md §1.3), so
+            // the one highlight is the pointer's.
+            .buttonStyle(MonknotMenuRowButtonStyle(theme: theme, zoomScale: zoomScale))
             .disabled(isBusy || isActive)
 
             // Crossfades with the shortcut, as a tab's close button does with its glyph.
@@ -2860,9 +2864,10 @@ private struct SidebarGroupHeaderLabel: View {
     }
 
     var body: some View {
+        // A group header rests at `ink3` and rises to `ink` under the pointer, as a row does.
         let ink = theme.sidebarColor(
             theme.foregroundColor,
-            opacity: isHighlighted ? theme.labelInkOpacity : theme.glyphInkOpacity
+            opacity: isHighlighted ? 1 : theme.glyphInkOpacity
         )
         HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
             MonknotDisclosureChevron(isExpanded: isExpanded, theme: theme, zoomScale: zoomScale)
@@ -2876,7 +2881,7 @@ private struct SidebarGroupHeaderLabel: View {
                 .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
                 .monospacedDigit()
         }
-        .foregroundStyle(ink)
+        .monknotStateStyle(ink)
         .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
         .frame(height: scaled(MonknotMetrics.rowHeightBase))
         .frame(maxWidth: .infinity, alignment: .leading)

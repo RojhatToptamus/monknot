@@ -161,8 +161,8 @@ struct MonknotCommandOverlaySeparator: View {
 }
 
 /// A result row: the editor's menu row at 34 (design.md §5.7), a glyph or short tag in the 18 column,
-/// the title, a 12 `ink3` detail and an optional trailing note. The row ↑↓ chose takes the `selected`
-/// fill and an `ink` glyph; the row under the pointer, the `hover` fill and an `ink` glyph.
+/// the title, a 12 `ink3` detail and an optional trailing note. The one highlight, which ↑↓ and the
+/// pointer both move, is the `selected` fill and an `ink` glyph.
 struct MonknotCommandOverlayRow: View {
     let leading: MonknotMenuRowLeading
     let title: String
@@ -206,7 +206,13 @@ struct MonknotCommandOverlayResults<Item: Identifiable, Row: View>: View {
     let emptyMessage: String
     let theme: AppTheme
     let zoomScale: Double
+    /// The pointer moved onto the row at this index: it takes the highlight, so the pointer and the
+    /// keys move one highlight (design.md §5.8).
+    var hover: ((Int) -> Void)?
     @ViewBuilder let row: (_ item: Item, _ isSelected: Bool) -> Row
+    /// Where the pointer was when it last moved the highlight. Rows scrolling under a pointer that
+    /// holds still (↓ at the bottom of the list) must not take the highlight from the keys.
+    @State private var lastPointer: CGPoint?
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
@@ -226,6 +232,13 @@ struct MonknotCommandOverlayResults<Item: Identifiable, Row: View>: View {
                     LazyVStack(alignment: .leading, spacing: MonknotCommandOverlayMetrics.rowGapBase) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                             row(item, index == selectedIndex)
+                                .onContinuousHover { phase in
+                                    guard case .active = phase, let hover else { return }
+                                    let pointer = NSEvent.mouseLocation
+                                    guard pointer != lastPointer else { return }
+                                    lastPointer = pointer
+                                    hover(index)
+                                }
                         }
                     }
                     .padding(scaled(MonknotMetrics.menuListInsetBase))

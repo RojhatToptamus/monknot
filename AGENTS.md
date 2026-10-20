@@ -453,6 +453,11 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
   on a non-key floating panel. Each window reports its theme and zoom with
   `MonknotContextMenuAppearance`. Text views, web views, PDFs, the player and value pop-ups keep the
   system's menu. The PDF bar's More (`MonknotMenuButton`) presents through the same controller.
+- Glyph sizes come from `MonknotSymbolOptics` (`Support/Design/MonknotMetrics.swift`): pictures are
+  sized by their measured ink (`SymbolInkMetrics`) to one optical size, marks (open strokes,
+  lettering) keep their nominal; never hand-pick a point size for one glyph (design.md §8.2). Every
+  menu draws one instant highlight for the pointer and the keys (`MonknotMenuRowButtonStyle`,
+  `MonknotCommandOverlayResults(hover:)`, design.md §5.6).
 - Moving files in the sidebar is `SidebarDragSession` (`Views/SidebarDrag.swift`) driven by the rows'
   drag gesture in `SidebarView`: the floating copy, Option, Esc, spring-loading, auto-scroll, the
   `accsoft` target region and landing tint, and the hand-off to a system file drag once the pointer

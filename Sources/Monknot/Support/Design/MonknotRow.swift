@@ -166,8 +166,9 @@ extension MonknotMenuRowLabel where Trailing == EmptyView {
     }
 }
 
-/// A menu row's fills: `selected` for the current or keyboard-chosen row, `press` while held and the
-/// `hover` (highlight) fill under the pointer, on the row's radius 8. Hovered or held, it tells
+/// A menu row's fills: the one highlight — the keyboard's row, or the row under the pointer — is the
+/// `selected` fill, `press` while held, on the row's radius 8, applied at once as the keys move it
+/// (design.md §5.8); a menu never trails the pointer. Highlighted or held, it tells
 /// `MonknotMenuRowLabel` to raise its glyph to `ink`.
 struct MonknotMenuRowButtonStyle: ButtonStyle {
     let theme: AppTheme
@@ -196,21 +197,22 @@ struct MonknotMenuRowButtonStyle: ButtonStyle {
                 .environment(\.monknotRowIsHighlighted, isEnabled && (isHovered || configuration.isPressed))
                 .background {
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .monknotStateStyle(fill)
+                        .fill(fill)
                 }
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
                 .onHover { isHovered = $0 }
-                .monknotPointerCursor(enabled: isEnabled)
         }
 
+        /// Menu rows keep the arrow, as the system's menus do.
         private var fill: Color {
-            MonknotListRowButtonStyle.fill(
-                theme: theme,
-                isSelected: isSelected,
-                isHovered: isHovered,
-                isPressed: configuration.isPressed,
-                isEnabled: isEnabled
-            )
+            if isSelected {
+                return theme.chromeSelectedFillColor
+            }
+            guard isEnabled else { return .clear }
+            if configuration.isPressed {
+                return theme.pressedFillColor
+            }
+            return isHovered ? theme.chromeSelectedFillColor : .clear
         }
     }
 }

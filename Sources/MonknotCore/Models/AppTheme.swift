@@ -385,6 +385,21 @@ public extension AppTheme {
         isDark ? 0.18 : 0.14
     }
 
+    /// `on`: a toggle that is on, such as a format in the format bar.
+    var onInkOpacity: Double {
+        isDark ? 0.17 : 0.12
+    }
+
+    /// `line`: a field's edge and Preview's divider. Dark runs lighter than light (design.md §1.2).
+    var lineInkOpacity: Double {
+        isDark ? 0.09 : 0.12
+    }
+
+    /// `line2`: dividers inside a container.
+    var dividerInkOpacity: Double {
+        isDark ? 0.06 : 0.08
+    }
+
     /// The fill of a floating surface — a menu, popover or the format bar (`surf2`).
     var floatingSurfaceHex: String {
         recessedSurfaceHex(amount: isDark ? 0.11 : 0.05)

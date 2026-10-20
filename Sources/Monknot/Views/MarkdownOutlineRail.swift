@@ -148,7 +148,9 @@ private struct MarkdownOutlineRailContent: View {
                         maximumHeight: max(0, proxy.size.height - scaled(24)),
                         select: select
                     )
-                    .transition(.opacity)
+                    // The card fades in and out over 120 ms, Reduce Motion or not; only the rail's
+                    // widening below is motion, which Reduce Motion drops.
+                    .transition(.opacity.animation(MonknotMotion.hoverAnimation))
                 }
 
                 markerRail
@@ -212,7 +214,7 @@ private struct MarkdownOutlineRailContent: View {
                 Spacer(minLength: 0)
 
                 Capsule()
-                    .fill(markerColor(isActive: isActive, isHighlighted: isHighlighted))
+                    .monknotStateStyle(markerColor(isActive: isActive, isHighlighted: isHighlighted))
                     .frame(
                         width: scaled(MarkdownOutlineRailLayout.markerWidth(
                             forHeadingLevel: item.level
@@ -278,6 +280,8 @@ private struct MarkdownOutlineHoverPanel: View {
     let width: CGFloat
     let maximumHeight: CGFloat
     let select: (MarkdownOutlineItem) -> Void
+    /// The row the pointer is on, which takes the one highlight from the rail's revealed heading.
+    @State private var hoveredRowID: String?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -352,7 +356,7 @@ private struct MarkdownOutlineHoverPanel: View {
     }
 
     private func outlineRow(for item: MarkdownOutlineItem, lineNumberWidthTemplate: String) -> some View {
-        let isRevealed = item.id == revealedItemID
+        let isRevealed = item.id == (hoveredRowID ?? revealedItemID)
 
         return Button {
             select(item)
@@ -373,6 +377,13 @@ private struct MarkdownOutlineHoverPanel: View {
             }
         }
         .buttonStyle(MonknotMenuRowButtonStyle(theme: theme, zoomScale: zoomScale, isSelected: isRevealed))
+        .onHover { inside in
+            if inside {
+                hoveredRowID = item.id
+            } else if hoveredRowID == item.id {
+                hoveredRowID = nil
+            }
+        }
         .help("\(item.title), line \(item.location.line)")
         .accessibilityLabel("Go to heading: \(item.title)")
         .accessibilityValue("Heading level \(item.level), line \(item.location.line)")

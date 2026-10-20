@@ -1657,12 +1657,67 @@ struct PDFNavigatorAnnotationItem {
     }
 }
 
-/// A navigator row's selection: the neutral `selected` fill in every state, inset from the list's
-/// edges, as a sidebar row keeps its selection when the window is in the background.
+/// A navigator row, the row primitive drawn in AppKit (design.md §0, §10.7a): the neutral `selected`
+/// fill in every state, as a sidebar row keeps its selection when the window is in the background;
+/// the `hover` fill under the pointer; its label at `ink2` at rest and `ink` hovered or selected.
 final class PDFNavigatorTableRowView: NSTableRowView {
     var themedSelectionColor = NSColor.selectedContentBackgroundColor
+    var themedHoverColor = NSColor.clear
+    var restingLabelColor = NSColor.secondaryLabelColor
+    var raisedLabelColor = NSColor.labelColor
     var selectionHorizontalInset: CGFloat = 4
     var selectionCornerRadius: CGFloat = 8
+    private var trackingArea: NSTrackingArea?
+    private(set) var isHovered = false {
+        didSet {
+            guard isHovered != oldValue else { return }
+            needsDisplay = true
+            updateLabelColors()
+        }
+    }
+
+    override var isSelected: Bool {
+        didSet { updateLabelColors() }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+    }
+
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        updateLabelColors()
+    }
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        super.drawBackground(in: dirtyRect)
+        guard isHovered, !isSelected else { return }
+        themedHoverColor.setFill()
+        NSBezierPath(
+            roundedRect: selectionDrawingRect,
+            xRadius: selectionCornerRadius,
+            yRadius: selectionCornerRadius
+        ).fill()
+    }
 
     override func drawSelection(in dirtyRect: NSRect) {
         guard selectionHighlightStyle != .none else { return }
@@ -1672,6 +1727,13 @@ final class PDFNavigatorTableRowView: NSTableRowView {
             xRadius: selectionCornerRadius,
             yRadius: selectionCornerRadius
         ).fill()
+    }
+
+    private func updateLabelColors() {
+        let color = isHovered || isSelected ? raisedLabelColor : restingLabelColor
+        for case let cell as NSTableCellView in subviews {
+            cell.textField?.textColor = color
+        }
     }
 
     var selectionDrawingRect: NSRect {
@@ -1719,6 +1781,9 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
     private(set) var foregroundColor = NSColor.labelColor
     private var mutedForegroundColor = NSColor.secondaryLabelColor
     private(set) var selectionColor = NSColor.selectedContentBackgroundColor
+    private var hoverColor = NSColor.clear
+    /// `ink2`, a navigator row's label at rest.
+    private var labelColor = NSColor.secondaryLabelColor
     private(set) var metrics = PDFNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1)
     private var appliedTheme: AppTheme?
 
@@ -1793,6 +1858,8 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         // the panel sits on the card's own surface (design.md §1.4, §10.7a).
         mutedForegroundColor = NSColor(theme.tertiaryForegroundColor)
         selectionColor = NSColor(theme.chromeSelectedFillColor)
+        hoverColor = NSColor(theme.hoverFillColor)
+        labelColor = NSColor(theme.mutedForegroundColor)
         wantsLayer = true
         layer?.backgroundColor = NSColor(hex: theme.background).cgColor
         headerHeightConstraint.constant = metrics.headerHeight
@@ -2202,7 +2269,7 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         let identifier = NSUserInterfaceItemIdentifier("PDFNavigatorOutlineCell")
         let cell = textCell(in: outlineView, identifier: identifier, maximumNumberOfLines: 1)
         cell.textField?.stringValue = (item as? PDFOutline)?.label ?? "Untitled section"
-        cell.textField?.textColor = foregroundColor
+        cell.textField?.textColor = labelColor
         cell.textField?.font = .systemFont(ofSize: metrics.outlineFontSize, weight: .regular)
         return cell
     }
@@ -2231,7 +2298,7 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         let identifier = NSUserInterfaceItemIdentifier("PDFNavigatorAnnotationCell")
         let cell = textCell(in: tableView, identifier: identifier, maximumNumberOfLines: 1)
         cell.textField?.stringValue = annotationItems[row].label
-        cell.textField?.textColor = foregroundColor
+        cell.textField?.textColor = labelColor
         cell.textField?.font = .systemFont(ofSize: metrics.annotationFontSize, weight: .regular)
         cell.textField?.setAccessibilityLabel(annotationItems[row].accessibilityLabel)
         return cell
@@ -2312,6 +2379,9 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
     private func themedRowView() -> NSTableRowView {
         let rowView = PDFNavigatorTableRowView()
         rowView.themedSelectionColor = selectionColor
+        rowView.themedHoverColor = hoverColor
+        rowView.restingLabelColor = labelColor
+        rowView.raisedLabelColor = foregroundColor
         rowView.selectionHorizontalInset = metrics.selectionHorizontalInset
         rowView.selectionCornerRadius = metrics.selectionCornerRadius
         return rowView

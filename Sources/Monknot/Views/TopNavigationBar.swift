@@ -93,7 +93,7 @@ struct TopNavigationBar: View {
                 isAnimating: isWorking
             )
                 .frame(width: scaled(MonknotMetrics.rowIconColumnWidthBase), height: scaled(MonknotMetrics.rowIconColumnWidthBase))
-                .opacity(isWorking ? 1 : 0)
+                .monknotStateOpacity(isWorking ? 1 : 0)
                 .accessibilityLabel("Working")
                 .accessibilityHidden(!isWorking)
 

@@ -338,7 +338,7 @@ li > ol {
   border: 1.5px solid color-mix(in srgb, var(--fg) 42%, transparent);
   border-radius: 0.25em;
   background: transparent center / 0.75em no-repeat;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out;
 }
 
 .task-list-item > input[type="checkbox"]:checked {
@@ -547,12 +547,22 @@ html.monknot-pdf-export body {
   scroll-margin-top: 24px;
 }
 
+/* The heading a jump landed on flashes the selection tint and lets it go over 900 ms, as a moved
+   block and a landed sidebar row do: a fill, never an outline (design.md §3, §11). */
 .monknot-source-reveal {
   border-radius: 8px;
-  outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
-  outline-offset: 6px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  transition: background 180ms ease, outline-color 180ms ease;
+  animation: monknot-source-reveal 900ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@keyframes monknot-source-reveal {
+  from {
+    background: color-mix(in srgb, var(--selection-bg) 70%, transparent);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--selection-bg) 70%, transparent);
+  }
+  to {
+    background: transparent;
+    box-shadow: 0 0 0 6px transparent;
+  }
 }
 
 /* Tables: hairline grid, a quietly filled header, no zebra rows. */

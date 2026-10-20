@@ -22,6 +22,7 @@ sections for what you are touching:
 | the window, a pane, a bar, the titlebar | §10.0–§10.7a |
 | Preview editing, its menus and surfaces | §10.10, §10.11 |
 | anything that moves | §11 |
+| hover, press, open, a menu's highlight, the cursor | §5.1, §5.6, §5.6a |
 | Settings | §12 |
 | words on screen | §13 |
 
@@ -418,7 +419,7 @@ themselves at `ink4`; nothing dims the bar.
 | Hover | `hover` fill, `ink` glyph |
 | Pressed | `press` fill |
 | On (format applied) | `on` fill (`fg` at 12 % light, 17 % dark), `ink` glyph. Preview's format bar uses it for bold, italic, strikethrough, code and link, so formatting never spends the accent, a format that is on never looks like the text selection under it, and the fill still reads on a 28 pt button where a menu row's `selected` fill disappears |
-| Open (its menu is showing) | `press` fill and `ink` glyph until the menu closes: the format bar's block selector, the table bar's Row and Column, the code language label, the PDF bar's More and Text Style, the sidebar header while the switcher is open. A callout's kind keeps its own tint at 12 % |
+| Open (its menu is showing) | `press` fill and `ink` glyph until the menu closes: the format bar's block selector, the table bar's Row and Column, the code language label, a block's grip while its block menu shows, the PDF bar's More and Text Style, a pop-up, the sidebar header while the switcher is open. A callout's title takes its own tint at 16 % |
 | Disabled | `ink4` glyph, no fill. No extra opacity on top. |
 
 **Search option exception.** Match Case and Match Whole Word are small buttons inside the search
@@ -443,7 +444,8 @@ Two heights, no third: **28 in bars and banners, 30 in sheets.** Padding-x 12, r
 - **Secondary** — `button2` fill, no border.
 - **Primary** — `accent` fill, `onaccent` label, no border.
 - **Destructive** — `danger` fill, white label.
-- **Quiet** — no fill, `ink2` label (`ink` on hover); actions inside a toast or a status line.
+- **Quiet** — no fill at rest, `ink2` label; the `hover` tint and `ink` under the pointer, as every
+  button; actions inside a toast or a status line.
 
 Disabled, a push button draws the `track` at half with an `ink4` label.
 
@@ -480,9 +482,33 @@ same control.
 
 ### 5.6 Hover timing
 
-120ms ease-out on **fill and foreground colour only** (`monknotStateStyle`, §11). Never animate
-size, position, elevation, border or weight. The hover fill covers the whole 28pt box, not an inset — an inset highlight makes the
-target look smaller than it is.
+120ms ease-out on **fill and foreground colour only** (`monknotStateStyle`, §11), in the chrome and
+on Preview's page alike (CSS `120ms ease-out`, never plain `ease`). Never animate size, position,
+elevation, border or weight: a pressed control fills with `press`, it never shrinks, on the page too.
+The hover fill covers the whole 28pt box, not an inset — an inset highlight makes the target look
+smaller than it is.
+
+**A menu's highlight is not a hover.** In every menu — a context menu, the switcher, the outline's
+panel, Quick Open and the other overlays, Preview's menus — the row under the pointer and the row the
+keys chose are **one highlight**: the `selected` fill and `ink`, applied at once, never faded, so it
+never trails the pointer (`MonknotMenuRowButtonStyle`, `MonknotCommandOverlayResults`). A row
+scrolling under a pointer that holds still does not take the highlight from the keys. A current item
+(the open workspace, the heading in view) is marked by its glyph or ink, never by a second fill.
+
+**Which state wins.** Disabled over everything; then selected (a selected row right-clicked keeps its
+selected fill); then press, or open while its menu shows; then on; then hover.
+
+**Chevrons on a value control** (a pop-up, the sidebar header, Preview's block selector) rest at
+`ink3` and go to `ink` with their control hovered, held or open. A callout's title shows its chevron
+only under the pointer or while its menu is open: at rest the callout reads as the document.
+
+### 5.6a Cursor
+
+The arrow by default. With Settings › General › Use pointer cursors on, every click target in the
+chrome and on Preview's page — buttons, tabs, rows, handles, the toggle's triangle, a callout's title,
+the code language label — shows the pointing hand (`monknotPointerCursor`, CSS
+`var(--interactive-cursor)`). Menu rows keep the arrow, as the system's menus do. Text keeps the
+I-beam; a draggable grip shows the open hand; ⌘ over a link shows the hand whatever the setting.
 
 ### 5.7 Other controls
 
@@ -624,23 +650,32 @@ size.
 - **Never `.frame(width:height:)` on the symbol itself** — it squashes glyphs whose aspect is not
   square.
 
-### 8.2 The two sizes
+### 8.2 The two sizes, measured
 
-- **Beside a label:** 15pt next to a 13pt label in the 18pt column, on sidebar rows, menu rows and
-  tabs alike, so a file reads the same in a tab, the sidebar and a menu.
-- **Alone in a button:** nominally 17pt in a 28pt button. Optical ceilings are measured from the
-  rendered symbol bounds: whole-word search is 12.5pt; `curlybraces`, `link` and `play.rectangle`
-  are 13pt; `magnifyingglass`, `checklist`, `text.quote`, document glyphs, and the diagonal
-  terminal arrows are 14pt; the two sidebar glyphs are 15pt; the open strokes (`plus`, back and
-  forward, New Markdown) and the PDF bar's tool, markup, history and Save glyphs 15pt, and `xmark`
-  14pt, which otherwise read largest in a bar; a filled warning triangle 13pt. Preview's editor glyphs follow the same
-  rule: `chevron.left.forwardslash.chevron.right` is 12pt; `textformat`, `speaker.wave.2` and
-  `list.bullet.rectangle` 13pt; `tablecells`, `text.bubble`, `face.smiling`, `calendar`,
-  Important's, Warning's and Caution's glyphs (Note's `info.circle` and Tip's `lightbulb` keep 15),
-  `arrow.triangle.2.circlepath`, `arrow.up.right.square`, `plus.square.on.square`,
-  `doc.on.doc`, `trash`, `pencil` and `link.badge.minus` 14pt. `photo` is sized for its ink weight
-  instead: its solid mountains and sun carry more ink than an outline, so at 12pt it matches its
-  neighbours. Other symbols retain the nominal size.
+- **Beside a label:** nominally 15pt next to a 13pt label in the 18pt column, on sidebar rows, menu
+  rows and tabs alike, so a file reads the same in a tab, the sidebar and a menu.
+- **Alone in a button:** nominally 17pt in a 28pt button, 13pt in a 22pt one.
+
+**A nominal size is not what a glyph draws.** At 15pt `pencil` draws an 11pt mark and
+`folder.badge.plus` a 20pt one, so a menu of glyphs at one point size reads ragged: some tiny, some
+big. Every picture is therefore sized by what it draws (`MonknotSymbolOptics`, `SymbolInkMetrics`):
+its ink box and density are measured once from the rendered symbol, and its point size is chosen so
+its **optical size** — the ink box's geometric mean, weighted a little by ink so a filled photo is
+set a touch smaller than an outline — is the same as its neighbours':
+
+- the target is 0.9 of the nominal, at most 14.5: **13.5 beside a label, 14.5 alone in a bar
+  button, 11.7 in a small one**;
+- its longest side stays inside its column, at most 16, even if that shrinks it further (a very
+  wide badge);
+- measuring moves a picture between 0.8 and 1.12 of its nominal, never further.
+
+**Marks are not pictures.** Open strokes and lettering keep their nominal size or the ceiling listed
+for them, because their extent, not their ink, is what reads: `plus`, back and forward 15 and `xmark`
+14 in a bar (an open stroke spans its whole box, so at the nominal it reads largest); whole-word
+search 12.5; `textformat` 13; `minus`, `ellipsis`, `checkmark`, the chevrons, single arrows and B I
+S at their nominal. Preview's editor glyphs come from the same function, so its menus and the
+chrome's are one set (`MarkdownEditorSymbolAssets`). `WorkspaceChromeMetricsTests` checks every
+picture in the menus, rows and bars lands on its target within half a point.
 
 Both scale by the zoom factor. Weight is `.regular` **everywhere** — `.medium` on a 15pt symbol
 reads as a different icon set two rows down.
@@ -917,6 +952,8 @@ a 10 badge for a pinned tab (`pin.fill`, `ink3`) or a file missing on disk (`dan
 - **Close:** a 9pt semibold `xmark` in a 16 round target, `ink2` → `ink` with the `hover` fill under
   the pointer. It takes the glyph's place while the pointer is over the tab, active or not, and VoiceOver reaches it as the tab's named action. A pinned tab has none. ⌘W closes the
   active tab.
+- **Reorder:** drag a tab along the strip: 4 pt starts the drag, as in the sidebar; the dragged tab
+  stays at 35 % (a 120 ms fade) and the others make room at once.
 - **Pinned:** sits left of the unpinned run and scrolls with everything else. Pinning is about order
   and session persistence, not about staying on screen.
 
@@ -1122,7 +1159,7 @@ that reports the mouse (vim, less, any full-screen program) scrolls as far per w
 The scroll bar is the shared thumb (§5.7) at its resting strength.
 
 The header order is session scroller → fullscreen → new session → close panel, set apart by space.
-Fullscreen is the regular button with the diagonal arrows (14 optical): they point out when docked
+Fullscreen is the regular button with the diagonal arrows (sized as a picture, §8.2): they point out when docked
 and in when expanded. The control temporarily covers the
 document area while leaving the titlebar and left sidebar in place. The
 document stays mounted, the terminal divider is disabled, and the button shows its state by its
@@ -1145,13 +1182,13 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 | Context menu | width 232, up to 320 · list inset 6 · row 30, 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · separator `line2` 4 inside the inset, 6 each side · no shortcuts · radius 12, `e2` |
 | Sidebar drag | start 4 · source row 35 % · copy 28 tall, ≤ 240, radius 8, `e2`, glyph and name · target region `accsoft`, radius 8 · auto-scroll zone one row, ≤ 12 rows/s · landing tint 900 ms |
 | Menus | popover 340 (switcher) · list inset 6 · row 30 (34 in an overlay), rows 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · detail 12 `ink3` · group header 12 `ink3` · separator `line2` 4 inside the inset · overlay header 44, footer 32 |
-| Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with an 11 `chevron.down`; a callout's title the same 11 `chevron.down` · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink3` keys, submenu chevron 11, at most 380 tall; a menu of plain names (languages) has no glyph column · handles: + 22×24 and grip 18×24, the + a 16 × 16 glyph and the grip 10 × 16 (§8.9), radius 6, 1 apart, `ink3` at rest and `hover` fill with `ink2` on hover, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
+| Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with an 11 `chevron.down`; a callout's title the same 11 `chevron.down` · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink3` keys, submenu chevron 11, at most 380 tall; a menu of plain names (languages) has no glyph column · handles: + 22×24 and grip 18×24, the + a 16 × 16 glyph and the grip 10 × 16 (§8.9), radius 6, 1 apart, `ink3` at rest, `hover` fill with `ink` on hover, `press` and `ink` held or while the block menu shows, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
 | Terminal | the bar (40) · session tabs 28, hugging glyph + number · Expand, New, Hide 28/17 |
 | PDF | the bar (40): navigator 28/17, page count 12 tabular · undo, redo · modes segmented · markup actions · style pop-up · zoom pop-up · save with the unsaved dot · navigator: header 40, segmented 28, rows 28, 14 per level |
 | Elsewhere | field 28 · push button 28 bars / 30 sheets · small icon button 22/13 · toggle 32×18, knob 14 · stepper 28 · slider track 4 / knob 16 · colour well 44×22 · overlay row 34 · Settings row ≥ 40, padding 12 × 8 · outline dash 24/20/16/13/10/8 × 2.5 (3 at 1×), capsule |
 
-**Hard ceilings.** No chrome glyph over 17. No square button over 28. No row over 34. The only glyphs
-above 17 anywhere are empty-state illustrations at 34, which are not controls.
+**Hard ceilings.** No chrome glyph draws more than 16 on its longest side (§8.2). No square button over 28. No row over 34. The only larger
+glyphs anywhere are empty-state illustrations at 34, which are not controls.
 
 ### 10.7a PDF and image bar
 
@@ -1380,12 +1417,13 @@ assistance on, Preview offers its own completion instead; Source never shows the
 the table menus, the format bar after a mouse selection) grows in from its trigger: scale 0.97 → 1
 with opacity over 150 ms, `cubic-bezier(0.23, 1, 0.32, 1)`, origin at the side that faces the anchor.
 A surface the keyboard opens (the slash and wikilink menus, ⌘/, ⌘K) appears at once — typing is
-never made to wait for an animation. Everything leaves in 90 ms. Handles fade 120 ms; the toggle
-triangle turns in 120 ms ease-out, as a sidebar chevron does; a pressed button or handle scales to 0.96. Only transform and
-opacity animate, with one exception shared with Source: the mark on a fix just applied rises and
+never made to wait for an animation. Everything leaves in a 90 ms fade, never a shrink, as a context
+menu does. Handles fade 120 ms; the toggle triangle turns in 120 ms ease-out, as a sidebar chevron
+does; a pressed button or handle fills with `press` and keeps its size. Only transform, opacity and
+the 120 ms state colours animate, with one exception shared with Source: the mark on a fix just applied rises and
 settles over a second, and words a completion inserts fade from a tint over 520 ms (a dead key or input
 method used meanwhile takes the tint off at once, and nothing drawn changes while it composes). With Reduce Motion
-nothing scales, entrances are a 120 ms fade, the moved-block flash is off, and a fix's mark holds still
+nothing scales, entrances are a 120 ms ease-out fade, the moved-block flash is off, and a fix's mark holds still
 at its settled strength. Nothing animates while typing.
 
 
@@ -1456,6 +1494,10 @@ in reverse, however it is closed.
   document card takes back what they give up, so no edge moves as they change.
 - **Context menus** grow in from the pointer over 150 ms and leave in 90 ms (§5.8); a sidebar drag's
   copy glides back over 250 ms on Esc, and a landed row lets go of its tint over 900 ms (§10.4).
+- **Marks that come and go fade over 120 ms**: a working spinner, a search's spinner, the outline's
+  panel (Reduce Motion keeps the fade and drops only the rail's widening). A dragged tab, sidebar row
+  or Preview block fades to 35 % and back. The heading a jump lands on flashes the selection tint and
+  lets it go over 900 ms, as a moved block and a landed row do — a fill, never an outline.
 - **fadeUp** for toasts: in from 4pt below over 120ms and back out the same way, whether they time
   out or are closed. The outline's panel fades in beside its rail over 120ms. Palettes and overlays
   (Quick Open, Go to Symbol, Go to Line, Keyboard Shortcuts) appear and leave at once: they are
@@ -1612,7 +1654,8 @@ Before calling any UI work done:
 - [ ] Every bar below the titlebar is 40 with items 2 apart and groups 8 apart, and no rule.
 - [ ] One scroll thumb (§5.7) on every surface: check documents with "Show scroll bars: Always",
       where WebKit would otherwise draw its own 17pt bar.
-- [ ] No chrome glyph over 17. No square button over 28 (§10.7).
+- [ ] No chrome glyph draws more than 16 on its longest side; pictures sized by `MonknotSymbolOptics`,
+      never a hand-picked point size (§8.2). No square button over 28 (§10.7).
 - [ ] Every metric derives from the workspace zoom through `MonknotMetrics` (§9.3). No `.scaleEffect`.
       Nothing clamped but the UI-font factor.
 - [ ] Hairlines, shadows and focus rings do not scale.
@@ -1633,6 +1676,10 @@ Before calling any UI work done:
       only text, media and value pop-ups keep the system's.
 - [ ] A drag shows where it lands with a fill (`accsoft`), never an outline; Esc and a drop on no
       target return the item; the result is shown where it landed.
+- [ ] Every menu has one highlight, moved by the pointer and the keys, at once (§5.6); a current item
+      is a glyph or ink, not a second fill.
+- [ ] Every state of a control you touched — rest, hover, press, open, on, selected, disabled — is
+      the shared component's, and fades 120 ms ease-out on the page as in the chrome.
 
 ---
 
@@ -1682,3 +1729,8 @@ symptom, so they are worth checking deliberately rather than hoping to notice.
 18. **The system's menu in the chrome** — a native context menu beside Monknot's rows reads as a
     second app, and shows shortcuts that act on something else. Build it from `MonknotMenuCommand`
     and let `MonknotContextMenuController` draw it (§5.8).
+19. **Glyphs at one point size** — SF Symbols fill their boxes very differently, so a list of glyphs
+    at one size reads tiny here, big there. Pictures are sized by what they draw
+    (`MonknotSymbolOptics`, §8.2); never fix one glyph with a hand-picked point size.
+20. **Two highlights in one menu** — a hover fill beside the keyboard's row, or a current item with
+    its own fill: the eye cannot tell which row ↩ will choose. One highlight (§5.6).

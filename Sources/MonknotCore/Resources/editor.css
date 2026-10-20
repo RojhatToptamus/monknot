@@ -10,11 +10,8 @@
   --mk-ink3: color-mix(in srgb, var(--fg) 50%, transparent);
   --mk-ink4: color-mix(in srgb, var(--fg) 30%, transparent);
   --mk-placeholder: var(--mk-ink4);
-  --mk-line: color-mix(in srgb, var(--fg) 12%, transparent);
-  --mk-line2: color-mix(in srgb, var(--fg) 8%, transparent);
-  /* A format that is on, in the format bar: a fill that reads at a glance on a 28 pt button. */
-  --mk-on: color-mix(in srgb, var(--fg) 12%, transparent);
   /* The app sends the fills (--mk-hover, --mk-press and --mk-highlight, a highlighted menu row's,
+     --mk-on, a format that is on, and the hairlines --mk-line and --mk-line2,
      neutral so it never reads as a second text selection), a focused field's ring (--mk-accsoft) and
      the floating surfaces' fill, shadow hue and ring (--mk-floating, --mk-shadow-hue, --mk-ring): the
      values its own chrome uses (MarkdownRenderService, design.md §1.2, §2.1). */
@@ -26,9 +23,6 @@
 }
 
 :root[data-theme="dark"] {
-  --mk-line: color-mix(in srgb, var(--fg) 9%, transparent);
-  --mk-line2: color-mix(in srgb, var(--fg) 6%, transparent);
-  --mk-on: color-mix(in srgb, var(--fg) 17%, transparent);
   --mk-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.34);
 }
 
@@ -155,8 +149,8 @@
   border-radius: calc(6px * var(--mk-z));
   background: transparent;
   color: var(--mk-ink3);
-  cursor: default;
-  transition: background-color 120ms ease, color 120ms ease;
+  cursor: var(--interactive-cursor, default);
+  transition: background-color 120ms ease-out, color 120ms ease-out;
 }
 
 .mk-editing .mk-toggle-arrow::before {
@@ -167,7 +161,7 @@
   border-bottom: 0.3em solid transparent;
   border-left: 0.44em solid currentColor;
   transform: translateX(0.06em);
-  transition: transform 120ms var(--mk-ease-out);
+  transition: transform 120ms ease-out;
 }
 
 .mk-editing .mk-toggle[data-open="true"] > .mk-toggle-head > .mk-toggle-arrow::before {
@@ -176,6 +170,11 @@
 
 .mk-editing .mk-toggle-arrow:hover {
   background: var(--mk-hover);
+  color: var(--mk-ink);
+}
+
+.mk-editing .mk-toggle-arrow:active {
+  background: var(--mk-press);
   color: var(--mk-ink);
 }
 
@@ -203,9 +202,9 @@
   margin-left: -0.3em;
   padding: 0 0.3em;
   border-radius: calc(6px * var(--mk-z));
-  cursor: default;
+  cursor: var(--interactive-cursor, default);
   user-select: none;
-  transition: background-color 120ms ease;
+  transition: background-color 120ms ease-out;
 }
 
 /* Its menu's chevron.down, as the format bar's block selector draws it beside its label: the app's
@@ -218,15 +217,23 @@
   -webkit-mask: var(--mk-chevron-down, linear-gradient(transparent, transparent)) center / contain no-repeat;
   mask: var(--mk-chevron-down, linear-gradient(transparent, transparent)) center / contain no-repeat;
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity 120ms ease-out;
 }
 
 .mk-editing .callout-title:hover {
   background: color-mix(in srgb, var(--callout-tint) 10%, transparent);
 }
 
-.mk-editing .callout-title:hover::after {
-  opacity: 0.8;
+.mk-editing .callout-title:active,
+.mk-editing .callout-title.mk-open {
+  background: color-mix(in srgb, var(--callout-tint) 16%, transparent);
+}
+
+/* The chevron shows with the pointer, at the title's own ink, as a handle does: at rest the callout
+   reads as the document, not as a control. */
+.mk-editing .callout-title:hover::after,
+.mk-editing .callout-title.mk-open::after {
+  opacity: 1;
 }
 
 .mk-editing .callout > .callout-title + * {
@@ -241,7 +248,7 @@
 
 .mk-editing nav.toc a,
 .mk-editing nav.toc a:hover {
-  cursor: pointer;
+  cursor: var(--interactive-cursor, default);
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--fg) 22%, transparent);
 }
@@ -314,8 +321,8 @@
   background: transparent;
   color: var(--mk-ink3);
   font: 400 calc(12px * var(--mk-tz)) / 1 var(--ui-font);
-  cursor: default;
-  transition: background-color 120ms ease, color 120ms ease;
+  cursor: var(--interactive-cursor, default);
+  transition: background-color 120ms ease-out, color 120ms ease-out;
 }
 
 .mk-editing .mk-code-language:hover {
@@ -374,7 +381,7 @@
 /* The block being dragged stays in place, faded, until it is dropped. */
 .mk-editing .mk-block-dragging {
   opacity: 0.35;
-  transition: opacity 120ms ease;
+  transition: opacity 120ms ease-out;
 }
 
 .mk-editing.mk-dragging,
@@ -403,14 +410,14 @@
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transition: opacity 120ms ease, visibility 0s linear 120ms;
+  transition: opacity 120ms ease-out, visibility 0s linear 120ms;
 }
 
 .mk-handles.mk-visible {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
-  transition: opacity 120ms ease, visibility 0s;
+  transition: opacity 120ms ease-out, visibility 0s;
 }
 
 .mk-handle {
@@ -425,19 +432,19 @@
   border-radius: calc(6px * var(--mk-z));
   background: transparent;
   color: var(--mk-ink3);
-  cursor: default;
-  transition: background-color 120ms ease, color 120ms ease, transform 120ms var(--mk-ease-out);
+  cursor: var(--interactive-cursor, default);
+  transition: background-color 120ms ease-out, color 120ms ease-out;
 }
 
-.mk-handle:hover,
-.mk-handle.mk-on {
+.mk-handle:hover {
   background: var(--mk-hover);
-  color: var(--mk-ink2);
+  color: var(--mk-ink);
 }
 
-.mk-handle:active {
+.mk-handle:active,
+.mk-handle.mk-on {
   background: var(--mk-press);
-  transform: scale(0.96);
+  color: var(--mk-ink);
 }
 
 .mk-handle-drag {
@@ -481,13 +488,13 @@
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transition: opacity 100ms ease, visibility 0s linear 100ms;
+  transition: opacity 120ms ease-out, visibility 0s linear 120ms;
 }
 
 .mk-tooltip.mk-visible {
   opacity: 1;
   visibility: visible;
-  transition: opacity 100ms ease, visibility 0s;
+  transition: opacity 120ms ease-out, visibility 0s;
 }
 
 .mk-tooltip strong {
@@ -564,14 +571,20 @@
   box-shadow: inset 0 0 0 1px var(--mk-ring), var(--mk-shadow);
   opacity: 0;
   visibility: hidden;
-  transform: scale(0.97);
-  transition: opacity 90ms ease-out, transform 90ms ease-out, visibility 0s linear 90ms;
+  transform: none;
+  transition: opacity 90ms ease-out, visibility 0s linear 90ms;
 }
 
 .mk-floating.mk-visible {
   opacity: 1;
   visibility: visible;
   transform: none;
+  transition: none;
+}
+
+/* Grown from its trigger when the pointer opened it: scale 0.97 → 1 with opacity over 150 ms. */
+.mk-floating.mk-animate:not(.mk-visible) {
+  transform: scale(0.97);
   transition: none;
 }
 
@@ -595,23 +608,11 @@
   }
 
   .mk-floating.mk-visible.mk-animate {
-    transition: opacity 120ms linear, visibility 0s;
+    transition: opacity 120ms ease-out, visibility 0s;
   }
 
   .mk-editing .mk-toggle-arrow::before {
     transition: none;
-  }
-
-  /* A pressed button or handle keeps its size; its fill and ink still fade. (The layer's prefix
-     outranks the buttons' own rules below.) */
-  .mk-layer .mk-handle,
-  .mk-layer .mk-tool {
-    transition: background-color 120ms ease, color 120ms ease;
-  }
-
-  .mk-layer .mk-handle:active,
-  .mk-layer .mk-tool:active {
-    transform: none;
   }
 
   .mk-editing .mk-block-moved {
@@ -873,8 +874,8 @@
   /* An icon button rests at ink3 (design.md §5.1); a menu button's word at ink2 (.mk-tool-menu). */
   color: var(--mk-ink3);
   font: inherit;
-  cursor: default;
-  transition: background-color 120ms ease, color 120ms ease, transform 120ms var(--mk-ease-out);
+  cursor: var(--interactive-cursor, default);
+  transition: background-color 120ms ease-out, color 120ms ease-out;
 }
 
 .mk-tool:hover {
@@ -884,7 +885,7 @@
 
 .mk-tool:active {
   background: var(--mk-press);
-  transform: scale(0.96);
+  color: var(--mk-ink);
 }
 
 /* A format that is on: filled, glyph at full ink (design.md §5.1 "On"). */
@@ -892,6 +893,11 @@
 .mk-tool.mk-on:hover {
   background: var(--mk-on);
   color: var(--mk-ink);
+}
+
+/* Held, any button draws press, an on one too, as the chrome's do. */
+.mk-tool.mk-on:active {
+  background: var(--mk-press);
 }
 
 /* A control whose menu is open keeps its pressed fill until the menu closes. */
@@ -981,7 +987,7 @@
   background: var(--bg);
   color: var(--mk-ink);
   font: 400 calc(13px * var(--mk-tz)) / 1 var(--ui-font);
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
 }
 
 /* Focused, an accent hairline and a 3 pt accsoft ring, as View.monknotField draws it (design.md §5.7). */

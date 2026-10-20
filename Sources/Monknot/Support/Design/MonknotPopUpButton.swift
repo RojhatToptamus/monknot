@@ -44,6 +44,7 @@ struct MonknotPopUpButton<Value: View>: View {
     @State private var isMenuPresented = false
     @State private var previewedSelection: String?
     @State private var isHovered = false
+    @State private var isPressed = false
     @FocusState private var isFocused: Bool
     @Environment(\.isEnabled) private var isEnabled
 
@@ -55,7 +56,7 @@ struct MonknotPopUpButton<Value: View>: View {
                 theme: theme,
                 zoomScale: zoomScale,
                 isHovered: isHovered,
-                isOpen: isMenuPresented,
+                isOpen: isMenuPresented || isPressed,
                 leadingPaddingBase: leadingPaddingBase
             ) {
                 value(previewedSelection ?? selection)
@@ -68,7 +69,8 @@ struct MonknotPopUpButton<Value: View>: View {
                 theme: theme
             )
         }
-        .buttonStyle(.plain)
+        // Held, it draws `press`, as it does while its menu is open (design.md §5.1).
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
         .focusable(isEnabled && NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
@@ -155,7 +157,11 @@ struct MonknotPopUpLabel<Value: View>: View {
                     size: MonknotMetrics.interfaceGlyph(MonknotMetrics.chevronPointSizeBase, theme: theme, zoomScale: zoomScale),
                     weight: .semibold
                 ))
-                .monknotStateStyle(isEnabled ? theme.tertiaryForegroundColor : theme.disabledForegroundColor)
+                // `ink3` at rest, `ink` with its control hovered or open (design.md §5.3).
+                .monknotStateStyle(
+                    !isEnabled ? theme.disabledForegroundColor
+                        : (isHovered || isOpen) ? theme.foregroundColor : theme.tertiaryForegroundColor
+                )
                 .accessibilityHidden(true)
         }
         .padding(.leading, MonknotMetrics.interfaceDensity(leadingPaddingBase, theme: theme, zoomScale: zoomScale))

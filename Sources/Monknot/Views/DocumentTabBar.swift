@@ -247,7 +247,8 @@ private struct DocumentTabStripContent: View {
     }
 
     private func tabDragGesture(for tab: WorkspaceTabItem) -> some Gesture {
-        DragGesture(minimumDistance: scaled(5), coordinateSpace: .named(Self.coordinateSpaceName))
+        // 4 pt starts a drag, as in the sidebar (design.md §10.4).
+        DragGesture(minimumDistance: scaled(4), coordinateSpace: .named(Self.coordinateSpaceName))
             .onChanged { value in
                 guard !isDisabled, tabs.count > 1 else { return }
                 draggedDocumentID = tab.documentID
