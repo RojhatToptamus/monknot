@@ -288,7 +288,7 @@ struct MonknotPopoverSurface: View {
                 fill: theme.elevatedSurfaceColor,
                 theme: theme
             )
-            .scaleEffect(model.isShown || reduceMotion ? 1 : 0.97, anchor: model.growAnchor)
+            .scaleEffect(model.isShown || reduceMotion ? 1 : MonknotMotion.surfaceEntranceScale, anchor: model.growAnchor)
             .opacity(model.isShown ? 1 : 0)
             .padding(MonknotPopoverController.shadowMargin)
             .environment(\.colorScheme, theme.isDark ? .dark : .light)
@@ -481,11 +481,7 @@ final class MonknotPopoverController {
         } else {
             DispatchQueue.main.async { [weak model] in
                 guard let model else { return }
-                withAnimation(
-                    reduceMotion
-                        ? .easeOut(duration: MonknotMotion.hoverDuration)
-                        : .timingCurve(0.23, 1, 0.32, 1, duration: MonknotContextMenuController.entranceDuration)
-                ) {
+                withAnimation(MonknotMotion.surfaceEntrance(reduceMotion: reduceMotion)) {
                     model.isShown = true
                 }
             }

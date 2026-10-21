@@ -19,6 +19,7 @@ sections for what you are touching:
 | a control: button, tab, row, field, menu, pop-up, segmented control | §0, §4, §5, §6, §7, §8 |
 | a right-click menu, or dragging files in the sidebar | §5.8, §10.4 (Moving files), §11 |
 | a popover: the switcher, Stroke Width, Text Style | §5.9, §2, §11 |
+| the outline rail and its panel | §10.5, §5.6, §9.6, §11 |
 | anything that changes size with zoom | §9 |
 | the window, a pane, a bar, the titlebar | §10.0–§10.7a |
 | Preview editing, its menus and surfaces | §10.10, §10.11 |
@@ -225,7 +226,8 @@ Accent marks state, in exactly these places:
 4. The workspace monogram in the sidebar header — the window's identity — and the current workspace's
    `folder.fill` in the switcher
 5. A search match option that is on
-6. The outline rail's current heading
+6. The outline's current heading: its mark on the rail, and the same mark at its row's end in the
+   panel
 7. Where a drag in the sidebar will land, and the row that just landed: `accsoft` (§10.4)
 
 Controls use it only for focus (a focused field's hairline, the keyboard ring) and for on or primary
@@ -267,7 +269,7 @@ Assign the class first; the treatment follows mechanically.
 | **Frame** | titlebar, sidebar, the gaps around and between cards | the `chrome` tone, no line at all: the cards' edges are the seams. **Never a shadow.** |
 | **Card** | the document, the terminal, a Settings page | `surface` on `chrome`, radius 12, a `cardring` hairline. **Never a shadow.** |
 | **Contained** | fields | `e1`: the `line` hairline, nothing else, both modes. **Never a shadow.** Settings' groups are a `track` fill with no edge (§12). |
-| **Floating** | menus, popovers, toasts, peek cards, sheets, windows | shadow **in both modes** — a shadow is what says *dismissible*. |
+| **Floating** | menus, popovers, toasts, the outline's panel, sheets, windows | shadow **in both modes** — a shadow is what says *dismissible*. |
 
 A sidebar is not hovering above the canvas, so a shadow under it is a lie the eye catches
 immediately.
@@ -514,7 +516,9 @@ smaller than it is.
 **A menu's highlight is not a hover.** In every menu — a context menu, the switcher, the outline's
 panel, Quick Open and the other overlays, Preview's menus — the row under the pointer and the row the
 keys chose are **one highlight**: the `selected` fill and `ink`, applied at once, never faded, so it
-never trails the pointer (`MonknotMenuRowButtonStyle`, `MonknotCommandOverlayResults`). In a popover's
+never trails the pointer (`MonknotMenuRowButtonStyle`, `MonknotCommandOverlayResults`). The outline
+rail's highlighted mark is the same highlight: whichever of the rail's marks and the panel's rows the
+pointer or the keys moved last, its mark and its row show it together (§10.5). In a popover's
 list the row with keyboard focus (Full Keyboard Access) is that highlight too: the list owns it
 (`MonknotPopoverListModel`) and its rows draw only that (`MonknotMenuRowButtonStyle(isHighlighted:)`),
 so whichever moved last — the keys, the pointer or Tab — has it, and a row the pointer rests on never
@@ -716,9 +720,9 @@ other and the whole interface reads as miscalibrated.
 | **2** | A mark rather than a container: Preview's drop line, a writing-assistance mark. |
 | **6** | Small controls and nested cells: the 22 icon button, a segment, a key cap, a swatch, Preview's block handles, its code-language label and tooltip, the workspace monogram. |
 | **8** | Every standalone control, no exception: the 28 icon button, push button, pop-up, field, tab chip, sidebar row, list row, badge, segmented track, popover row, stepper. |
-| **12** | Container **and** floating layer: the document, terminal and Settings cards, grouped lists, popovers, menus, toasts, peek card. Same value on purpose — they are one structural tier, and giving a menu a different radius than the card it visually replaces makes it look imported. |
+| **12** | Container **and** floating layer: the document, terminal and Settings cards, grouped lists, popovers, menus, toasts, the outline's panel. Same value on purpose — they are one structural tier, and giving a menu a different radius than the card it visually replaces makes it look imported. |
 | **16** | Sheet: modals, dialogs, full overlay panels. The only radius that reads as "in front of everything". |
-| **capsule** | Toggle track, any pill, the outline rail's dashes, scroll thumbs; a circle for a dot. A capsule is a *shape*, not a radius — never write half the height as a number, it breaks silently when the height changes. |
+| **capsule** | Toggle track, any pill, the outline rail's marks, scroll thumbs; a circle for a dot. A capsule is a *shape*, not a radius — never write half the height as a number, it breaks silently when the height changes. |
 
 **Nesting: child = parent − 4, floor 6.** A 16 sheet holds 12 cards which hold 8 rows which hold 6
 cells. Never nest equal radii — concentric corners at the same value look like a rendering error —
@@ -824,8 +828,8 @@ against `ink3` at rest it reads as a rendering bug.
 
 Only two cases, plus marks drawn in the document:
 
-1. **Outline rail dashes** — not glyphs at all: `Capsule()` shapes 2.5 thick (3 at 1×); no symbol
-   encodes heading depth.
+1. **Outline rail marks** — not glyphs at all: `Capsule()` shapes 2 thick; no symbol encodes heading
+   depth.
 2. **Block handles' + and grip** — drawn to match each other in weight: the + a 1.5pt cross 9 long
    with round caps in a 16 box, the grip six 2.6pt dots in two columns of three in a 10 × 16 box (SF
    Symbols has no 2×3 grid), both `ink3` at rest. They are masks, so they take the handle's ink.
@@ -895,9 +899,10 @@ judge everything else.
 
 ### 9.6 Outline rail under zoom
 
-Rail width (38), dash slot (11, 1 apart), dash widths 24 / 20 / 16 / 13 / 10 / 8 for h1–h6 and dash
-thickness (2.5, 3 at 1×) all scale. The peek card scales as a normal surface. One dash per heading,
-evenly spaced; when the headings do not fit, the rail scrolls to keep the current one in view.
+Every number in §10.5 scales: the rail's 38 column, its 12 slots and their 4 floor, its 380 bound,
+the marks' lengths and their 2 thickness, and the panel's width, rows and bound. A slot shrunk to fit
+is not rounded, so a long outline keeps its 380; the marks inside it are still whole points thick.
+At 2.0 the 380 bound is 760, which most cards cut to their height less 12 above and below.
 
 ### 9.7 Floor, and the PDF exception
 
@@ -1224,13 +1229,44 @@ the button beeps rather than doing nothing.
 
 ### 10.5 Outline rail
 
-A right-edge dash rail, always present, no toolbar button. Dash width encodes heading level: **24 /
-20 / 16 / 13 / 10 / 8** for h1–h6, 2.5 thick (3 at 1×), capsules. Current section is `accent`, others
-`ink3`.
+A column of marks at the document's right edge, one per heading, and a panel of the headings beside
+it while the pointer or the keys are on it (`MarkdownOutlineRail`). Present whenever a Markdown
+document has two headings or more and Settings › Editor › Content mapper is on; no toolbar button.
+In a long document it stays a compact column, so the page shows around it and every heading can
+still be pointed at.
 
-Hover reveals a soft hit target plus a floating peek card (228 wide, radius 12, `e2`), fading in over
-120 ms. One dash per heading, evenly spaced; when they do not fit, the rail scrolls to keep the
-current heading's dash in view.
+- **The rail:** a 38 column, 10 clear of the document's scroll lane, centred on the card. One slot
+  per heading, **12** tall; past **380** tall (a pop-up's bound, §5.8) the slots shrink so the rail
+  stays 380, down to **4**; past that the rail runs the card's height less 12 above and below, and the
+  slots share it. It never scrolls: every heading keeps a slot on screen. Only the column itself takes
+  the pointer; the card above, below and beside it keeps its clicks.
+- **Marks:** capsules **2** thick, trailing edges together, **16 / 12 / 9 / 6** long by depth below the
+  document's shallowest heading (a document that starts at `##` draws those 16). `ink3` at rest; the
+  current section `accent`; the highlighted heading `ink` and **24** long, at once (§5.6).
+- **The panel:** the context menu's surface (`surf2`, radius 12, `e2`, the 6 list inset), 8 left of
+  the rail and centred on it, never closer than 12 to the card's top or bottom. **232** wide; a longer
+  title widens it, up to **320**, and never past the card. As tall as its rows, at most **380**; past
+  that it scrolls under the chrome lists' thumb (§5.7). No header and no line numbers: the rail says
+  what it is, and Go to Symbol (⇧⌘O) has the line numbers.
+- **Rows:** menu rows 30, 1 apart, 13 `ink` labels, 14 per depth up to three, truncated with the full
+  title and its line on hover. The highlighted heading is the one highlight. The current section
+  carries the rail's accent mark, 12 × 2, at its row's end, in a slot every row keeps so the mark never
+  moves a title: marked by its mark, never a second fill (§5.6).
+- **Opening:** the pointer's mark answers at once; the panel opens once the pointer has stayed on the
+  rail **200 ms**, so crossing the rail on the way to the scroll bar opens nothing. It grows in from
+  the rail as a menu does (§11). Full Keyboard Access focus on a mark opens it at once.
+- **Scrolling:** the panel opens with its highlighted heading centred, never showing its top first.
+  Moving along the rail, or the keys, moves the highlight and keeps it in view with the least scroll,
+  6 clear of the panel's edge, at once, so it never trails the pointer
+  (`MarkdownOutlinePanelScroller`); the thumb shows while it moves. The pointer's own row in the panel
+  takes the highlight and never scrolls the list.
+- **Choosing and closing:** a click on a mark or a row jumps to its heading and the panel stays while
+  the pointer is on it. Leaving the rail and the panel closes it after 100 ms, so the trip from one to
+  the other never does, in a 90 ms fade; the rail goes back to rest at once.
+- **Keys:** with Full Keyboard Access, Tab moves through the marks and Space jumps; the panel's rows
+  are not in the key loop, so focus never lands on a row that leaves with the panel.
+- **VoiceOver** reads the rail as "Document outline", each mark as "Go to heading: …" with its level
+  and line, and the current section as selected.
 
 ### 10.6 Terminal panel
 
@@ -1278,13 +1314,14 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 | Bar | 40 · padding 6 (10 for a header over a list) · 28 controls 2 apart, groups 8 apart · no rule (terminal, PDF, panel headers, banners) |
 | Sidebar | width 240 (196 minimum) · header 40: monogram 18 (radius 6, initial 10.5/600), name 13/600, chevron 10, search and New Markdown 28/17 · row 28 · padding-x 8 · disclosure chevron 10 or file glyph 15 in the 18 column · gap 8 · label 13/400 · indent 14 · list inset 10, top 4 · no gap between rows · Recents header: chevron, group header, count 12 · footer 28 |
 | Context menu | width 232, up to 320 (at least its control's) · list inset 6 · row 30, 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · separator `line2` 4 inside the inset, 6 each side · no shortcuts · radius 12, `e2` · a control's menu 4 below it · a pop-up's check 11 `ink2` at the row's end, its values at most 380 tall, then scrolling under the 4 / 6 thumb in a 9 lane |
+| Outline | rail 38, 10 from the scroll lane, centred · slot 12, shrinking to keep it ≤ 380, never under 4 · marks 2 thick, 16 / 12 / 9 / 6 by depth, 24 highlighted · panel 8 left of the rail, 232 – 320 wide, ≤ 380 tall, the 6 inset, rows 30, 14 per depth, current mark 12 × 2 · opens after 200 ms on the rail, closes 100 ms after the pointer leaves |
 | Popover | `surf2`, radius 12, `e2`, no arrow · 4 below its control (above where the screen ends) · list: the 6 inset, 6 outside its control · form: padding 12, rows 10 apart, controls 8 apart · switcher 340, Stroke Width 210, Text Style 248 |
 | Sidebar drag | start 4 · source row 35 % · copy 28 tall, ≤ 240, radius 8, `e2`, glyph and name · target region `accsoft`, radius 8 · auto-scroll zone one row, ≤ 12 rows/s · landing tint 900 ms |
 | Menus | list inset 6 · row 30 (34 in an overlay), rows 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · detail 12 `ink3` · group header 12 `ink3` · separator `line2` 4 inside the inset · overlay header 44, footer 32 |
 | Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with an 11 `chevron.down`; a callout's title the same 11 `chevron.down` · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink3` keys, submenu chevron 11, at most 380 tall; a menu of plain names (languages) has no glyph column · handles: + 22×24 and grip 18×24, the + a 16 × 16 glyph and the grip 10 × 16 (§8.9), radius 6, 1 apart, `ink3` at rest, `hover` fill with `ink` on hover, `press` and `ink` held or while the block menu shows, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
 | Terminal | the bar (40) · session tabs 28, hugging glyph + number · Expand, New, Hide 28/17 |
 | PDF | the bar (40): navigator 28/17, page count 12 tabular · undo, redo · modes segmented · markup actions · style pop-up · zoom pop-up · save with the unsaved dot · navigator: header 40, segmented 28, rows 28, 14 per level |
-| Elsewhere | field 28 · push button 28 bars / 30 sheets · small icon button 22/13 · toggle 32×18, knob 14 · stepper 28 · slider track 4 / knob 16 · colour well 44×22 · overlay row 34 · Settings row ≥ 40, padding 12 × 8 · outline dash 24/20/16/13/10/8 × 2.5 (3 at 1×), capsule |
+| Elsewhere | field 28 · push button 28 bars / 30 sheets · small icon button 22/13 · toggle 32×18, knob 14 · stepper 28 · slider track 4 / knob 16 · colour well 44×22 · overlay row 34 · Settings row ≥ 40, padding 12 × 8 |
 
 **Hard ceilings.** No chrome glyph draws more than 16 on its longest side (§8.2). No square button over 28. No row over 34. The only larger
 glyphs anywhere are empty-state illustrations at 34, which are not controls.
@@ -1569,8 +1606,8 @@ in reverse, however it is closed.
   `monknotStateStyle` and `monknotStateOpacity` (`MonknotMotion.swift`), or `.animation(_:body:)`
   around the one modifier. A control never takes `.animation(_:value:)`, which animates everything
   in it that changes in the same update, frames included: a chevron whose folder opens as its list
-  lays out drew one row lower and slid back. `MonknotMotionContractTests` keeps it out; the outline
-  rail's widening is the one exception.
+  lays out drew one row lower and slid back. `MonknotMotionContractTests` keeps it out, with no
+  exception: the outline's panel floats beside its rail, so opening it moves nothing else.
 - **250ms ease-in-ease-out** for every pane movement, from the toolbar, the menu or the keyboard
   alike: AppKit's own split-view transition, opening and closing alike. As the sidebar or terminal
   shows or hides, the pane's content keeps its open width and slides under the window edge, so rows
@@ -1591,23 +1628,25 @@ in reverse, however it is closed.
   and it returns exactly where it was with nothing settling after. While the document is collapsed
   the split halves its dividers, so the two that meet beside the sidebar still make one gap; the
   document card takes back what they give up, so no edge moves as they change.
-- **Context menus and popovers** grow in over 150 ms, a menu from the pointer and a popover from its
-  control, and leave in 90 ms (§5.8, §5.9); a popover opened from the keyboard appears at once; a sidebar drag's
-  copy glides back over 250 ms on Esc, and a landed row lets go of its tint over 900 ms (§10.4).
-- **Marks that come and go fade over 120 ms**: a working spinner, a search's spinner, the outline's
-  panel (Reduce Motion keeps the fade and drops only the rail's widening). A dragged tab, sidebar row
-  or Preview block fades to 35 % and back. The heading a jump lands on flashes the selection tint and
+- **Context menus, popovers and the outline's panel** grow in over 150 ms, a menu from the pointer, a
+  popover from its control and the outline's panel from its rail, and leave in 90 ms (§5.8, §5.9,
+  §10.5), on one timing (`MonknotMotion.surfaceEntrance`, `surfaceExit`); one opened from the keyboard
+  appears at once; a sidebar drag's copy glides back over 250 ms on Esc, and a landed row lets go of
+  its tint over 900 ms (§10.4).
+- **Marks that come and go fade over 120 ms**: a working spinner, a search's spinner. A dragged tab,
+  sidebar row or Preview block fades to 35 % and back. The heading a jump lands on flashes the selection tint and
   lets it go over 900 ms, as a moved block and a landed row do — a fill, never an outline.
 - **fadeUp** for toasts: in from 4pt below over 120ms and back out the same way, whether they time
-  out or are closed. The outline's panel fades in beside its rail over 120ms. Palettes and overlays
-  (Quick Open, Go to Symbol, Go to Line, Keyboard Shortcuts) appear and leave at once: they are
-  opened from the keyboard, and typing never waits for an animation. Preview's editing surfaces
+  out or are closed. Palettes and overlays (Quick Open, Go to Symbol, Go to Line, Keyboard
+  Shortcuts) appear and leave at once: they are opened from the keyboard, and typing never waits for
+  an animation. Preview's editing surfaces
   have their own rule (§10.10): grown from the trigger when the pointer opens them, instant from the
   keyboard.
 - Never animate size, position, elevation, border or weight except for the pane transitions above,
-  a switch's knob, the outline rail's widening, the toast's 4 pt rise, a disclosure chevron's turn,
-  Preview's grow-in (§10.10), a context menu's and a popover's grow-in (§5.8, §5.9) and a dragged row's copy
-  gliding back (§10.4).
+  a switch's knob, the toast's 4 pt rise, a disclosure chevron's turn, Preview's grow-in (§10.10), a
+  context menu's, a popover's and the outline panel's grow-in (§5.8, §5.9, §10.5) and a dragged row's
+  copy gliding back (§10.4). The outline rail's marks change length and ink at once, as a highlight
+  does; nothing on the rail animates, and the panel's list scrolls to its heading at once.
 - Honour Reduce Motion: entrances become plain fades, side panes show and hide instantly, chevrons
   and switch knobs jump; colour transitions stay.
 
@@ -1782,6 +1821,9 @@ Before calling any UI work done:
       target return the item; the result is shown where it landed.
 - [ ] Every menu has one highlight, moved by the pointer and the keys, at once (§5.6); a current item
       is a glyph or ink, not a second fill.
+- [ ] A long list never covers the page: the outline rail stays a bounded column whose every heading
+      can be pointed at, and its panel and every menu stop at 380 and scroll, keeping the highlighted
+      row in view (§10.5).
 - [ ] Every state of a control you touched — rest, hover, press, open, on, selected, disabled — is
       the shared component's, and fades 120 ms ease-out on the page as in the chrome.
 
@@ -1841,3 +1883,7 @@ symptom, so they are worth checking deliberately rather than hoping to notice.
     its own fill: the eye cannot tell which row ↩ will choose. One highlight (§5.6).
 21. **The system's popover in the chrome** — an arrow, a material and a spring beside Monknot's menus
     read as a second app. Attach `View.monknotPopover` (§5.9).
+22. **A navigator that grows with the document** — a rail of marks or a list of headings as tall as
+    the outline is long: in a long document it covers the page, and the headings past its end can only
+    be reached by scrolling it first. Bound it, shrink the slots, and scroll a bounded list with its
+    highlight kept in view (§10.5).

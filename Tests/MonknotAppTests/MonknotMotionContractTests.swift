@@ -7,11 +7,9 @@ import XCTest
 /// chevron that jumped as its folder opened. Controls use `monknotStateStyle` and
 /// `monknotStateOpacity`, or `.animation(_:body:)` for one property.
 final class MonknotMotionContractTests: XCTestCase {
-    /// Views whose value-keyed animation moves a frame on purpose, with why.
-    private let allowed: [String: String] = [
-        // The rail widens to show its panel; nothing else in it changes with the hover.
-        "Sources/Monknot/Views/MarkdownOutlineRail.swift": "outline panel",
-    ]
+    /// Views whose value-keyed animation moves a frame on purpose, with why. None: the outline's
+    /// panel, the last one, now floats beside its rail and only its own transition moves.
+    private let allowed: [String: String] = [:]
 
     func testNoViewAnimatesItsWholeSubtreeWhenAStateChanges() throws {
         let root = URL(fileURLWithPath: #filePath)

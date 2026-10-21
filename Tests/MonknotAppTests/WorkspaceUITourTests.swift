@@ -81,6 +81,8 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             Stop(name: "32-dirty-tab-latte", tabs: ["Roadmap.md", "todo.txt"], themeID: "catppuccin-latte", edits: true),
             Stop(name: "33-long-preview-latte", layout: .init(showsSidebar: true, showsTerminal: true), document: "Long notes.md", themeID: "catppuccin-latte"),
             Stop(name: "34-long-source-latte", mode: .source, layout: .init(showsSidebar: true, showsTerminal: true), document: "Long notes.md", themeID: "catppuccin-latte"),
+            // A long outline in a full-height card: the rail stays a bounded column (design.md §10.5).
+            Stop(name: "35-long-preview-mocha", theme: .dark, document: "Long notes.md", themeID: "catppuccin-mocha"),
         ]
         let filters = only?.split(separator: "|").map(String.init)
         let settingsStops: [(section: String, theme: ThemePreference)] = [

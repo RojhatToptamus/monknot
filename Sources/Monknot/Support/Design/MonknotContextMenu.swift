@@ -402,7 +402,7 @@ struct MonknotContextMenuSurface: View {
             fill: theme.elevatedSurfaceColor,
             theme: theme
         )
-        .scaleEffect(model.isShown || reduceMotion ? 1 : 0.97, anchor: anchor)
+        .scaleEffect(model.isShown || reduceMotion ? 1 : MonknotMotion.surfaceEntranceScale, anchor: anchor)
         .opacity(model.isShown ? 1 : 0)
         .accessibilityHidden(true)
     }
@@ -626,8 +626,8 @@ final class MonknotContextMenuController: ObservableObject {
     /// How far beyond the surface its shadow reaches; the panel is this much larger on every side.
     static let shadowMargin: CGFloat = 32
     /// How long the menu takes to grow in, and to leave (design.md §10.10).
-    static let entranceDuration: Double = 0.15
-    static let exitDuration: Double = 0.09
+    static let entranceDuration = MonknotMotion.surfaceEntranceDuration
+    static let exitDuration = MonknotMotion.surfaceExitDuration
     /// A press held this long before its button comes up away from the menu closes the menu.
     static let pressAndHoldInterval: TimeInterval = 0.5
     /// The press that opened the menu chooses the row it comes up over only after this long: a
@@ -1000,11 +1000,7 @@ final class MonknotContextMenuController: ObservableObject {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         DispatchQueue.main.async { [weak model] in
             guard let model else { return }
-            withAnimation(
-                reduceMotion
-                    ? .easeOut(duration: MonknotMotion.hoverDuration)
-                    : .timingCurve(0.23, 1, 0.32, 1, duration: Self.entranceDuration)
-            ) {
+            withAnimation(MonknotMotion.surfaceEntrance(reduceMotion: reduceMotion)) {
                 model.isShown = true
             }
         }

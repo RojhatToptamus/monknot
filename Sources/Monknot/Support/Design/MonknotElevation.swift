@@ -2,10 +2,10 @@ import MonknotCore
 import SwiftUI
 
 /// design.md §2.1: the two elevations a floating surface can take. A floating surface (menu, popover,
-/// toast, peek card, sheet, overlay) casts in both appearances, because a shadow is what says
+/// toast, the outline's panel, sheet, overlay) casts in both appearances, because a shadow is what says
 /// "dismissible"; docked and resting surfaces never cast.
 enum MonknotElevation {
-    /// Popovers, menus, toasts, peek cards.
+    /// Popovers, menus, toasts, the outline's panel.
     case e2
     /// Sheets and full overlay panels.
     case e3

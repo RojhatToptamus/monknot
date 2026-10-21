@@ -86,42 +86,31 @@ final class MarkdownPresentationTokenTests: XCTestCase {
             1
         )
         XCTAssertNil(MarkdownOutlineRailLayout.activeIndex(forVisibleLine: 1, items: []))
-        XCTAssertEqual(MarkdownOutlineRailLayout.leadingIndent(forHeadingLevel: 1), 0)
-        XCTAssertEqual(MarkdownOutlineRailLayout.leadingIndent(forHeadingLevel: 3), 14)
-        XCTAssertEqual(MarkdownOutlineRailLayout.leadingIndent(forHeadingLevel: 8), 35)
-        XCTAssertEqual(MarkdownOutlineRailLayout.markerWidth(forHeadingLevel: 1), 24)
-        XCTAssertEqual(MarkdownOutlineRailLayout.markerWidth(forHeadingLevel: 3), 16)
-        XCTAssertEqual(MarkdownOutlineRailLayout.markerWidth(forHeadingLevel: 8), 8)
-        XCTAssertNil(
-            MarkdownOutlineRailLayout.revealAnchor,
+        // Depth counts from the document's shallowest heading and stops at three.
+        XCTAssertEqual(MarkdownOutlineRailLayout.depth(forHeadingLevel: 1, shallowestLevel: 1), 0)
+        XCTAssertEqual(MarkdownOutlineRailLayout.depth(forHeadingLevel: 2, shallowestLevel: 2), 0)
+        XCTAssertEqual(MarkdownOutlineRailLayout.depth(forHeadingLevel: 3, shallowestLevel: 1), 2)
+        XCTAssertEqual(MarkdownOutlineRailLayout.depth(forHeadingLevel: 8, shallowestLevel: 1), 3)
+        XCTAssertEqual(MarkdownOutlineRailLayout.leadingIndentBase(forDepth: 0), 0)
+        XCTAssertEqual(MarkdownOutlineRailLayout.leadingIndentBase(forDepth: 2), 28)
+        XCTAssertEqual(MarkdownOutlineRailLayout.leadingIndentBase(forDepth: 9), 42)
+        XCTAssertEqual(MarkdownOutlineRailLayout.markLengthBase(forDepth: 0), 16)
+        XCTAssertEqual(MarkdownOutlineRailLayout.markLengthBase(forDepth: 2), 9)
+        XCTAssertEqual(MarkdownOutlineRailLayout.markLengthBase(forDepth: 7), 6)
+        XCTAssertEqual(
+            MarkdownOutlineRailLayout.scrollOffset(
+                revealing: 400...430,
+                from: 0,
+                viewportHeight: 380,
+                contentHeight: 1_000,
+                margin: 6,
+                centred: false
+            ),
+            56,
             "Outline reveals should scroll only enough to make the heading visible"
         )
         XCTAssertNotNil(MonknotMotion.stateMotion(reduceMotion: false))
         XCTAssertNil(MonknotMotion.stateMotion(reduceMotion: true))
-        XCTAssertEqual(
-            MarkdownOutlineRailLayout.revealTargetID(
-                hoveredItemID: "hovered",
-                focusedItemID: "focused",
-                activeItemID: "active"
-            ),
-            "hovered"
-        )
-        XCTAssertEqual(
-            MarkdownOutlineRailLayout.revealTargetID(
-                hoveredItemID: nil,
-                focusedItemID: "focused",
-                activeItemID: "active"
-            ),
-            "focused"
-        )
-        XCTAssertEqual(
-            MarkdownOutlineRailLayout.revealTargetID(
-                hoveredItemID: nil,
-                focusedItemID: nil,
-                activeItemID: "active"
-            ),
-            "active"
-        )
     }
 
     func testMarkdownSyntaxTokenizerCoversEveryReferenceAccent() {

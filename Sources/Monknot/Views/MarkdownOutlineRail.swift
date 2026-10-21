@@ -1,9 +1,42 @@
+import AppKit
 import MonknotCore
 import SwiftUI
 
+/// The outline rail's and its panel's geometry (design.md §10.5, §9.6). Every length is a base at
+/// zoom 1, scaled through `MonknotMetrics.interfaceDensity`.
 enum MarkdownOutlineRailLayout {
-    /// A nil anchor asks SwiftUI to move only enough to reveal the target.
-    static let revealAnchor: UnitPoint? = nil
+    /// The rail's column, and how far it stays from the document's scroll lane.
+    static let railWidthBase: CGFloat = 38
+    static let edgeInsetBase: CGFloat = 10
+    /// How far left of the rail the panel sits.
+    static let panelGapBase: CGFloat = 8
+    /// The rail and the panel stay this far inside the card's top and bottom.
+    static let cardMarginBase: CGFloat = 12
+    /// One slot per heading, shrinking to keep the rail within `maximumHeightBase`; never under the
+    /// minimum while the card has room for it.
+    static let markPitchBase: CGFloat = 12
+    static let minimumMarkPitchBase: CGFloat = 4
+    static let markThicknessBase: CGFloat = 2
+    /// A mark's length by its depth below the document's shallowest heading. The highlighted
+    /// heading's mark reaches out to `highlightedMarkLengthBase`.
+    static let markLengthBases: [CGFloat] = [16, 12, 9, 6]
+    static let highlightedMarkLengthBase: CGFloat = 24
+    /// Indentation stops at this depth, so a deep heading keeps its title in view.
+    static let maximumDepth = 3
+    /// The rail and the panel are at most as tall as a pop-up's values (design.md §5.8).
+    static let maximumHeightBase = MonknotContextMenuLayout.valueMenuMaximumHeightBase
+    /// The panel is as wide as a context menu: 232, widened by a long title up to 320.
+    static let panelMinimumWidthBase = MonknotContextMenuLayout.minimumWidthBase
+    static let panelMaximumWidthBase = MonknotContextMenuLayout.maximumWidthBase
+    /// The current section's mark at the end of its row, in a slot every row keeps so the mark
+    /// never moves a title.
+    static let currentMarkLengthBase: CGFloat = 12
+    /// The pointer stays on the rail this long before the panel opens, so crossing the rail on the
+    /// way to the scroll bar opens nothing.
+    static let openDelay: TimeInterval = 0.2
+    /// Leaving the rail and the panel closes it after this long, so the trip from one to the other
+    /// never does.
+    static let closeGrace: TimeInterval = 0.1
 
     static func activeIndex(
         forVisibleLine visibleLine: Int,
@@ -13,27 +46,296 @@ enum MarkdownOutlineRailLayout {
         return items.lastIndex(where: { $0.location.line <= visibleLine }) ?? 0
     }
 
-    static func leadingIndent(forHeadingLevel level: Int) -> CGFloat {
-        CGFloat(max(0, min(5, level - 1))) * 7
+    /// How far below the document's shallowest heading a heading sits, up to `maximumDepth`: a
+    /// document that starts at `##` draws its `##` headings flush.
+    static func depth(forHeadingLevel level: Int, shallowestLevel: Int) -> Int {
+        max(0, min(maximumDepth, level - shallowestLevel))
     }
 
-    static func markerWidth(forHeadingLevel level: Int) -> CGFloat {
-        switch max(1, min(6, level)) {
-        case 1: 24
-        case 2: 20
-        case 3: 16
-        case 4: 13
-        case 5: 10
-        default: 8
+    /// A panel row's indent: the sidebar's 14 per depth.
+    static func leadingIndentBase(forDepth depth: Int) -> CGFloat {
+        CGFloat(max(0, min(maximumDepth, depth))) * MonknotMetrics.rowIndentBase
+    }
+
+    static func markLengthBase(forDepth depth: Int) -> CGFloat {
+        markLengthBases[max(0, min(markLengthBases.count - 1, depth))]
+    }
+
+    /// The rail: a slot per heading, the slots as tall as fits.
+    struct Rail: Equatable {
+        let pitch: CGFloat
+        let count: Int
+        let markThickness: CGFloat
+
+        var height: CGFloat {
+            pitch * CGFloat(count)
+        }
+
+        /// The heading whose slot holds `y`, measured from the rail's top.
+        func index(atY y: CGFloat) -> Int? {
+            guard count > 0, pitch > 0 else { return nil }
+            return min(count - 1, max(0, Int((y / pitch).rounded(.down))))
         }
     }
 
-    static func revealTargetID(
-        hoveredItemID: String?,
-        focusedItemID: String?,
-        activeItemID: String?
-    ) -> String? {
-        hoveredItemID ?? focusedItemID ?? activeItemID
+    /// Every heading keeps a slot on screen, so any of them can be pointed at without the rail
+    /// scrolling: 12 per heading up to 380 tall, then the slots shrink to fit, to 4; past that the
+    /// rail runs the card's height and the slots share it.
+    static func rail(count: Int, availableHeight: CGFloat, theme: AppTheme, zoomScale: Double) -> Rail {
+        func density(_ base: CGFloat) -> CGFloat {
+            MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+        }
+        let thickness = density(markThicknessBase)
+        guard count > 0 else { return Rail(pitch: 0, count: 0, markThickness: thickness) }
+        let usable = max(0, availableHeight - 2 * density(cardMarginBase))
+        let headings = CGFloat(count)
+        var pitch = min(density(markPitchBase), min(density(maximumHeightBase), usable) / headings)
+        if pitch < density(minimumMarkPitchBase) {
+            pitch = min(density(minimumMarkPitchBase), usable / headings)
+        }
+        // Marks closer than a point apart would touch; past that they thin rather than merge.
+        return Rail(pitch: pitch, count: count, markThickness: max(1, min(thickness, pitch - 1)))
+    }
+
+    /// The panel's rows, 1 apart, inside the 6 list inset.
+    static func panelContentHeight(rowCount: Int, theme: AppTheme, zoomScale: Double) -> CGFloat {
+        let inset = MonknotMetrics.interfaceDensity(MonknotMetrics.menuListInsetBase, theme: theme, zoomScale: zoomScale)
+        guard rowCount > 0 else { return 2 * inset }
+        let rowHeight = MonknotMetrics.interfaceDensity(MonknotMetrics.menuRowHeightBase, theme: theme, zoomScale: zoomScale)
+        return CGFloat(rowCount) * rowHeight + CGFloat(rowCount - 1) + 2 * inset
+    }
+
+    /// As tall as its rows, at most 380 and never past the card's margins; beyond that it scrolls.
+    static func panelHeight(rowCount: Int, availableHeight: CGFloat, theme: AppTheme, zoomScale: Double) -> CGFloat {
+        let margin = MonknotMetrics.interfaceDensity(cardMarginBase, theme: theme, zoomScale: zoomScale)
+        let bound = min(
+            MonknotMetrics.interfaceDensity(maximumHeightBase, theme: theme, zoomScale: zoomScale),
+            max(0, availableHeight - 2 * margin)
+        )
+        return min(panelContentHeight(rowCount: rowCount, theme: theme, zoomScale: zoomScale), bound)
+    }
+
+    /// Row `index`'s top and bottom in the panel's content.
+    static func panelRowSpan(index: Int, theme: AppTheme, zoomScale: Double) -> ClosedRange<CGFloat> {
+        let inset = MonknotMetrics.interfaceDensity(MonknotMetrics.menuListInsetBase, theme: theme, zoomScale: zoomScale)
+        let rowHeight = MonknotMetrics.interfaceDensity(MonknotMetrics.menuRowHeightBase, theme: theme, zoomScale: zoomScale)
+        let top = inset + CGFloat(index) * (rowHeight + 1)
+        return top...(top + rowHeight)
+    }
+
+    /// 232 wide, a longer title widening it up to 320, and never wider than the card leaves beside
+    /// the rail. `widestRow` is the widest row's leading padding, indent and title.
+    static func panelWidth(widestRow: CGFloat, availableWidth: CGFloat, theme: AppTheme, zoomScale: Double) -> CGFloat {
+        func density(_ base: CGFloat) -> CGFloat {
+            MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+        }
+        // After the title, the menu row's 8 spacer and its trailing slot, 10 apart, and its trailing
+        // padding (`MonknotMenuRowLabel`).
+        let natural = 2 * density(MonknotMetrics.menuListInsetBase)
+            + widestRow
+            + density(MonknotMetrics.menuRowPaddingBase)
+            + 2 * density(MonknotMetrics.menuRowGlyphGapBase)
+            + density(8)
+            + density(currentMarkLengthBase)
+        let width = min(max(density(panelMinimumWidthBase), natural), density(panelMaximumWidthBase))
+        let room = availableWidth - density(edgeInsetBase) - density(railWidthBase) - density(panelGapBase) - density(cardMarginBase)
+        return max(0, min(width, room))
+    }
+
+    /// The list's offset from its top that shows `row` (its span in the content): centred when the
+    /// panel opens, otherwise the least scroll that brings it `margin` clear of the panel's edge.
+    static func scrollOffset(
+        revealing row: ClosedRange<CGFloat>,
+        from current: CGFloat,
+        viewportHeight: CGFloat,
+        contentHeight: CGFloat,
+        margin: CGFloat,
+        centred: Bool
+    ) -> CGFloat {
+        let maximum = max(0, contentHeight - viewportHeight)
+        let target: CGFloat
+        if centred {
+            target = (row.lowerBound + row.upperBound) / 2 - viewportHeight / 2
+        } else if row.lowerBound - margin < current {
+            target = row.lowerBound - margin
+        } else if row.upperBound + margin > current + viewportHeight {
+            target = row.upperBound + margin - viewportHeight
+        } else {
+            target = current
+        }
+        return min(max(0, target), maximum)
+    }
+}
+
+/// The headings with what the rail and its panel draw for each, worked out once per outline, theme
+/// and zoom rather than on every scroll tick.
+struct MarkdownOutlineRailOutline: Equatable {
+    let items: [MarkdownOutlineItem]
+    let depths: [Int]
+    /// The widest row's leading padding, indent and title, which size the panel.
+    let widestRow: CGFloat
+
+    init(items: [MarkdownOutlineItem], theme: AppTheme, zoomScale: Double) {
+        self.items = items
+        let shallowest = items.map(\.level).min() ?? 1
+        let depths = items.map {
+            MarkdownOutlineRailLayout.depth(forHeadingLevel: $0.level, shallowestLevel: shallowest)
+        }
+        self.depths = depths
+        let font = NSFont.systemFont(ofSize: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale))
+        // The row rounds its padding and indent as one length, so they are measured as one here.
+        widestRow = zip(items, depths).map { item, depth in
+            MonknotMetrics.interfaceDensity(
+                MonknotMetrics.menuRowPaddingBase + MarkdownOutlineRailLayout.leadingIndentBase(forDepth: depth),
+                theme: theme,
+                zoomScale: zoomScale
+            ) + ceil((item.title as NSString).size(withAttributes: [.font: font]).width)
+        }.max() ?? 0
+    }
+}
+
+/// When the outline's panel shows and which heading holds the one highlight (design.md §10.5).
+/// The pointer on the rail highlights its heading's mark at once and opens the panel after
+/// `openDelay`; keyboard focus on a mark opens it at once. The pointer's row in the panel takes the
+/// highlight without scrolling; the rail and the keys move it and keep it in view. Leaving the rail
+/// and the panel closes it after `closeGrace`.
+@MainActor
+final class MarkdownOutlinePeek: ObservableObject {
+    /// A heading for the panel to bring into view: centred as it opens, then with the least scroll.
+    struct Reveal: Equatable {
+        let id: String
+        let centred: Bool
+        let serial: Int
+    }
+
+    @Published private(set) var isOpen = false
+    @Published private(set) var openedFromKeyboard = false
+    @Published private(set) var highlightedID: String?
+    @Published private(set) var reveal: Reveal?
+
+    var openDelay = MarkdownOutlineRailLayout.openDelay
+    var closeGrace = MarkdownOutlineRailLayout.closeGrace
+    var reduceMotion = false
+
+    private var railID: String?
+    private var isOnPanel = false
+    private var focusedID: String?
+    private var openTask: Task<Void, Never>?
+    private var closeTask: Task<Void, Never>?
+    private var revealSerial = 0
+
+    /// The pointer is on `id`'s mark, or has left the rail (nil).
+    func pointerOnRail(_ id: String?) {
+        guard id != railID else { return }
+        railID = id
+        if let id {
+            cancelClose()
+            highlight(id, reveals: true)
+            if !isOpen, openTask == nil {
+                scheduleOpen()
+            }
+        } else if isOpen {
+            closeIfIdle()
+        } else {
+            openTask?.cancel()
+            openTask = nil
+            highlightedID = focusedID
+        }
+    }
+
+    /// The pointer entered or left the panel (and the gap between it and the rail).
+    func pointerOnPanel(_ inside: Bool) {
+        isOnPanel = inside
+        if inside {
+            cancelClose()
+        } else {
+            closeIfIdle()
+        }
+    }
+
+    /// The pointer moved onto a row of the panel: the row takes the highlight, and the list stays
+    /// where it is.
+    func pointerOnRow(_ id: String) {
+        highlight(id, reveals: false)
+    }
+
+    /// Keyboard focus moved to `id`'s mark, or off the rail (nil).
+    func focus(_ id: String?) {
+        focusedID = id
+        if let id {
+            cancelClose()
+            openTask?.cancel()
+            openTask = nil
+            highlight(id, reveals: true)
+            if !isOpen {
+                open(fromKeyboard: true)
+            }
+        } else {
+            closeIfIdle()
+        }
+    }
+
+    /// Closes the panel now, as when the rail goes away.
+    func close(animated: Bool = true) {
+        openTask?.cancel()
+        openTask = nil
+        cancelClose()
+        railID = nil
+        isOnPanel = false
+        focusedID = nil
+        highlightedID = nil
+        guard isOpen else { return }
+        withAnimation(animated ? MonknotMotion.surfaceExit : nil) {
+            isOpen = false
+        }
+        reveal = nil
+        openedFromKeyboard = false
+    }
+
+    private func highlight(_ id: String, reveals: Bool) {
+        guard highlightedID != id else { return }
+        highlightedID = id
+        if reveals, isOpen {
+            revealSerial += 1
+            reveal = Reveal(id: id, centred: false, serial: revealSerial)
+        }
+    }
+
+    private func scheduleOpen() {
+        let delay = openDelay
+        openTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, delay) * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.open(fromKeyboard: false)
+        }
+    }
+
+    private func open(fromKeyboard: Bool) {
+        openTask = nil
+        guard !isOpen, let highlightedID else { return }
+        revealSerial += 1
+        reveal = Reveal(id: highlightedID, centred: true, serial: revealSerial)
+        openedFromKeyboard = fromKeyboard
+        // From the keys it appears at once; from the pointer it grows in from the rail.
+        withAnimation(fromKeyboard ? nil : MonknotMotion.surfaceEntrance(reduceMotion: reduceMotion)) {
+            isOpen = true
+        }
+    }
+
+    private func closeIfIdle() {
+        guard railID == nil, !isOnPanel, focusedID == nil else { return }
+        cancelClose()
+        let grace = closeGrace
+        closeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, grace) * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.close()
+        }
+    }
+
+    private func cancelClose() {
+        closeTask?.cancel()
+        closeTask = nil
     }
 }
 
@@ -67,6 +369,28 @@ struct MarkdownOutlineRail: View, Equatable {
     let theme: AppTheme
     let zoomScale: Double
     let select: (MarkdownOutlineItem) -> Void
+    /// Held, not observed: only the content below watches it, so a hover never re-measures the
+    /// outline here.
+    @State private var peek: MarkdownOutlinePeek
+
+    /// `peek` lets a test open the panel; the pane leaves it to the rail.
+    init(
+        documentID: String,
+        items: [MarkdownOutlineItem],
+        position: MarkdownOutlinePosition,
+        theme: AppTheme,
+        zoomScale: Double,
+        peek: MarkdownOutlinePeek? = nil,
+        select: @escaping (MarkdownOutlineItem) -> Void
+    ) {
+        self.documentID = documentID
+        self.items = items
+        self.position = position
+        self.theme = theme
+        self.zoomScale = zoomScale
+        self.select = select
+        _peek = State(initialValue: peek ?? MarkdownOutlinePeek())
+    }
 
     nonisolated static func == (lhs: MarkdownOutlineRail, rhs: MarkdownOutlineRail) -> Bool {
         MainActor.assumeIsolated {
@@ -79,266 +403,250 @@ struct MarkdownOutlineRail: View, Equatable {
     }
 
     var body: some View {
-        MarkdownOutlineRailContent(
-            items: items,
-            position: position,
-            theme: theme,
-            zoomScale: zoomScale,
-            select: select
-        )
+        let outline = MarkdownOutlineRailOutline(items: items, theme: theme, zoomScale: zoomScale)
+        // The whole card, so the rail can centre on it and the panel can keep within it; only the
+        // rail's marks and the open panel take the pointer.
+        GeometryReader { proxy in
+            MarkdownOutlineRailContent(
+                outline: outline,
+                availableSize: proxy.size,
+                position: position,
+                peek: peek,
+                theme: theme,
+                zoomScale: zoomScale,
+                select: select
+            )
+        }
     }
 }
 
 private struct MarkdownOutlineRailContent: View {
-    let items: [MarkdownOutlineItem]
+    let outline: MarkdownOutlineRailOutline
+    let availableSize: CGSize
     @ObservedObject var position: MarkdownOutlinePosition
+    @ObservedObject var peek: MarkdownOutlinePeek
     let theme: AppTheme
     let zoomScale: Double
     let select: (MarkdownOutlineItem) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovered = false
-    @State private var hoveredMarkerID: String?
-    @FocusState private var focusedMarkerID: String?
 
-    private var activeIndex: Int? {
-        MarkdownOutlineRailLayout.activeIndex(
-            forVisibleLine: position.visibleLine,
-            items: items
+    private func density(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private var activeID: String? {
+        MarkdownOutlineRailLayout.activeIndex(forVisibleLine: position.visibleLine, items: outline.items)
+            .map { outline.items[$0].id }
+    }
+
+    var body: some View {
+        let rail = MarkdownOutlineRailLayout.rail(
+            count: outline.items.count,
+            availableHeight: availableSize.height,
+            theme: theme,
+            zoomScale: zoomScale
         )
+        let panelSize = CGSize(
+            width: MarkdownOutlineRailLayout.panelWidth(
+                widestRow: outline.widestRow,
+                availableWidth: availableSize.width,
+                theme: theme,
+                zoomScale: zoomScale
+            ),
+            height: MarkdownOutlineRailLayout.panelHeight(
+                rowCount: outline.items.count,
+                availableHeight: availableSize.height,
+                theme: theme,
+                zoomScale: zoomScale
+            )
+        )
+        let gap = density(MarkdownOutlineRailLayout.panelGapBase)
+        let activeID = activeID
+
+        MarkdownOutlineMarks(
+            outline: outline,
+            rail: rail,
+            activeID: activeID,
+            highlightedID: peek.highlightedID,
+            theme: theme,
+            zoomScale: zoomScale,
+            peek: peek,
+            select: select
+        )
+        .equatable()
+        // The panel floats left of the rail, centred on it; it never moves the rail.
+        .overlay(alignment: .trailing) {
+            ZStack(alignment: .trailing) {
+                if peek.isOpen {
+                    MarkdownOutlinePanel(
+                        outline: outline,
+                        currentID: activeID,
+                        highlightedID: peek.highlightedID,
+                        reveal: peek.reveal,
+                        size: panelSize,
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        pointerOnRow: { peek.pointerOnRow($0) },
+                        select: select
+                    )
+                    // The gap is the panel's, so the trip from the rail never leaves it.
+                    .padding(.trailing, gap)
+                    .contentShape(Rectangle())
+                    .onHover { peek.pointerOnPanel($0) }
+                    .transition(panelTransition)
+                }
+            }
+            .frame(width: panelSize.width + gap, height: panelSize.height, alignment: .trailing)
+            .offset(x: -density(MarkdownOutlineRailLayout.railWidthBase))
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Document outline")
+        .padding(.trailing, density(MarkdownOutlineRailLayout.edgeInsetBase))
+        .frame(width: availableSize.width, height: availableSize.height, alignment: .trailing)
+        .onAppear { peek.reduceMotion = reduceMotion }
+        .onChange(of: reduceMotion) { _, reduceMotion in
+            peek.reduceMotion = reduceMotion
+        }
+        .onDisappear { peek.close(animated: false) }
     }
 
-    private var activeItemID: String? {
-        guard let activeIndex else { return nil }
-        return items[activeIndex].id
+    /// Grown in from the rail as a menu or popover is, from 0.97 with its opacity; at once from the
+    /// keys and a plain fade with Reduce Motion; always a fade out (design.md §11). The timing is
+    /// the peek's.
+    private var panelTransition: AnyTransition {
+        let insertion: AnyTransition = peek.openedFromKeyboard || reduceMotion
+            ? .opacity
+            : .scale(scale: MonknotMotion.surfaceEntranceScale, anchor: .trailing).combined(with: .opacity)
+        return .asymmetric(insertion: insertion, removal: .opacity)
+    }
+}
+
+/// The rail's marks: one per heading, trailing edges together, the current section's in `accent`
+/// and the highlighted heading's in `ink` and longer, both at once (design.md §10.5). Redrawn when
+/// the current or highlighted heading changes, not on every line the document scrolls.
+private struct MarkdownOutlineMarks: View, Equatable {
+    let outline: MarkdownOutlineRailOutline
+    let rail: MarkdownOutlineRailLayout.Rail
+    let activeID: String?
+    let highlightedID: String?
+    let theme: AppTheme
+    let zoomScale: Double
+    /// Told where the pointer and focus are; not observed here.
+    let peek: MarkdownOutlinePeek
+    let select: (MarkdownOutlineItem) -> Void
+
+    @FocusState private var focusedID: String?
+
+    nonisolated static func == (lhs: MarkdownOutlineMarks, rhs: MarkdownOutlineMarks) -> Bool {
+        MainActor.assumeIsolated {
+            lhs.rail == rhs.rail &&
+                lhs.activeID == rhs.activeID &&
+                lhs.highlightedID == rhs.highlightedID &&
+                lhs.zoomScale == rhs.zoomScale &&
+                lhs.peek === rhs.peek &&
+                lhs.theme == rhs.theme &&
+                lhs.outline == rhs.outline
+        }
     }
 
-    private var isExpanded: Bool {
-        isHovered || focusedMarkerID != nil
-    }
-
-    private var railWidth: CGFloat { scaled(38) }
-    private var panelWidth: CGFloat { scaled(228) }
-    private var panelGap: CGFloat { scaled(8) }
-    private var contentEdgeInset: CGFloat { scaled(10) }
-
-    private var totalWidth: CGFloat {
-        contentEdgeInset + railWidth + (isExpanded ? panelGap + panelWidth : 0)
-    }
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
+    private func density(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            HStack(alignment: .center, spacing: panelGap) {
-                if isExpanded {
-                    MarkdownOutlineHoverPanel(
-                        items: items,
-                        activeItemID: activeItemID,
-                        revealedItemID: MarkdownOutlineRailLayout.revealTargetID(
-                            hoveredItemID: hoveredMarkerID,
-                            focusedItemID: focusedMarkerID,
-                            activeItemID: activeItemID
-                        ),
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        width: panelWidth,
-                        maximumHeight: max(0, proxy.size.height - scaled(24)),
-                        select: select
-                    )
-                    // The card fades in and out over 120 ms, Reduce Motion or not; only the rail's
-                    // widening below is motion, which Reduce Motion drops.
-                    .transition(.opacity.animation(MonknotMotion.hoverAnimation))
-                }
-
-                markerRail
-            }
-            .padding(.trailing, contentEdgeInset)
-            .frame(
-                width: totalWidth,
-                height: proxy.size.height,
-                alignment: .trailing
-            )
-            .contentShape(Rectangle())
-            .onHover { isHovered = $0 }
-        }
-        .frame(width: totalWidth)
-        .animation(
-            MonknotMotion.stateMotion(reduceMotion: reduceMotion),
-            value: isExpanded
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Document outline")
-    }
-
-    private var markerRail: some View {
-        GeometryReader { proxy in
-            ScrollViewReader { scrollProxy in
-                ScrollView(.vertical, showsIndicators: false) {
-                    LazyVStack(spacing: scaled(1)) {
-                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                            markerButton(
-                                for: item,
-                                isActive: index == activeIndex
-                            )
-                            .id(item.id)
-                        }
-                    }
-                    .padding(.vertical, scaled(6))
-                    .frame(minHeight: proxy.size.height, alignment: .center)
-                }
-                .onAppear {
-                    scrollToActiveMarker(using: scrollProxy, animated: false)
-                }
-                .onChange(of: activeItemID) { _, _ in
-                    scrollToActiveMarker(using: scrollProxy, animated: true)
-                }
+        VStack(spacing: 0) {
+            ForEach(Array(outline.items.enumerated()), id: \.element.id) { index, item in
+                mark(for: item, depth: outline.depths[index])
             }
         }
-        .frame(width: railWidth)
-        .frame(maxHeight: .infinity)
+        .frame(width: density(MarkdownOutlineRailLayout.railWidthBase), height: rail.height)
+        .contentShape(Rectangle())
+        // One tracking area for the whole rail, so moving from one slot to the next never passes
+        // through "no heading".
+        .onContinuousHover(coordinateSpace: .local) { phase in
+            switch phase {
+            case .active(let location):
+                peek.pointerOnRail(rail.index(atY: location.y).map { outline.items[$0].id })
+            case .ended:
+                peek.pointerOnRail(nil)
+            }
+        }
+        .onChange(of: focusedID) { _, id in
+            peek.focus(id)
+        }
     }
 
-    private func markerButton(
-        for item: MarkdownOutlineItem,
-        isActive: Bool
-    ) -> some View {
-        let isHighlighted = hoveredMarkerID == item.id || focusedMarkerID == item.id
-
+    private func mark(for item: MarkdownOutlineItem, depth: Int) -> some View {
+        let isActive = item.id == activeID
+        let isHighlighted = item.id == highlightedID
         return Button {
             select(item)
         } label: {
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
-
                 Capsule()
-                    .monknotStateStyle(markerColor(isActive: isActive, isHighlighted: isHighlighted))
+                    .fill(markColor(isActive: isActive, isHighlighted: isHighlighted))
                     .frame(
-                        width: scaled(MarkdownOutlineRailLayout.markerWidth(
-                            forHeadingLevel: item.level
-                        )),
-                        height: scaled(2.5)
+                        width: density(isHighlighted
+                            ? MarkdownOutlineRailLayout.highlightedMarkLengthBase
+                            : MarkdownOutlineRailLayout.markLengthBase(forDepth: depth)),
+                        height: rail.markThickness
                     )
             }
-                .frame(width: railWidth, height: scaled(11))
-                .contentShape(Rectangle())
+            .frame(width: density(MarkdownOutlineRailLayout.railWidthBase), height: rail.pitch)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusable(NSApp.isFullKeyboardAccessEnabled)
-        .focused($focusedMarkerID, equals: item.id)
+        .focused($focusedID, equals: item.id)
         .focusEffectDisabled()
-        .onHover { hovering in
-            hoveredMarkerID = hovering ? item.id : nil
-        }
-        .help(item.title)
         .accessibilityLabel("Go to heading: \(item.title)")
         .accessibilityValue("Heading level \(item.level), line \(item.location.line)")
         .accessibilityAddTraits(isActive ? .isSelected : [])
         .monknotPointerCursor()
     }
 
-    private func scrollToActiveMarker(using proxy: ScrollViewProxy, animated: Bool) {
-        guard let activeItemID else { return }
-        scroll(
-            to: activeItemID,
-            using: proxy,
-            animated: animated
-        )
-    }
-
-    private func scroll(to itemID: String, using proxy: ScrollViewProxy, animated: Bool) {
-        if animated, let animation = MonknotMotion.stateMotion(reduceMotion: reduceMotion) {
-            withAnimation(animation) {
-                proxy.scrollTo(itemID, anchor: MarkdownOutlineRailLayout.revealAnchor)
-            }
-        } else {
-            proxy.scrollTo(itemID, anchor: MarkdownOutlineRailLayout.revealAnchor)
-        }
-    }
-
-    /// design.md §10.5: the current section's dash is `accent`, the others `ink3`; under the pointer or
-    /// focus a dash goes to `ink`.
-    private func markerColor(isActive: Bool, isHighlighted: Bool) -> Color {
+    /// design.md §10.5: `ink3` at rest, the current section `accent`, the highlighted heading `ink`.
+    private func markColor(isActive: Bool, isHighlighted: Bool) -> Color {
         if isActive {
             return theme.accentColor
         }
-        if isHighlighted {
-            return theme.foregroundColor
-        }
-        return theme.tertiaryForegroundColor
+        return isHighlighted ? theme.foregroundColor : theme.tertiaryForegroundColor
     }
 }
 
-private struct MarkdownOutlineHoverPanel: View {
-    let items: [MarkdownOutlineItem]
-    let activeItemID: String?
-    let revealedItemID: String?
+/// The outline's panel: the context menu's surface with a menu row per heading, indented by depth
+/// (design.md §10.5). The highlighted heading is the one highlight; the current section carries the
+/// rail's accent mark at its row's end. At most 380 tall, then it scrolls under the chrome thumb.
+struct MarkdownOutlinePanel: View {
+    let outline: MarkdownOutlineRailOutline
+    let currentID: String?
+    let highlightedID: String?
+    let reveal: MarkdownOutlinePeek.Reveal?
+    let size: CGSize
     let theme: AppTheme
     let zoomScale: Double
-    let width: CGFloat
-    let maximumHeight: CGFloat
+    let pointerOnRow: (String) -> Void
     let select: (MarkdownOutlineItem) -> Void
-    /// The row the pointer is on, which takes the one highlight from the rail's revealed heading.
-    @State private var hoveredRowID: String?
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var scroller = MarkdownOutlinePanelScroller()
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
+    private func density(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
-    /// The group header, up to eight menu rows 1 apart, and the menu's inset above and below.
-    private var preferredHeight: CGFloat {
-        let visibleRows = CGFloat(min(items.count, 8))
-        return scaled(
-            28 + visibleRows * MonknotMetrics.menuRowHeightBase + max(0, visibleRows - 1)
-                + 2 * MonknotMetrics.menuListInsetBase
-        )
-    }
-
-    private var panelHeight: CGFloat {
-        min(maximumHeight, preferredHeight)
-    }
-
-    /// The peek card is one of the editor's menus (design.md §10.5): a group header with the heading
-    /// count, then a menu row per heading, indented by level, with its line number; the heading at the
-    /// reading position is the selected row.
     var body: some View {
-        ScrollViewReader { scrollProxy in
-            let lineNumberWidthTemplate = lineNumberWidthTemplate
-            MonknotScrollView(theme: theme) {
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 0) {
-                        MonknotMenuGroupHeader(title: "Outline", theme: theme, zoomScale: zoomScale)
-                        Text("\(items.count)")
-                            .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
-                            .monospacedDigit()
-                            .foregroundStyle(theme.tertiaryForegroundColor)
-                            .padding(.trailing, scaled(MonknotMetrics.menuRowPaddingBase))
-                            .padding(.top, scaled(4))
-                            .padding(.bottom, scaled(6))
-                            .accessibilityLabel("\(items.count) headings")
-                    }
-
-                    LazyVStack(alignment: .leading, spacing: 1) {
-                        ForEach(items) { item in
-                            outlineRow(for: item, lineNumberWidthTemplate: lineNumberWidthTemplate)
-                                .id(item.id)
-                        }
-                    }
+        MonknotScrollView(theme: theme) {
+            LazyVStack(alignment: .leading, spacing: 1) {
+                ForEach(Array(outline.items.enumerated()), id: \.element.id) { index, item in
+                    row(for: item, depth: outline.depths[index])
                 }
-                .padding(scaled(MonknotMetrics.menuListInsetBase))
             }
-            .onAppear {
-                scrollToRevealedItem(using: scrollProxy, animated: false)
-            }
-            .onChange(of: revealedItemID) { _, _ in
-                scrollToRevealedItem(using: scrollProxy, animated: true)
-            }
+            .padding(density(MonknotMetrics.menuListInsetBase))
+            .background(MarkdownOutlineScrollAccess(scroller: scroller))
         }
-        .frame(width: width, height: panelHeight, alignment: .top)
+        .frame(width: size.width, height: size.height)
         // The same floating surface as the editor's menus: radius 12 at `e2` (design.md §2.1, §7).
         .monknotFloatingSurface(
             .e2,
@@ -346,66 +654,168 @@ private struct MarkdownOutlineHoverPanel: View {
             fill: theme.elevatedSurfaceColor,
             theme: theme
         )
+        .onAppear { bringIntoView(reveal) }
+        .onChange(of: reveal) { _, reveal in
+            bringIntoView(reveal)
+        }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Outline, \(items.count) headings")
+        .accessibilityLabel("Outline, \(outline.items.count) headings")
     }
 
-    /// One line-number column for the whole list, as wide as its largest line number.
-    private var lineNumberWidthTemplate: String {
-        MonknotStableWidth.lineNumberTemplate(maximumLine: items.map(\.location.line).max() ?? 0)
-    }
-
-    private func outlineRow(for item: MarkdownOutlineItem, lineNumberWidthTemplate: String) -> some View {
-        let isRevealed = item.id == (hoveredRowID ?? revealedItemID)
-
+    private func row(for item: MarkdownOutlineItem, depth: Int) -> some View {
+        let isCurrent = item.id == currentID
         return Button {
             select(item)
         } label: {
             MonknotMenuRowLabel(
                 leading: .none,
                 title: item.title,
-                indentBase: MarkdownOutlineRailLayout.leadingIndent(forHeadingLevel: item.level),
-                isHighlighted: isRevealed,
+                indentBase: MarkdownOutlineRailLayout.leadingIndentBase(forDepth: depth),
                 theme: theme,
                 zoomScale: zoomScale
             ) {
-                Text("\(item.location.line)")
-                    .monknotReservingWidth(of: lineNumberWidthTemplate)
-                    .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
-                    .foregroundStyle(theme.tertiaryForegroundColor)
-                    .monospacedDigit()
+                Capsule()
+                    .fill(isCurrent ? theme.accentColor : Color.clear)
+                    .frame(
+                        width: density(MarkdownOutlineRailLayout.currentMarkLengthBase),
+                        height: density(MarkdownOutlineRailLayout.markThicknessBase)
+                    )
+                    .accessibilityHidden(true)
             }
         }
-        .buttonStyle(MonknotMenuRowButtonStyle(theme: theme, zoomScale: zoomScale, isSelected: isRevealed))
+        .buttonStyle(MonknotMenuRowButtonStyle(
+            theme: theme,
+            zoomScale: zoomScale,
+            isHighlighted: item.id == highlightedID
+        ))
+        // The keys stay on the rail's marks; the panel follows them.
+        .focusable(false)
         .onHover { inside in
             if inside {
-                hoveredRowID = item.id
-            } else if hoveredRowID == item.id {
-                hoveredRowID = nil
+                pointerOnRow(item.id)
             }
         }
         .help("\(item.title), line \(item.location.line)")
         .accessibilityLabel("Go to heading: \(item.title)")
         .accessibilityValue("Heading level \(item.level), line \(item.location.line)")
-        .accessibilityAddTraits(item.id == activeItemID ? .isSelected : [])
+        .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 
-    private func scrollToRevealedItem(using proxy: ScrollViewProxy, animated: Bool) {
-        guard let revealedItemID else { return }
-        DispatchQueue.main.async {
-            if animated,
-               let animation = MonknotMotion.stateMotion(reduceMotion: reduceMotion) {
-                withAnimation(animation) {
-                    proxy.scrollTo(
-                        revealedItemID,
-                        anchor: MarkdownOutlineRailLayout.revealAnchor
-                    )
-                }
-            } else {
-                proxy.scrollTo(
-                    revealedItemID,
-                    anchor: MarkdownOutlineRailLayout.revealAnchor
-                )
+    private func bringIntoView(_ reveal: MarkdownOutlinePeek.Reveal?) {
+        guard let reveal, let index = outline.items.firstIndex(where: { $0.id == reveal.id }) else { return }
+        scroller.reveal(.init(
+            row: MarkdownOutlineRailLayout.panelRowSpan(index: index, theme: theme, zoomScale: zoomScale),
+            margin: density(MonknotMetrics.menuListInsetBase),
+            centred: reveal.centred
+        ))
+    }
+}
+
+/// Moves the panel's list to keep a row in view. Rows have fixed frames, so the offset is worked
+/// out (`MarkdownOutlineRailLayout.scrollOffset`) and set on the list's scroll view at once: the
+/// highlight never trails the pointer, and the list opening centred never shows a first frame at
+/// its top.
+@MainActor
+final class MarkdownOutlinePanelScroller {
+    struct Request {
+        let row: ClosedRange<CGFloat>
+        let margin: CGFloat
+        let centred: Bool
+    }
+
+    private(set) weak var scrollView: NSScrollView?
+    private var pending: Request?
+
+    func attach(_ scrollView: NSScrollView) {
+        self.scrollView = scrollView
+        apply()
+    }
+
+    func reveal(_ request: Request) {
+        pending = request
+        apply()
+    }
+
+    /// The list's visible span, from its top.
+    var visibleSpan: ClosedRange<CGFloat>? {
+        guard let scrollView, let document = scrollView.documentView else { return nil }
+        let viewport = scrollView.contentView.bounds.height
+        let top = Self.top(of: scrollView.contentView, in: document)
+        return top...(top + viewport)
+    }
+
+    /// Applies the waiting request once the list is laid out tall enough to hold its row.
+    func apply() {
+        guard let request = pending, let scrollView, let document = scrollView.documentView else { return }
+        let clip = scrollView.contentView
+        let viewport = clip.bounds.height
+        let contentHeight = document.frame.height
+        guard viewport > 0, contentHeight + 0.5 >= request.row.upperBound else { return }
+        pending = nil
+        let current = Self.top(of: clip, in: document)
+        let target = MarkdownOutlineRailLayout.scrollOffset(
+            revealing: request.row,
+            from: current,
+            viewportHeight: viewport,
+            contentHeight: contentHeight,
+            margin: request.margin,
+            centred: request.centred
+        )
+        guard abs(target - current) > 0.25 else { return }
+        let y = document.isFlipped ? target : contentHeight - viewport - target
+        clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
+        scrollView.reflectScrolledClipView(clip)
+        // Scrubbing shows the thumb while the list moves, as a scroll does (design.md §5.7).
+        if !request.centred {
+            scrollView.flashScrollers()
+        }
+    }
+
+    private static func top(of clip: NSClipView, in document: NSView) -> CGFloat {
+        document.isFlipped ? clip.bounds.minY : document.frame.height - clip.bounds.maxY
+    }
+}
+
+/// Hands the panel's scroll view to its scroller, and applies a waiting reveal as the list's
+/// content takes its size.
+private struct MarkdownOutlineScrollAccess: NSViewRepresentable {
+    let scroller: MarkdownOutlinePanelScroller
+
+    func makeNSView(context: Context) -> AccessView {
+        let view = AccessView()
+        view.scroller = scroller
+        return view
+    }
+
+    func updateNSView(_ nsView: AccessView, context: Context) {
+        nsView.scroller = scroller
+    }
+
+    final class AccessView: NSView {
+        weak var scroller: MarkdownOutlinePanelScroller?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            attach()
+        }
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            attach()
+        }
+
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            scroller?.apply()
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            nil
+        }
+
+        private func attach() {
+            if let scrollView = enclosingScrollView {
+                scroller?.attach(scrollView)
             }
         }
     }
