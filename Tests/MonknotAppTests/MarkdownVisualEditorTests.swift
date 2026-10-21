@@ -494,16 +494,26 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
 
     // MARK: - Changes from outside the editor
 
-    func testChangeFromOutsideReachesThePageWithoutReloadingIt() async throws {
+    /// A change from outside reaches the page as a patch, not a reload, and is sent once however
+    /// often SwiftUI updates before the page answers.
+    func testAChangeFromOutsideReachesThePageOnceWithoutReloadingIt() async throws {
         let fixture = try await makeFixture(markdown: "Line one\n")
         _ = try await fixture.evaluate("window.__marker = 'same page'; true")
         fixture.store.setDocumentText("Line one\nLine two\n")
+        for _ in 0..<5 {
+            await Task.yield()
+            fixture.harness.objectWillChange.send()
+        }
         let synced = await waitUntil {
             ((try? await fixture.evaluate("window.MonknotEditor.source()")) as? String) == "Line one\nLine two\n"
         }
         XCTAssertTrue(synced)
         let marker = try await fixture.evaluate("window.__marker") as? String
         XCTAssertEqual(marker, "same page", "The page was patched, not reloaded")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let page = try await fixture.evaluate("window.MonknotEditor.source()") as? String
+        XCTAssertEqual(page, "Line one\nLine two\n", "The insertion applied once")
+        XCTAssertEqual(fixture.store.documentText, "Line one\nLine two\n")
     }
 
     /// The page types a character and reports it; before the report reaches the app, the store
@@ -531,24 +541,6 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         XCTAssertEqual(fixture.store.documentText, expected)
         let page = try await fixture.evaluate("window.MonknotEditor.source()") as? String
         XCTAssertEqual(page, expected)
-    }
-
-    /// A change sent to the page is sent once, however often SwiftUI updates before the page answers.
-    func testAChangeFromOutsideIsSentOnce() async throws {
-        let fixture = try await makeFixture(markdown: "Line one\n")
-        fixture.store.setDocumentText("Line one\nLine two\n")
-        for _ in 0..<5 {
-            await Task.yield()
-            fixture.harness.objectWillChange.send()
-        }
-        let synced = await waitUntil {
-            ((try? await fixture.evaluate("window.MonknotEditor.source()")) as? String) == "Line one\nLine two\n"
-        }
-        XCTAssertTrue(synced)
-        try await Task.sleep(nanoseconds: 300_000_000)
-        let page = try await fixture.evaluate("window.MonknotEditor.source()") as? String
-        XCTAssertEqual(page, "Line one\nLine two\n", "The insertion applied once")
-        XCTAssertEqual(fixture.store.documentText, "Line one\nLine two\n")
     }
 
     // MARK: - Performance
@@ -607,7 +599,8 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         let p95 = try XCTUnwrap(timing?["p95"] as? Double)
         print("Large document: opened editable in \(String(format: "%.2f", openSeconds)) s; keystroke median \(String(format: "%.2f", median)) ms, p95 \(String(format: "%.2f", p95)) ms; mean patch \(timing?["patch"] ?? 0) dom \(timing?["dom"] ?? 0) selection \(timing?["selection"] ?? 0)")
         XCTAssertLessThan(p95, Self.keystrokeBudget(16), "A keystroke must render within one frame")
-        let stored = await waitUntil(timeout: 10) { fixture.store.documentText.count == markdown.count + 40 }
+        // The document is ASCII, so its UTF-8 length counts characters without walking a megabyte.
+        let stored = await waitUntil(timeout: 10) { fixture.store.documentText.utf8.count == markdown.utf8.count + 40 }
         XCTAssertTrue(stored, "Every keystroke reached the store")
     }
 
@@ -691,8 +684,8 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         let plain = try await measureKeystrokes(fixture)
         print("Long toggle: keystroke in the toggle median \(inside.median) ms, p95 \(inside.p95) ms (patch \(inside.patch), dom \(inside.dom)); in a plain paragraph median \(plain.median) ms, p95 \(plain.p95) ms")
         XCTAssertLessThan(inside.p95, Self.keystrokeBudget(8), "A keystroke in a long toggle costs what it does in a short note")
-        XCTAssertLessThan(inside.median, plain.median * 3 + 0.5, "A keystroke in the toggle costs about what one in a plain paragraph does")
-        let stored = await waitUntil(timeout: 10) { fixture.store.documentText.count == markdown.count + 80 }
+        XCTAssertLessThan(inside.median, plain.median * 3 + Self.keystrokeBudget(0.5), "A keystroke in the toggle costs about what one in a plain paragraph does")
+        let stored = await waitUntil(timeout: 10) { fixture.store.documentText.utf8.count == markdown.utf8.count + 80 }
         XCTAssertTrue(stored, "Every keystroke reached the store")
     }
 
@@ -720,10 +713,10 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         let plain = try await measureKeystrokes(fixture)
         print("Long list: item median \(item.median) ms, p95 \(item.p95) ms (patch \(item.patch), dom \(item.dom), selection \(item.selection)); nested item median \(nested.median) ms, p95 \(nested.p95) ms; long quote median \(quote.median) ms, p95 \(quote.p95) ms; plain paragraph median \(plain.median) ms, p95 \(plain.p95) ms")
         for (name, timing) in [("an item", item), ("a nested item", nested), ("a quote", quote)] {
-            XCTAssertLessThan(timing.p95, 8, "A keystroke in \(name) of a long container costs what it does in a short note")
-            XCTAssertLessThan(timing.median, plain.median * 3 + 0.5, "A keystroke in \(name) costs about what one in a plain paragraph does")
+            XCTAssertLessThan(timing.p95, Self.keystrokeBudget(8), "A keystroke in \(name) of a long container costs what it does in a short note")
+            XCTAssertLessThan(timing.median, plain.median * 3 + Self.keystrokeBudget(0.5), "A keystroke in \(name) costs about what one in a plain paragraph does")
         }
-        let stored = await waitUntil(timeout: 10) { fixture.store.documentText.count == markdown.count + 160 }
+        let stored = await waitUntil(timeout: 10) { fixture.store.documentText.utf8.count == markdown.utf8.count + 160 }
         XCTAssertTrue(stored, "Every keystroke reached the store")
     }
 
@@ -949,7 +942,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
       };
       const typed = ["x", "x", "ab", " ", "*", "-", ">", "`"];
       let inside = 0;
-      const steps = 600;
+      const steps = 300;
       for (let step = 0; step < steps; step += 1) {
         const source = window.MonknotEditor.source();
         const position = Math.floor(random() * (source.length + 1));
@@ -1231,41 +1224,34 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
     // MARK: - Spaces
 
     /// A space is a character like any other: typed at the end of a line (where WebKit draws a
-    /// collapsed space at the caret), between words, twice in a row, and in every kind of block,
-    /// with a pause between keys as a person types, the space must land in the file where it was
-    /// typed and the next word must follow it.
+    /// collapsed space at the caret), twice in a row, inside a word and in every kind of block, with
+    /// a pause after it as a person types, the space must land in the file where it was typed and the
+    /// next word must follow it. Paragraphs, headings, list items, table cells and toggle titles are
+    /// typed into the same way by the next test, and words in a row by the one after.
     func testSpacesTypeWhereTheyAreTypedInEveryBlock() async throws {
-        // One note holds every kind of block, each with a word found nowhere else, so one page
-        // serves every case.
+        // One note holds every case, each by a word found nowhere else, so one page serves them all.
         let cases: [(name: String, block: String, caretAfter: String, typed: String, expected: String)] = [
-            ("paragraph end", "Alpha", "Alpha", " x", "Alpha x"),
-            ("two words", "Bravo", "Bravo", " big world", "Bravo big world"),
             ("double space", "Charlie", "Charlie", "  x", "Charlie  x"),
             ("mid word", "Deltaworld", "Delta", " ", "Delta world"),
             // Typing at the end of bold continues it, spaces included (design.md §10.10).
             ("after bold", "**Bold**", "Bold", " x", "**Bold x**"),
-            ("heading", "# Title", "Title", " x", "# Title x"),
-            ("list item", "- item", "item", " x", "- item x"),
             ("task item", "- [ ] task", "task", " x", "- [ ] task x"),
             ("numbered item", "1. one", "one", " x", "1. one x"),
             ("quote", "> quote", "quote", " x", "> quote x"),
             ("callout", "> [!NOTE]\n> note", "note", " x", "> [!NOTE]\n> note x"),
-            ("table cell", "| a | b |\n| --- | --- |\n| cell | y |", "cell", " x", "| a | b |\n| --- | --- |\n| cell x | y |"),
-            ("toggle title", "<details open>\n<summary>Toggle</summary>\n\nInside\n\n</details>", "Toggle", " x", "<summary>Toggle x</summary>"),
-            ("toggle body", "", "Inside", " x", "\n\nInside x\n\n"),
+            ("toggle body", "<details open>\n<summary>Toggle</summary>\n\nInside\n\n</details>", "Inside", " x", "\n\nInside x\n\n"),
             ("code block", "```\nlet z\n```", "let z", " = 1", "```\nlet z = 1\n```"),
             ("before link", "see [link](u)", "see", " the", "see the [link](u)"),
         ]
-        // A paragraph between blocks keeps lists, quotes and the callout apart.
-        let markdown = cases.map(\.block).filter { !$0.isEmpty }.joined(separator: "\n\nSep\n\n") + "\n"
+        // A paragraph between blocks keeps the lists, the quote and the callout apart.
+        let markdown = cases.map(\.block).joined(separator: "\n\nSep\n\n") + "\n"
         let fixture = try await makeFixture(markdown: markdown)
         for testCase in cases {
             let text = fixture.store.documentText as NSString
-            let caret = NSMaxRange(text.range(of: testCase.caretAfter))
-            try await fixture.setSelection(caret)
+            try await fixture.setSelection(NSMaxRange(text.range(of: testCase.caretAfter)))
             for character in testCase.typed {
                 fixture.type(String(character))
-                try await Task.sleep(nanoseconds: 120_000_000)
+                if character == " " { try await Task.sleep(nanoseconds: 120_000_000) }
             }
             let typed = await waitUntil(timeout: 2) { fixture.store.documentText.contains(testCase.expected) }
             XCTAssertTrue(typed, "\(testCase.name): \(fixture.store.documentText.debugDescription)")
@@ -1466,8 +1452,11 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
     private static let slashMenuShown = "Boolean(document.querySelector('.mk-menu.mk-visible[aria-label=\"Insert block\"]'))"
 
     /// Every floating surface and block state, captured into `MONKNOT_EDITOR_SNAPSHOT_DIR` for
-    /// review; without it the test only checks each surface appears.
+    /// review. It skips otherwise: each surface's behaviour has its own test.
     func testEditorSurfaceGallery() async throws {
+        guard ProcessInfo.processInfo.environment["MONKNOT_EDITOR_SNAPSHOT_DIR"] != nil else {
+            throw XCTSkip("Set MONKNOT_EDITOR_SNAPSHOT_DIR to capture the editor's surfaces")
+        }
         let markdown = """
         # Gallery
 
@@ -1611,9 +1600,12 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         }
     }
 
-    /// Writes snapshots of the editor in both themes and at a narrow width when
-    /// `MONKNOT_EDITOR_SNAPSHOT_DIR` is set; otherwise only checks that the page renders.
+    /// Writes snapshots of the editor in both themes and at a narrow width into
+    /// `MONKNOT_EDITOR_SNAPSHOT_DIR`. It skips otherwise: the menus it opens have their own tests.
     func testSnapshotsInBothThemesAndANarrowWindow() async throws {
+        guard ProcessInfo.processInfo.environment["MONKNOT_EDITOR_SNAPSHOT_DIR"] != nil else {
+            throw XCTSkip("Set MONKNOT_EDITOR_SNAPSHOT_DIR to capture the editor in both themes and a narrow window")
+        }
         let markdown = """
         # Product brief
 

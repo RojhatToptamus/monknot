@@ -266,7 +266,9 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         XCTAssertTrue(applied, "The same patch for the current text and caret applies: \(fixture.store.documentText)")
     }
 
-    func testReturnChecksTheSentenceItEnds() async throws {
+    /// ↩ checks the sentence it ends. The caret is then on an empty line, where no ⌫ undo hint can
+    /// show, so ⌫ deletes the line as usual and the fix stays.
+    func testReturnChecksTheSentenceItEndsAndBackspaceThenDeletesTheLine() async throws {
         let checker = PreviewFlowChecker { text in
             PreviewFlowChecker.corrections(in: text, ["teh": "the"])
         }
@@ -276,19 +278,6 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         let fixed = await waitUntil { fixture.store.documentText.hasPrefix("We read the plan\n") }
         XCTAssertTrue(fixed, "Return finishes the sentence, which is then checked: \(fixture.store.documentText)")
         XCTAssertEqual(checker.requests.first, "We read teh plan")
-    }
-
-    /// After ↩ the caret is on an empty line, where no ⌫ undo hint can show, so ⌫ deletes the line
-    /// as usual and the fix stays.
-    func testBackspaceAfterAFixReturnMadeDeletesTheLine() async throws {
-        let checker = PreviewFlowChecker { text in
-            PreviewFlowChecker.corrections(in: text, ["teh": "the"])
-        }
-        let fixture = try await makeFixture(markdown: "We read teh plan\n", checker: checker)
-        try await fixture.setSelection(("We read teh plan" as NSString).length)
-        fixture.press(.return)
-        let fixed = await waitUntil { fixture.store.documentText.hasPrefix("We read the plan\n") }
-        XCTAssertTrue(fixed, fixture.store.documentText)
         let settled = await fixture.waitForFlowState { $0.settle != nil }
         XCTAssertTrue(settled, "The corrected word still shimmers")
         let state = await fixture.flowState()
