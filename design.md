@@ -1045,6 +1045,10 @@ a 10 badge for a pinned tab (`pin.fill`, `ink3`) or a file missing on disk (`dan
 - **Close:** a 9pt semibold `xmark` in a 16 round target, `ink2` → `ink` with the `hover` fill under
   the pointer. It takes the glyph's place while the pointer is over the tab, active or not, and VoiceOver reaches it as the tab's named action. ⌘W closes the
   active tab.
+- **Opening:** a file the user makes or asks for — New Markdown, New File, Daily Note, the starter
+  README — opens in a tab of its own and shows, even after every tab was closed
+  (`WorkspaceStore.requestDocumentOpen`). A strip the user emptied stays empty through a reload or a
+  rescan.
 - **Reorder:** drag a tab along the strip: 4 pt starts the drag, as in the sidebar; the dragged tab
   stays at 35 % (a 120 ms fade) and the others make room at once.
 - **Pinned:** sits left of the unpinned run and scrolls with everything else. Pinning is about order

@@ -1680,12 +1680,8 @@ struct ContentView: View {
         )
         pruneDocumentViewportStates()
 
-        if let selectedDocument = store.selectedDocument {
-            if tabState.contains(documentID: selectedDocument.id) {
-                tabState.open(selectedDocument)
-            } else if !tabState.isEmptyByUserChoice {
-                tabState.open(selectedDocument)
-            }
+        if let selectedDocument = store.selectedDocument, opensTab(for: selectedDocument) {
+            tabState.open(selectedDocument)
         } else if store.selectedDocumentID == nil, tabState.tabs.isEmpty {
             tabState.activate(documentID: nil)
         }
@@ -1697,6 +1693,15 @@ struct ContentView: View {
         if tabState.selectedDocumentID != store.selectedDocumentID {
             _ = store.selectDocument(id: tabState.selectedDocumentID, selectingInSidebar: false)
         }
+    }
+
+    /// The store's document has a tab, or gets one: always while other tabs are open, and with every
+    /// tab closed only when it was asked for (a new file, today's note), so a closed strip stays
+    /// closed through a reload but never swallows a file the user just made.
+    private func opensTab(for document: WorkspaceDocument) -> Bool {
+        tabState.contains(documentID: document.id)
+            || !tabState.isEmptyByUserChoice
+            || store.pendingDocumentOpenIDs.contains(document.id)
     }
 
     private func syncSelectedTabWithStore() {
@@ -1716,10 +1721,8 @@ struct ContentView: View {
 
         let previousState = tabState
 
-        if let selectedDocument = store.selectedDocument {
-            if tabState.contains(documentID: selectedDocument.id) || !tabState.isEmptyByUserChoice {
-                tabState.open(selectedDocument)
-            }
+        if let selectedDocument = store.selectedDocument, opensTab(for: selectedDocument) {
+            tabState.open(selectedDocument)
         } else if store.selectedDocumentID == nil, tabState.tabs.isEmpty {
             tabState.activate(documentID: nil)
         }

@@ -3779,6 +3779,8 @@ final class WorkspaceStore: ObservableObject {
         setSelectedDocumentSignatureIfChanged(Self.fileSignature(for: fileURL))
         setSaveState(.clean, for: selectedDocumentID)
         invalidateWorkspaceSearchCaches(paths: [fileURL.path])
+        // A file made on request opens in a tab, even after every tab was closed.
+        requestDocumentOpen(at: fileURL)
         isBusy = false
     }
 
@@ -3798,6 +3800,10 @@ final class WorkspaceStore: ObservableObject {
         selectedDocumentID = documentsByID[fileURL.standardizedFileURL.path]?.id ?? documents.first?.id
         selectOpenDocumentInSidebar()
         loadSelectedDocument()
+        // Today's note or the starter README opens in a tab, as a new file does.
+        if documentsByID[fileURL.standardizedFileURL.path] != nil {
+            requestDocumentOpen(at: fileURL)
+        }
         isBusy = false
     }
 
