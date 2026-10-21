@@ -314,7 +314,7 @@ final class MarkdownEditorMenuTests: WorkspaceStoreTestCase {
         store.testing_stopFileWatcher()
 
         let harness = MenuTestHarnessModel(store: store)
-        let window = NSWindow(
+        let window = KeyTestWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 700),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,

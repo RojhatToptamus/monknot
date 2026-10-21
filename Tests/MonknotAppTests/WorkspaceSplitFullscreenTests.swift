@@ -18,6 +18,8 @@ final class WorkspaceSplitFullscreenTests: WorkspaceSplitViewTestCase {
     /// the same native transition, its card a divider's width from the sidebar and the terminal on
     /// every frame, and lands exactly where it was, with nothing settling afterwards.
     func testLeavingTerminalFullWidthRunsTheTransitionBackwardsAndLandsExactly() async throws {
+        let animates = await splitViewsAnimateHere()
+        try XCTSkipUnless(animates, "AppKit finishes split view animations at once on this display, so there are no frames to check")
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
         let window = mount(controller, width: 1_300)
@@ -191,5 +193,43 @@ final class WorkspaceSplitFullscreenTests: WorkspaceSplitViewTestCase {
             dockedWidth * 1.25,
             accuracy: 1
         )
+    }
+
+    /// Whether AppKit animates a split view here: an item collapsed through its animator is between
+    /// its widths partway through. A CI runner's display can end the animation at once, leaving a
+    /// recording of a transition no frames to check.
+    private func splitViewsAnimateHere() async -> Bool {
+        func item(width: CGFloat) -> NSSplitViewItem {
+            let content = NSViewController()
+            content.view = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 100))
+            return NSSplitViewItem(viewController: content)
+        }
+        let controller = NSSplitViewController()
+        let collapsing = item(width: 200)
+        collapsing.canCollapse = true
+        controller.addSplitViewItem(collapsing)
+        controller.addSplitViewItem(item(width: 200))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.animationBehavior = .none
+        window.contentViewController = controller
+        window.orderFrontRegardless()
+        defer {
+            window.orderOut(nil)
+            window.contentViewController = nil
+        }
+        controller.view.layoutSubtreeIfNeeded()
+        let start = controller.splitView.arrangedSubviews[0].frame.width
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.4
+            collapsing.animator().isCollapsed = true
+        }, completionHandler: nil)
+        var widths: Set<CGFloat> = []
+        let deadline = Date().addingTimeInterval(0.5)
+        while Date() < deadline {
+            widths.insert(controller.splitView.arrangedSubviews[0].frame.width.rounded())
+            try? await Task.sleep(nanoseconds: 8_000_000)
+        }
+        return widths.filter { $0 > 1 && $0 < start - 1 }.count >= 2
     }
 }

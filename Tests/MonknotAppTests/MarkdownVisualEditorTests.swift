@@ -1788,7 +1788,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
 
         let harness = VisualEditorHarnessModel(store: store, theme: theme)
         harness.viewportState = viewportState
-        let window = NSWindow(
+        let window = KeyTestWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: 700),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,

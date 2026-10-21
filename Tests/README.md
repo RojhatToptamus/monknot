@@ -19,6 +19,11 @@ Test output is unbuffered (`NSUnbufferedIO`) so the log shows the test that was 
 Wall-clock budgets (`MarkdownVisualEditorTests`' keystroke costs) are four times larger when `CI`
 is set, since a shared runner is several times slower than a Mac at a desk.
 
+A test process is never the active app, at a desk or on CI. Tests that need a key window (keys,
+WebKit page focus, SwiftUI focus) use `KeyTestWindow`, which answers as the key and main window.
+A click on an AppKit control queues its mouse-up before the mouse-down, since the control tracks
+the press in a loop of its own.
+
 ## Parallel allowlist
 
 The following `MonknotAppTests` suites can run concurrently:
@@ -48,7 +53,7 @@ repeating the isolation audit and full-suite stress runs.
   platform-global or lifecycle-sensitive resources.
 - Menu and popover suites (`MonknotContextMenuTests`, `MonknotPopUpMenuTests`,
   `MonknotPopoverTests`, the sidebar suites) share `MonknotContextMenuController.shared`,
-  `MonknotPopoverController.shared`, their event monitors and the app's activation; each closes
+  `MonknotPopoverController.shared` and their event monitors; each closes
   both controllers before it starts.
 - Terminal tests create PTYs, processes, dispatch sources, and file descriptors.
 - All other `MonknotAppTests` stay serial until they have both an isolation audit and a measured

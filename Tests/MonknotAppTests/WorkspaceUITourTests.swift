@@ -271,7 +271,7 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             terminationCoordinator: ApplicationTerminationCoordinator(),
             initialLayout: stop.layout
         ))
-        let window = TourWindow(
+        let window = KeyTestWindow(
             contentRect: NSRect(origin: NSPoint(x: 60, y: 60), size: stop.size),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
@@ -501,7 +501,7 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
                     : movesTerminal ? .toggleTerminal(at: toggles) : .toggleSidebar(at: toggles)
             )
         ))
-        let window = TourWindow(
+        let window = KeyTestWindow(
             contentRect: NSRect(origin: NSPoint(x: likeApp ? 0 : 60, y: likeApp ? 0 : 60), size: windowSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
@@ -574,7 +574,7 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             updater: updater.updater
         ))
         let size = host.fittingSize
-        let window = TourWindow(
+        let window = KeyTestWindow(
             contentRect: NSRect(origin: NSPoint(x: 60, y: 60), size: NSSize(width: max(600, size.width), height: max(560, size.height))),
             styleMask: [.titled, .closable],
             backing: .buffered,
@@ -1298,13 +1298,4 @@ private final class DemoRecorder: @unchecked Sendable {
         guard let window = picture(of: front + [windowID]) else { return nil }
         return (window, front.isEmpty ? nil : picture(of: front))
     }
-}
-
-/// A test window that counts as the key and main window although the test process cannot take focus
-/// from the app in front.
-private final class TourWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-    override var isKeyWindow: Bool { true }
-    override var isMainWindow: Bool { true }
 }

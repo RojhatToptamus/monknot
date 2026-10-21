@@ -183,7 +183,7 @@ final class MonknotPopUpMenuTests: XCTestCase {
         let recorder = Recorder(selection: "Helvetica")
         let host = NSHostingView(rootView: PopoverHostView(recorder: recorder))
         let visible = try XCTUnwrap(NSScreen.main?.visibleFrame)
-        let window = PopUpTestWindow(
+        let window = KeyTestWindow(
             contentRect: NSRect(x: visible.midX - 150, y: visible.midY, width: 300, height: 80),
             styleMask: [.titled],
             backing: .buffered,
@@ -413,7 +413,7 @@ final class MonknotPopUpMenuTests: XCTestCase {
                     let host = NSHostingView(rootView: bar)
                     host.frame.size = host.fittingSize
                     let visible = try XCTUnwrap(NSScreen.main?.visibleFrame)
-                    let window = PopUpTestWindow(
+                    let window = KeyTestWindow(
                         contentRect: NSRect(x: visible.midX - host.frame.width / 2, y: visible.midY + 200, width: host.frame.width, height: host.frame.height),
                         styleMask: [.borderless],
                         backing: .buffered,
@@ -570,7 +570,7 @@ final class MonknotPopUpMenuTests: XCTestCase {
             x: visible.midX - 100,
             y: nearScreenBottom ? visible.minY + 20 : visible.midY + 100
         )
-        let window = PopUpTestWindow(
+        let window = KeyTestWindow(
             contentRect: NSRect(origin: origin, size: CGSize(width: windowWidth, height: 80)),
             styleMask: [.borderless],
             backing: .buffered,
@@ -648,11 +648,4 @@ final class MonknotPopUpMenuTests: XCTestCase {
         }
         return true
     }
-}
-
-/// A borderless window that answers as the key window, so the button takes its click without the
-/// test process becoming the active app.
-private final class PopUpTestWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-    override var isKeyWindow: Bool { true }
 }

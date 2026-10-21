@@ -5,6 +5,17 @@ import WebKit
 import XCTest
 @testable import MonknotApp
 
+/// A window that answers as the key and main window. A test process is never the active app (on a
+/// Mac at a desk another app is in front, and CI's runner keeps it in the background too), so a plain
+/// window there never becomes key; this one does, as the app's window does in use, for the key
+/// handling, WebKit page focus and SwiftUI focus only a key window gets.
+final class KeyTestWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+    override var isKeyWindow: Bool { true }
+    override var isMainWindow: Bool { true }
+}
+
 func interfaceScales(theme: AppTheme, zoomScale: Double) -> [CGFloat] {
     [
         theme.interfaceTextScale(zoomScale: zoomScale),

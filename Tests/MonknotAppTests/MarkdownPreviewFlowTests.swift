@@ -975,7 +975,7 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         dependencies.writingToolsAvailability = { writingToolsAvailable }
 
         let harness = PreviewFlowHarnessModel(store: store, defaults: defaults, dependencies: dependencies)
-        let window = NSWindow(
+        let window = KeyTestWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: 700),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
