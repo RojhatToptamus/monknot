@@ -529,15 +529,19 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
     func testCommandOverlayPanelFitsItsRowsHeaderAndFooter() {
         let theme = AppTheme.defaultDark
         // 44 header + 1 rule + three 34 menu rows 1 apart + the menu's 6 inset above and below + the
-        // menu's 32 footer (its rule is drawn inside it).
-        let threeRows: CGFloat = 44 + 1 + (3 * 34 + 2 + 12) + 32
+        // menu's 32 footer (its rule is drawn inside it). Summed in parts: one long sum of literals is
+        // more than Swift 6.2 type-checks.
+        let header: CGFloat = 44 + 1
+        let threeRowMenu: CGFloat = 3 * 34 + 2 + 12
+        let threeRows = header + threeRowMenu + 32
         XCTAssertEqual(
             MonknotCommandOverlayMetrics.panelHeight(rows: 3, hasFooter: true, theme: theme, zoomScale: 1),
             threeRows,
             accuracy: 0.01
         )
         // At most eight rows show (8 × 34 + 7 × 1 + 12); the rest scroll.
-        let eightRows: CGFloat = 44 + 1 + (8 * 34 + 7 + 12)
+        let eightRowMenu: CGFloat = 8 * 34 + 7 + 12
+        let eightRows = header + eightRowMenu
         XCTAssertEqual(
             MonknotCommandOverlayMetrics.panelHeight(rows: 20, hasFooter: false, theme: theme, zoomScale: 1),
             eightRows,

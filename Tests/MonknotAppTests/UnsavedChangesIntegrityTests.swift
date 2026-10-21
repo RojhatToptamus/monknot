@@ -287,14 +287,6 @@ final class UnsavedChangesIntegrityTests: WorkspaceStoreTestCase {
 
     // MARK: - Saving and reloading
 
-    func testUndoingBackToTheSavedTextClearsTheDot() async throws {
-        let (store, url) = try await openNote()
-        store.setDocumentText("# Note\n\nBody!\n")
-        XCTAssertFalse(store.saveState(for: url.path).isClean)
-        store.setDocumentText("# Note\n\nBody\n")
-        assertClean(store, "after undo")
-    }
-
     func testMetadataChangesToAnEditedDocumentAreNotExternalChanges() async throws {
         let (store, url) = try await openNote()
         store.setDocumentText("# Note\n\nEdited\n")

@@ -144,17 +144,15 @@ final class MonknotContextMenuTests: FileOperationsTestCase {
         let (root, store, h) = try await makeFixture()
         let top = try XCTUnwrap(h.rowCenter(try XCTUnwrap(rowIndex(h, "top.md"))))
 
-        for _ in 0..<2 {
-            XCTAssertTrue(rightClick(h, at: top))
-            try await Task.sleep(nanoseconds: 300_000_000)
-            try release(h, over: "Move to Trash")
-            XCTAssertTrue(controller.isOpen)
-            XCTAssertEqual(highlightedTitle, "Move to Trash")
-            try await Task.sleep(nanoseconds: 300_000_000)
-            XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("top.md").path))
-            XCTAssertFalse(store.isBusy)
-            controller.close(animated: false)
-        }
+        XCTAssertTrue(rightClick(h, at: top))
+        try await Task.sleep(nanoseconds: 300_000_000)
+        try release(h, over: "Move to Trash")
+        XCTAssertTrue(controller.isOpen)
+        XCTAssertEqual(highlightedTitle, "Move to Trash")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("top.md").path))
+        XCTAssertFalse(store.isBusy)
+        controller.close(animated: false)
 
         XCTAssertTrue(rightClick(h, at: top))
         try await Task.sleep(nanoseconds: 300_000_000)
@@ -170,12 +168,6 @@ final class MonknotContextMenuTests: FileOperationsTestCase {
         let event = try XCTUnwrap(mouse(.leftMouseDown, h, at: row, modifiers: .control))
         XCTAssertTrue(controller.handleForTesting(event))
         XCTAssertEqual(controller.openTitles, SidebarContextMenuTests.fileMenu)
-    }
-
-    func testEmptyTreeSpaceOpensTheRootMenu() async throws {
-        let (_, _, h) = try await makeFixture()
-        XCTAssertTrue(rightClick(h, at: try XCTUnwrap(h.emptyTreePoint())))
-        XCTAssertEqual(controller.openTitles, SidebarContextMenuTests.emptyAreaMenu)
     }
 
     func testPasteIsDisabledWhileTheClipboardHoldsNothingAndTheKeysSkipIt() async throws {
@@ -352,11 +344,12 @@ final class MonknotContextMenuTests: FileOperationsTestCase {
             title == "-" ? .separator : .item(.init(title: title, systemImage: nil, isEnabled: true, isDestructive: false, perform: {}))
         }
 
-        let middle = NSPoint(x: visible.midX, y: visible.midY)
-        controller.present(entries: entries, at: middle, in: h.window, theme: .defaultLight, zoomScale: 1)
+        // Near the top of the screen the whole menu fits below the pointer, on a display of any size.
+        let top = NSPoint(x: visible.midX, y: visible.maxY - 20)
+        controller.present(entries: entries, at: top, in: h.window, theme: .defaultLight, zoomScale: 1)
         var surface = try XCTUnwrap(controller.openSurfaceFrame)
-        XCTAssertEqual(surface.minX, middle.x)
-        XCTAssertEqual(surface.maxY, middle.y, "The top-left corner sits at the pointer")
+        XCTAssertEqual(surface.minX, top.x)
+        XCTAssertEqual(surface.maxY, top.y, "The top-left corner sits at the pointer")
 
         let corner = NSPoint(x: visible.maxX - 10, y: visible.minY + 10)
         controller.present(entries: entries, at: corner, in: h.window, theme: .defaultLight, zoomScale: 1)

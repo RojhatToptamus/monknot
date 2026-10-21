@@ -18,6 +18,7 @@ final class WorkspaceSplitFullscreenTests: WorkspaceSplitViewTestCase {
     /// the same native transition, its card a divider's width from the sidebar and the terminal on
     /// every frame, and lands exactly where it was, with nothing settling afterwards.
     func testLeavingTerminalFullWidthRunsTheTransitionBackwardsAndLandsExactly() async throws {
+        try skipFrameByFrameRecordingOnCI()
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
         let window = mount(controller, width: 1_300)

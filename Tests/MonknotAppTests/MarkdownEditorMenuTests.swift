@@ -23,6 +23,25 @@ final class MarkdownEditorMenuTests: WorkspaceStoreTestCase {
 
     // MARK: - One menu at a time
 
+    /// The block menu's field takes focus a moment after ⌘/ opens the menu: Esc pressed before then
+    /// still closes it, rather than reaching the text and leaving the menu open.
+    func testEscapeRightAfterTheShortcutClosesTheBlockMenu() async throws {
+        let fixture = try await makeFixture(markdown: "Alpha\n")
+        try await fixture.setSelection(3)
+        let menus = try await fixture.evaluate("""
+        (() => {
+          const root = document.getElementById('content');
+          const press = (key, metaKey) => root.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey, bubbles: true, cancelable: true }));
+          const open = () => [...document.querySelectorAll('.mk-menu.mk-visible')].map((menu) => menu.getAttribute('aria-label'));
+          press('/', true);
+          const opened = open();
+          press('Escape', false);
+          return [opened.join(','), open().join(',')];
+        })()
+        """) as? [String]
+        XCTAssertEqual(menus, ["Block", ""], "⌘/ opens the block menu, and Esc closes it before its field has focus")
+    }
+
     func testOpeningAMenuClosesTheOneAlreadyOpen() async throws {
         let fixture = try await makeFixture(markdown: "Alpha\n\nBeta\n")
         try await fixture.setSelection(5)
@@ -39,7 +58,8 @@ final class MarkdownEditorMenuTests: WorkspaceStoreTestCase {
         XCTAssertTrue(fixture.store.documentText.contains("/"), "The / typed stays: \(fixture.store.documentText.debugDescription)")
         fixture.press(.escape)
         let closed = await waitUntil { await fixture.openMenus().isEmpty }
-        XCTAssertTrue(closed)
+        let afterEscape = await fixture.openMenus()
+        XCTAssertTrue(closed, "Esc closes the block menu, and no other opens: \(afterEscape)")
 
         // A click on another block's grip while the slash menu is open.
         try await fixture.setSelection((fixture.store.documentText as NSString).range(of: "/").location + 1)
@@ -313,7 +333,7 @@ final class MarkdownEditorMenuTests: WorkspaceStoreTestCase {
         store.testing_stopFileWatcher()
 
         let harness = MenuTestHarnessModel(store: store)
-        let window = NSWindow(
+        let window = KeyTestWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 700),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -527,22 +547,8 @@ final class MarkdownEditorMenuTests: WorkspaceStoreTestCase {
         }
 
         private func send(characters: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags = []) {
-            for type in [NSEvent.EventType.keyDown, .keyUp] {
-                guard let event = NSEvent.keyEvent(
-                    with: type,
-                    location: .zero,
-                    modifierFlags: modifiers,
-                    timestamp: ProcessInfo.processInfo.systemUptime,
-                    windowNumber: window.windowNumber,
-                    context: nil,
-                    characters: characters,
-                    charactersIgnoringModifiers: characters,
-                    isARepeat: false,
-                    keyCode: keyCode
-                ) else { continue }
-                window.sendEvent(event)
-            }
-            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            PageKeyboard(window: window, webView: { self.webView }, settle: 0.05)
+                .send(characters: characters, keyCode: keyCode, modifiers: modifiers)
         }
 
         private static func literal(_ text: String) -> String {

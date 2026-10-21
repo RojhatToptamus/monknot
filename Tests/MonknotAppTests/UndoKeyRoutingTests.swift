@@ -40,7 +40,7 @@ final class UndoKeyRoutingTests: FileOperationsTestCase {
             terminationCoordinator: ApplicationTerminationCoordinator(),
             initialLayout: .init(showsSidebar: true, showsTerminal: false)
         ))
-        let window = KeyRoutingTestWindow(
+        let window = KeyTestWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 760),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,
@@ -161,10 +161,4 @@ final class UndoKeyRoutingTests: FileOperationsTestCase {
         }
         return nil
     }
-}
-
-/// A window that answers as the key window, as the window's key handling asks.
-private final class KeyRoutingTestWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-    override var isKeyWindow: Bool { true }
 }

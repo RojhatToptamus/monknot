@@ -117,6 +117,14 @@ final class WorkflowPolicyTests: RepositoryContractTestCase {
         XCTAssertTrue(workflow.contains("swift run monknot-export --help"))
         XCTAssertTrue(workflow.contains("swift run monknot-capture --help"))
         XCTAssertFalse(workflow.contains("actions/checkout@v"))
+        // Every shard the runner defines runs on its own machine, and the check `main` requires
+        // passes only when all of them do.
+        XCTAssertTrue(workflow.contains("shard: [editor, workspace, app]"))
+        XCTAssertTrue(workflow.contains("script/test_suite.sh \"${{ matrix.shard }}\""))
+        XCTAssertTrue(workflow.contains("fail-fast: false"))
+        XCTAssertTrue(workflow.contains("name: Test macOS (arm64)"))
+        XCTAssertTrue(workflow.contains("if: always()"))
+        XCTAssertTrue(workflow.contains("test \"$SHARDS\" = \"success\""))
     }
 
     func testXCTestRunnerParallelizesOnlyTheAuditedAllowlist() throws {
@@ -132,6 +140,13 @@ final class WorkflowPolicyTests: RepositoryContractTestCase {
         XCTAssertTrue(runner.contains("--filter \"$parallel_filter\""))
         XCTAssertTrue(runner.contains("--no-parallel"))
         XCTAssertTrue(runner.contains("--skip \"$parallel_filter\""))
+        for shard in ["editor)", "workspace)", "app)"] {
+            XCTAssertTrue(runner.contains(shard), "The runner defines the \(shard) shard CI runs")
+        }
+        // A test that hangs stops the run, with the test process's stacks, instead of holding CI.
+        XCTAssertTrue(runner.contains("MONKNOT_TEST_STALL_SECONDS:-300"))
+        XCTAssertTrue(runner.contains("sample \"$pid\""))
+        XCTAssertTrue(runner.contains("export NSUnbufferedIO=YES"))
     }
 
     func testDependabotMaintainsPinnedGitHubActions() throws {

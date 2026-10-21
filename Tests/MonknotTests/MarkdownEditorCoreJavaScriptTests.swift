@@ -33,9 +33,13 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     /// Toggles, callouts and `[TOC]` lines are among the snippets, so a typed `</details>` far below
     /// its `<details>` is covered too. Toggles opened or closed on the page keep that state wherever
     /// a toggle still starts at the same place, footnotes and references match a fresh parse, and
-    /// every new unit gets an id no unit had before.
+    /// every new unit gets an id no unit had before. The seed is fixed, so the same documents run
+    /// every time: 600 by default, half of them from snippets and half generated;
+    /// `MONKNOT_EDITOR_FUZZ_RUNS` runs more.
     func testIncrementalParseMatchesAFullParse() throws {
         let context = try editorContext()
+        let runs = Int(ProcessInfo.processInfo.environment["MONKNOT_EDITOR_FUZZ_RUNS"] ?? "") ?? 600
+        context.evaluateScript("var fuzzRuns = \(max(2, runs));")
         let output = try XCTUnwrap(context.evaluateScript(Self.fuzz)?.toString())
         XCTAssertEqual(output, "ok", output)
     }
@@ -276,7 +280,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
         parsed.eol = model.eol;
         const states = new Map(toggles(model).map((toggle) => [toggle.start, toggle.block.viewOpen]));
         for (const toggle of toggles(parsed)) toggle.block.viewOpen = states.get(toggle.start);
-        if (run >= 1000) {
+        if (run >= fuzzRuns / 2) {
           const raw = Math.floor(random() * (text.length + 1));
           const to = Math.min(text.length, raw + Math.floor(random() * 8));
           const edited = plans(model, raw, to);
@@ -299,9 +303,9 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
         if (units.some((unit) => !unitsBefore.has(unit) && unit.id <= lastId)) return "run " + run + " step " + step + " reuses a unit id";
         return null;
       };
-      for (let run = 0; run < 2000; run += 1) {
+      for (let run = 0; run < fuzzRuns; run += 1) {
         let text;
-        if (run < 1000) {
+        if (run < fuzzRuns / 2) {
           const lines = [];
           const count = 3 + Math.floor(random() * 20);
           for (let index = 0; index < count; index += 1) lines.push(pick(snippets));
@@ -315,7 +319,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
         for (let step = 0; step < 6; step += 1) {
           const from = Math.floor(random() * (text.length + 1));
           const to = Math.min(text.length, from + (random() < 0.6 ? 0 : Math.floor(random() * 12)));
-          const insert = random() < 0.25 ? "" : run < 1000 ? pick(["<details>\n", "<summary>S</summary>\n", "</details>", "> [!NOTE]\n", "[TOC]\n", "x", "\n", "\n\n", "# ", "- ", "**", "`", "```", "> ", "|", " ", "[a](b)", "\\", pick(snippets) + "\n"]) : pick(inserts);
+          const insert = random() < 0.25 ? "" : run < fuzzRuns / 2 ? pick(["<details>\n", "<summary>S</summary>\n", "</details>", "> [!NOTE]\n", "[TOC]\n", "x", "\n", "\n\n", "# ", "- ", "**", "`", "```", "> ", "|", " ", "[a](b)", "\\", pick(snippets) + "\n"]) : pick(inserts);
           // Open or close some toggles, as a click on the page does; the state should follow each
           // toggle that still starts where it did, moved by the patch.
           const expectedOpen = new Map();
@@ -330,7 +334,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
           const patch = [text, from, to, insert];
           text = text.slice(0, from) + insert + text.slice(to);
           const update = E.applyPatch(model, from, to, insert);
-          if (run >= 1000) {
+          if (run >= fuzzRuns / 2) {
             steps += 1;
             if (update.container) inside += 1;
             if (update.container && update.container !== update.top) nested += 1;

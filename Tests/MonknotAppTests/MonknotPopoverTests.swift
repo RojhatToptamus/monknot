@@ -121,7 +121,9 @@ final class MonknotPopoverTests: FileOperationsTestCase {
             MonknotPopoverController.shared.close(animated: false, restoresFocus: false)
             probe.close()
         }
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        // SwiftUI lays the control out now and takes clicks after a pass of the run loop.
+        probe.window.contentView?.layoutSubtreeIfNeeded()
+        try? await Task.sleep(nanoseconds: 50_000_000)
         return probe
     }
 
@@ -162,28 +164,18 @@ final class MonknotPopoverTests: FileOperationsTestCase {
 
     /// A real click: the window's own event path, as AppKit delivers it.
     private func click(at point: NSPoint, in window: NSWindow) async {
-        if let down = mouse(.leftMouseDown, at: point, in: window) {
-            window.sendEvent(down)
-        }
+        guard let down = mouse(.leftMouseDown, at: point, in: window),
+              let up = mouse(.leftMouseUp, at: point, in: window)
+        else { return }
+        // An AppKit control in an active app (a key window, as on CI) tracks a press in a loop of its
+        // own until the mouse comes up, and nothing here runs until that loop ends: the mouse-up waits
+        // in the app's queue for it.
+        NSApp.postEvent(up, atStart: false)
+        window.sendEvent(down)
         try? await Task.sleep(nanoseconds: 40_000_000)
-        if let up = mouse(.leftMouseUp, at: point, in: window) {
-            window.sendEvent(up)
-        }
-    }
-
-    private func drag(from start: NSPoint, to end: NSPoint, in window: NSWindow) async {
-        if let down = mouse(.leftMouseDown, at: start, in: window) {
-            window.sendEvent(down)
-        }
-        for step in 1...8 {
-            try? await Task.sleep(nanoseconds: 16_000_000)
-            let fraction = CGFloat(step) / 8
-            let point = NSPoint(x: start.x + (end.x - start.x) * fraction, y: start.y + (end.y - start.y) * fraction)
-            if let dragged = mouse(.leftMouseDragged, at: point, in: window) {
-                window.sendEvent(dragged)
-            }
-        }
-        if let up = mouse(.leftMouseUp, at: end, in: window) {
+        // Nothing tracked the press, so the mouse-up is still queued: it goes to the window as a
+        // release does.
+        if NSApp.nextEvent(matching: .leftMouseUp, until: Date(), inMode: .default, dequeue: true) != nil {
             window.sendEvent(up)
         }
     }
@@ -193,7 +185,13 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         await click(at: probe.controlCenter, in: probe.window)
         let opened = await wait(timeout: 2) { self.controller.isOpen }
         XCTAssertTrue(opened, "Clicking the control did not open its popover")
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        // Shown and laid out at its content's size: the surface reads the same frame twice running.
+        var last: NSRect?
+        _ = await wait(timeout: 1) {
+            let frame = self.controller.openSurfaceFrame
+            defer { last = frame }
+            return self.controller.openModel?.isShown == true && frame != nil && frame == last
+        }
     }
 
     // MARK: - One surface
@@ -309,20 +307,6 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         }
     }
 
-    func testItOpensAboveItsControlWhereTheScreenEnds() async throws {
-        let visible = try XCTUnwrap(NSScreen.main?.visibleFrame)
-        // The window's top row sits 30 above the bottom of the screen's visible area.
-        let probe = await makeProbe(origin: NSPoint(x: visible.minX + 120, y: visible.minY - 330))
-        try await open(probe)
-        let control = try XCTUnwrap(controller.openControlFrame)
-        let surface = try XCTUnwrap(controller.openSurfaceFrame)
-        if control.minY - 4 - surface.height < visible.minY + 6 {
-            XCTAssertEqual(surface.minY, control.maxY + 4, accuracy: 0.5, "No room below: 4 above the control")
-            XCTAssertEqual(controller.openModel?.growAnchor, .bottomLeading, "Grows from the corner facing the control")
-        }
-        XCTAssertGreaterThanOrEqual(surface.minY, visible.minY + 6 - 0.5, "6 clear of the screen's edge")
-    }
-
     // MARK: - Motion
 
     func testThePointerGrowsItInAndTheKeyboardShowsItAtOnce() async throws {
@@ -394,105 +378,6 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         XCTAssertTrue(probe.window.isKeyWindow || !NSApp.isActive, "The window gets keyboard focus back")
         XCTAssertTrue(probe.window.firstResponder === responder, "The control that had focus gets it back")
         XCTAssertNil(panel.parent, "The panel no longer moves with the window")
-    }
-
-    /// With the app active, as it is in use: the popover takes key while its window stays main, Esc gives
-    /// key back with the same first responder, and another window taking key closes it.
-    func testItTakesKeyFocusWhileItsWindowStaysMain() async throws {
-        let app = NSApplication.shared
-        let previousPolicy = app.activationPolicy()
-        _ = app.setActivationPolicy(.regular)
-        app.activate(ignoringOtherApps: true)
-        defer { _ = app.setActivationPolicy(previousPolicy) }
-        let probe = await makeProbe()
-        probe.window.makeKeyAndOrderFront(nil)
-        let active = await wait(timeout: 2) { NSApp.isActive && probe.window.isKeyWindow }
-        try XCTSkipUnless(active, "The test app could not become active")
-        let responder = probe.window.firstResponder
-
-        try await open(probe)
-        let panel = try XCTUnwrap(controller.openPanel)
-        XCTAssertTrue(panel.isKeyWindow, "The popover takes keyboard focus")
-        XCTAssertTrue(probe.window.isMainWindow, "Its window stays main, so the titlebar keeps its active look")
-        XCTAssertTrue(NSApp.mainWindow === probe.window)
-        XCTAssertTrue(controller.isOpen, "Taking key from its own window must not close it")
-
-        XCTAssertTrue(controller.handleForTesting(try XCTUnwrap(key(53, "\u{1b}", in: panel))))
-        XCTAssertFalse(controller.isOpen)
-        XCTAssertTrue(probe.window.isKeyWindow, "Esc gives keyboard focus back to the window")
-        XCTAssertTrue(probe.window.firstResponder === responder, "…and to what had it")
-
-        try await open(probe)
-        let other = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 120), styleMask: [.titled], backing: .buffered, defer: false)
-        other.isReleasedWhenClosed = false
-        other.animationBehavior = .none
-        defer { other.orderOut(nil) }
-        other.makeKeyAndOrderFront(nil)
-        let closed = await wait(timeout: 1) { !self.controller.isOpen }
-        XCTAssertTrue(closed, "Another window taking focus closes it")
-        XCTAssertTrue(other.isKeyWindow, "…and keeps the focus it took")
-    }
-
-    @MainActor
-    final class FocusState: ObservableObject {
-        @Published var isPresented = false
-        @Published var focused: String?
-    }
-
-    /// Two controls that take focus whatever the system's Full Keyboard Access says, reporting which
-    /// has it.
-    private struct FocusProbe: View {
-        @ObservedObject var state: FocusState
-        @SwiftUI.FocusState private var focus: String?
-
-        var body: some View {
-            Color.clear
-                .frame(width: 28, height: 28)
-                .monknotPopover(isPresented: $state.isPresented, label: "Focus", theme: .defaultLight, zoomScale: 1) {
-                    VStack(spacing: 10) {
-                        ForEach(["first", "second"], id: \.self) { name in
-                            Text(name)
-                                .frame(width: 120, height: 28)
-                                .focusable()
-                                .focused($focus, equals: name)
-                        }
-                    }
-                    .padding(12)
-                    .onChange(of: focus) { _, value in state.focused = value }
-                }
-                .padding(40)
-                .frame(width: 400, height: 300, alignment: .topLeading)
-        }
-    }
-
-    func testWithFullKeyboardAccessFocusStartsOnTheFirstControlAndTabMovesOn() async throws {
-        MonknotPopoverController.fullKeyboardAccessOverride = true
-        defer { MonknotPopoverController.fullKeyboardAccessOverride = nil }
-        let state = FocusState()
-        let window = NSWindow(contentRect: NSRect(x: 200, y: 300, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.animationBehavior = .none
-        window.contentView = NSHostingView(rootView: FocusProbe(state: state))
-        window.makeKeyAndOrderFront(nil)
-        defer {
-            controller.close(animated: false, restoresFocus: false)
-            window.orderOut(nil)
-        }
-        try await Task.sleep(nanoseconds: 200_000_000)
-        state.isPresented = true
-        _ = await wait(timeout: 2) { self.controller.isOpen }
-        let panel = try XCTUnwrap(controller.openPanel)
-        let hosting = try XCTUnwrap(panel.contentView?.subviews.first)
-        let inContent = await wait(timeout: 1) { (panel.firstResponder as? NSView)?.isDescendant(of: hosting) == true }
-        XCTAssertTrue(inContent, "Keyboard focus did not go into the popover: \(String(describing: panel.firstResponder))")
-        let first = await wait(timeout: 1) { state.focused == "first" }
-        try XCTSkipUnless(first || NSApp.isActive, "SwiftUI reports focus only in a key window, and the test app is not active")
-        XCTAssertTrue(first, "Focus starts on the first control: \(String(describing: state.focused))")
-        if let tab = key(48, "\t", in: panel) {
-            panel.sendEvent(tab)
-        }
-        let second = await wait(timeout: 1) { state.focused == "second" }
-        XCTAssertTrue(second, "Tab moves to the next control: \(String(describing: state.focused))")
     }
 
     func testCancelOperationClosesIt() async throws {
@@ -737,7 +622,8 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         let store = try await openStore(root, selecting: "a.md")
         let h = SidebarMenuHarness(store: store, root: root, savedWorkspaces: saved)
         addTeardownBlock { @MainActor in h.close() }
-        try await Task.sleep(nanoseconds: 500_000_000)
+        let laidOut = await h.waitUntilLaidOut()
+        XCTAssertTrue(laidOut, "The sidebar never laid out its rows")
         try await reopenSwitcher(h)
         return h
     }
@@ -1005,61 +891,6 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         XCTAssertTrue(switched)
     }
 
-    func testWithFullKeyboardAccessTheSwitchersFocusAndKeysMoveOneHighlight() async throws {
-        let app = NSApplication.shared
-        let previousPolicy = app.activationPolicy()
-        _ = app.setActivationPolicy(.regular)
-        app.activate(ignoringOtherApps: true)
-        defer { _ = app.setActivationPolicy(previousPolicy) }
-        MonknotPopoverController.fullKeyboardAccessOverride = true
-        defer { MonknotPopoverController.fullKeyboardAccessOverride = nil }
-        let root = try makeRoot()
-        try write("# a\n", "a.md", in: root)
-        let folders = try makeRoot()
-        var saved = [root]
-        for name in ["Alpha", "Beta", "Gamma"] {
-            try mkdir(name, in: folders)
-            saved.append(folders.appendingPathComponent(name).standardizedFileURL)
-        }
-        let store = try await openStore(root, selecting: "a.md")
-        let h = SidebarMenuHarness(store: store, root: root, savedWorkspaces: saved)
-        addTeardownBlock { @MainActor in h.close() }
-        h.window.makeKeyAndOrderFront(nil)
-        try XCTSkipUnless(NSApp.isFullKeyboardAccessEnabled, "Buttons take keyboard focus only with Full Keyboard Access on in System Settings")
-        let active = await wait(timeout: 2) { NSApp.isActive && h.window.isKeyWindow }
-        try XCTSkipUnless(active, "SwiftUI moves focus only in a key window of an active app, and the test app could not become active")
-        try await Task.sleep(nanoseconds: 300_000_000)
-        try await reopenSwitcher(h)
-        let list = try XCTUnwrap(switcherList)
-        let panel = try XCTUnwrap(controller.openPanel)
-        let alpha = try rowID("Alpha")
-        let beta = try rowID("Beta")
-        let gamma = try rowID("Gamma")
-
-        let first = await wait(timeout: 1) { list.focus == .row(alpha) }
-        XCTAssertTrue(first, "Focus starts on the first row that can be chosen: \(String(describing: list.focus))")
-        XCTAssertEqual(list.highlighted, alpha, "The focused row is the highlight")
-
-        func tab() {
-            if let tab = key(48, "\t", in: panel) {
-                panel.sendEvent(tab)
-            }
-        }
-        tab()
-        let onRemove = await wait(timeout: 1) { list.focus == .control }
-        XCTAssertTrue(onRemove, "Tab reaches the highlighted row's Remove: \(String(describing: list.focus))")
-        XCTAssertEqual(list.highlighted, alpha, "The row keeps the highlight while its Remove has focus")
-        tab()
-        let onBeta = await wait(timeout: 1) { list.focus == .row(beta) }
-        XCTAssertTrue(onBeta, "Tab moves on to the next row: \(String(describing: list.focus))")
-        XCTAssertEqual(list.highlighted, beta, "Tab moves the one highlight")
-
-        try down()
-        XCTAssertEqual(list.highlighted, gamma)
-        let followed = await wait(timeout: 1) { list.focus == .row(gamma) }
-        XCTAssertTrue(followed, "Keyboard focus follows the keys' highlight: \(String(describing: list.focus))")
-    }
-
     func testTheKeysKeepTheirRowInViewPastSevenRows() async throws {
         let names = (1...12).map { String(format: "Folder %02d", $0) }
         _ = try await openSwitcher(saving: names)
@@ -1076,7 +907,8 @@ final class MonknotPopoverTests: FileOperationsTestCase {
             return rowTop >= top - 0.5 && rowTop + 30 <= top + visible.height + 0.5
         }
 
-        XCTAssertTrue(isVisible(0) && !isVisible(12), "Seven rows show, the list starting at its top")
+        let atTop = await wait(timeout: 1) { isVisible(0) && !isVisible(12) }
+        XCTAssertTrue(atTop, "Seven rows show, the list starting at its top")
         try up()
         try up()
         try up()

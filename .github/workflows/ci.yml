@@ -18,9 +18,14 @@ concurrency:
 
 jobs:
   test:
-    name: Test macOS (arm64)
+    # The suite runs as three shards on three machines at once; script/test_suite.sh defines them.
+    name: Test shard (${{ matrix.shard }})
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [editor, workspace, app]
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
 
@@ -49,16 +54,18 @@ jobs:
           bash -n script/*.sh
 
       - name: Build shipping SwiftPM products in release mode
+        if: matrix.shard == 'app'
         shell: bash
         run: |
           set -euo pipefail
           swift build -c release --product monknot-export
           swift build -c release --product monknot-capture
 
-      - name: Run XCTest suite
-        run: script/test_suite.sh
+      - name: Run XCTest shard
+        run: script/test_suite.sh "${{ matrix.shard }}"
 
       - name: Run executable smoke suites and CLI entry points
+        if: matrix.shard == 'app'
         shell: bash
         run: |
           set -euo pipefail
@@ -66,3 +73,16 @@ jobs:
           swift run MonknotStoreSmokeTests
           swift run monknot-export --help
           swift run monknot-capture --help
+
+  result:
+    # The check `main` requires: it passes only when every shard passed.
+    name: Test macOS (arm64)
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every shard to pass
+        env:
+          SHARDS: ${{ needs.test.result }}
+        run: test "$SHARDS" = "success"

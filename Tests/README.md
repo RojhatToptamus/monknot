@@ -3,6 +3,31 @@
 `script/test_suite.sh` runs a small, explicit allowlist concurrently, then runs every other
 XCTest serially. New tests remain serial unless the allowlist is deliberately changed.
 
+## CI shards
+
+CI runs the suite as three shards on three machines at once: `script/test_suite.sh editor`
+(Preview editing and writing assistance), `workspace` (the sidebar, file operations, documents and
+their viewers) and `app` (everything else, with `MonknotTests`, the repository contracts, the
+release builds and the smoke executables). A `MonknotAppTests` class belongs to `editor` or
+`workspace` by the start of its name, as the runner's filters list; every other class runs in
+`app`, so a new class is never left out. `script/test_suite.sh` with no shard runs everything.
+
+A run that prints nothing for 300 seconds (`MONKNOT_TEST_STALL_SECONDS`) has hung: the runner
+prints the test process's stacks and stops it, so CI fails in minutes and names the stuck test.
+Test output is unbuffered (`NSUnbufferedIO`) so the log shows the test that was running.
+
+Wall-clock budgets (`MarkdownVisualEditorTests`' keystroke costs) are four times larger when `CI`
+is set, since a shared runner is several times slower than a Mac at a desk.
+
+A test process is never the active app, at a desk or on CI. Tests that need a key window (keys,
+WebKit page focus, SwiftUI focus) use `KeyTestWindow`, which answers as the key and main window.
+Keys for a web page go through `PageKeyboard`, which returns once the page has received them:
+WebKit hands a page one key at a time, so on a slow runner a test that reads the page a moment
+after a key could read it before the key arrived. A click on an AppKit control queues its mouse-up
+before the mouse-down, since the control tracks the press in a loop of its own. Tests that record
+an animation frame by frame skip on CI (`skipFrameByFrameRecordingOnCI`), whose virtual display
+drops frames.
+
 ## Parallel allowlist
 
 The following `MonknotAppTests` suites can run concurrently:
@@ -32,7 +57,7 @@ repeating the isolation audit and full-suite stress runs.
   platform-global or lifecycle-sensitive resources.
 - Menu and popover suites (`MonknotContextMenuTests`, `MonknotPopUpMenuTests`,
   `MonknotPopoverTests`, the sidebar suites) share `MonknotContextMenuController.shared`,
-  `MonknotPopoverController.shared`, their event monitors and the app's activation; each closes
+  `MonknotPopoverController.shared` and their event monitors; each closes
   both controllers before it starts.
 - Terminal tests create PTYs, processes, dispatch sources, and file descriptors.
 - All other `MonknotAppTests` stay serial until they have both an isolation audit and a measured

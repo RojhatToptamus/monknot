@@ -5985,9 +5985,14 @@
         keepAttached();
       },
       setItems(items) {
+        // A row the keys or the pointer moved to stays highlighted while it is still listed, so a
+        // list that arrives after ↓ does not change what ↩ chooses.
+        const kept = state.index > 0 ? state.visible[state.index]?.id : undefined;
         state.items = items;
         state.index = 0;
         render();
+        const at = kept === undefined ? -1 : state.visible.findIndex((item) => item.id === kept);
+        if (at > 0) setIndex(at, true);
         keepAttached();
       },
       closeSubmenuMark() {
@@ -7569,6 +7574,16 @@
           menu.close("typing");
         }
         break;
+      }
+      // The block menu's field takes focus a moment after the menu opens (⌘/); a key typed before
+      // then reaches the text, and is the menu's all the same.
+      if (blockMenu.isOpen) {
+        if (blockMenu.handleNavigation(event)) return true;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          blockMenu.close("escape");
+          return true;
+        }
       }
       if (event.key === "Escape" && formatBar.classList.contains("mk-visible")) {
         event.preventDefault();

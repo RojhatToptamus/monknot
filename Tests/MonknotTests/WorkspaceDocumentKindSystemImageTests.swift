@@ -32,13 +32,20 @@ final class WorkspaceDocumentKindSystemImageTests: XCTestCase {
     /// The bug this replaces: every text file wore the Markdown note's glyph.
     func testNoFileButMarkdownShowsTheMarkdownGlyph() {
         let markdown = WorkspaceFileGlyph.markdown.systemImage
-        let names = WorkspaceDocumentSupport.textExtensions.map { "file.\($0)" }
-            + WorkspaceDocumentSupport.htmlExtensions.map { "file.\($0)" }
-            + WorkspaceDocumentSupport.notebookExtensions.map { "file.\($0)" }
-            + WorkspaceDocumentSupport.textFilenames.map { $0 }
-            + WorkspaceDocumentSupport.imageExtensions.map { "file.\($0)" }
-            + WorkspaceDocumentSupport.mediaExtensions.map { "file.\($0)" }
-            + ["file.pdf", "file.sqlite", "unknown-kind-of-file"]
+        // Built a step at a time: one long sum of mapped arrays is more than Swift 6.2 type-checks.
+        let extensionGroups: [Set<String>] = [
+            WorkspaceDocumentSupport.textExtensions,
+            WorkspaceDocumentSupport.htmlExtensions,
+            WorkspaceDocumentSupport.notebookExtensions,
+            WorkspaceDocumentSupport.imageExtensions,
+            WorkspaceDocumentSupport.mediaExtensions,
+        ]
+        var names: [String] = []
+        for extensions in extensionGroups {
+            names.append(contentsOf: extensions.map { "file.\($0)" })
+        }
+        names.append(contentsOf: WorkspaceDocumentSupport.textFilenames)
+        names.append(contentsOf: ["file.pdf", "file.sqlite", "unknown-kind-of-file"])
         for name in names {
             XCTAssertNotEqual(glyph(name).systemImage, markdown, name)
         }

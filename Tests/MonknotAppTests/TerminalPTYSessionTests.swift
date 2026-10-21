@@ -124,7 +124,11 @@ final class TerminalPTYSessionTests: XCTestCase {
             )
         }
 
+        // zsh answers ^C by drawing a fresh prompt, and drops a line typed before it has: wait for it.
+        let printed = recorder.snapshot.count
         session.write("\u{3}")
+        XCTAssertTrue(recorder.waitForOutput(beyond: printed, timeout: 5), "zsh did not answer ^C")
+        Thread.sleep(forTimeInterval: 0.1)
         session.write("printf '__MONKNOT_%s__\\n' AFTER_INTERRUPT\n")
         XCTAssertNotNil(
             recorder.waitFor("__MONKNOT_AFTER_INTERRUPT__", timeout: 5),
@@ -352,6 +356,19 @@ private final class TerminalPTYRecorder: @unchecked Sendable {
         condition.lock()
         output = ""
         condition.unlock()
+    }
+
+    /// Waits until more than `count` characters of output have arrived.
+    func waitForOutput(beyond count: Int, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        condition.lock()
+        defer { condition.unlock() }
+        while output.count <= count {
+            if !condition.wait(until: deadline) {
+                return false
+            }
+        }
+        return true
     }
 
     func waitFor(_ marker: String, timeout: TimeInterval) -> String? {

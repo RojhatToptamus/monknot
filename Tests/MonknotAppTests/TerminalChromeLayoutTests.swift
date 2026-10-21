@@ -130,6 +130,13 @@ final class TerminalChromeLayoutTests: XCTestCase {
         let maximumOffset = documentView.frame.width - horizontalScrollView.contentView.bounds.width
         XCTAssertGreaterThan(maximumOffset, 80)
 
+        // The active tab is the last: once the tabs are laid out, the strip scrolls it into view.
+        let revealDeadline = Date().addingTimeInterval(3)
+        while horizontalScrollView.contentView.bounds.origin.x < 1, Date() < revealDeadline {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertGreaterThan(horizontalScrollView.contentView.bounds.origin.x, 1, "Mounting reveals the active tab")
+
         horizontalScrollView.contentView.scroll(to: NSPoint(x: 60, y: 0))
         horizontalScrollView.reflectScrolledClipView(horizontalScrollView.contentView)
         let manualOffset = horizontalScrollView.contentView.bounds.origin.x
