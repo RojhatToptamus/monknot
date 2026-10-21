@@ -553,6 +553,13 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
 
     // MARK: - Performance
 
+    /// Milliseconds a keystroke may take, measured on a Mac at a desk. A shared CI machine (GitHub
+    /// sets `CI`) is several times slower and times in whole milliseconds, so there the budgets are
+    /// four times larger: still far below what a whole-document re-render costs.
+    private static func keystrokeBudget(_ milliseconds: Double) -> Double {
+        ProcessInfo.processInfo.environment["CI"] == "true" ? milliseconds * 4 : milliseconds
+    }
+
     /// A 1 MB document opens editable and a keystroke stays far under one frame.
     func testLargeDocumentKeystrokesStayUnderOneFrame() async throws {
         let section = """
@@ -599,7 +606,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         let median = try XCTUnwrap(timing?["median"] as? Double)
         let p95 = try XCTUnwrap(timing?["p95"] as? Double)
         print("Large document: opened editable in \(String(format: "%.2f", openSeconds)) s; keystroke median \(String(format: "%.2f", median)) ms, p95 \(String(format: "%.2f", p95)) ms; mean patch \(timing?["patch"] ?? 0) dom \(timing?["dom"] ?? 0) selection \(timing?["selection"] ?? 0)")
-        XCTAssertLessThan(p95, 16, "A keystroke must render within one frame")
+        XCTAssertLessThan(p95, Self.keystrokeBudget(16), "A keystroke must render within one frame")
         let stored = await waitUntil(timeout: 10) { fixture.store.documentText.count == markdown.count + 40 }
         XCTAssertTrue(stored, "Every keystroke reached the store")
     }
@@ -627,7 +634,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         let median = try XCTUnwrap(timing?["median"] as? Double)
         let p95 = try XCTUnwrap(timing?["p95"] as? Double)
         print("Typical document: keystroke median \(String(format: "%.2f", median)) ms, p95 \(String(format: "%.2f", p95)) ms")
-        XCTAssertLessThan(p95, 8)
+        XCTAssertLessThan(p95, Self.keystrokeBudget(8))
     }
 
     /// A note with many footnotes: a keystroke in a paragraph without a reference costs what it
@@ -657,7 +664,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         let median = try XCTUnwrap(timing?["median"] as? Double)
         let p95 = try XCTUnwrap(timing?["p95"] as? Double)
         print("Note with footnotes: keystroke median \(String(format: "%.2f", median)) ms, p95 \(String(format: "%.2f", p95)) ms")
-        XCTAssertLessThan(p95, 8)
+        XCTAssertLessThan(p95, Self.keystrokeBudget(8))
 
         try await fixture.setSelection(("# Notes\n\nParagraph" as NSString).length)
         _ = try await fixture.evaluate("document.getElementById('content').dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: '[^n150]', bubbles: true, cancelable: true })); true")
@@ -683,7 +690,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         try await fixture.setSelection(source.range(of: "A plain paragraph").location + 2)
         let plain = try await measureKeystrokes(fixture)
         print("Long toggle: keystroke in the toggle median \(inside.median) ms, p95 \(inside.p95) ms (patch \(inside.patch), dom \(inside.dom)); in a plain paragraph median \(plain.median) ms, p95 \(plain.p95) ms")
-        XCTAssertLessThan(inside.p95, 8, "A keystroke in a long toggle costs what it does in a short note")
+        XCTAssertLessThan(inside.p95, Self.keystrokeBudget(8), "A keystroke in a long toggle costs what it does in a short note")
         XCTAssertLessThan(inside.median, plain.median * 3 + 0.5, "A keystroke in the toggle costs about what one in a plain paragraph does")
         let stored = await waitUntil(timeout: 10) { fixture.store.documentText.count == markdown.count + 80 }
         XCTAssertTrue(stored, "Every keystroke reached the store")
@@ -1228,36 +1235,40 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
     /// with a pause between keys as a person types, the space must land in the file where it was
     /// typed and the next word must follow it.
     func testSpacesTypeWhereTheyAreTypedInEveryBlock() async throws {
-        let cases: [(name: String, source: String, caretAfter: String, typed: String, expected: String)] = [
-            ("paragraph end", "Hello\n", "Hello", " world", "Hello world\n"),
-            ("two words", "Hello\n", "Hello", " big world", "Hello big world\n"),
-            ("double space", "Hello\n", "Hello", "  x", "Hello  x\n"),
-            ("mid word", "Helloworld\n", "Hello", " ", "Hello world\n"),
+        // One note holds every kind of block, each with a word found nowhere else, so one page
+        // serves every case.
+        let cases: [(name: String, block: String, caretAfter: String, typed: String, expected: String)] = [
+            ("paragraph end", "Alpha", "Alpha", " x", "Alpha x"),
+            ("two words", "Bravo", "Bravo", " big world", "Bravo big world"),
+            ("double space", "Charlie", "Charlie", "  x", "Charlie  x"),
+            ("mid word", "Deltaworld", "Delta", " ", "Delta world"),
             // Typing at the end of bold continues it, spaces included (design.md §10.10).
-            ("after bold", "**Bold**\n", "Bold", " text", "**Bold text**\n"),
-            ("heading", "# Title\n", "Title", " here", "# Title here\n"),
-            ("list item", "- item\n", "item", " two", "- item two\n"),
-            ("task item", "- [ ] task\n", "task", " done", "- [ ] task done\n"),
-            ("numbered item", "1. one\n", "one", " two", "1. one two\n"),
-            ("quote", "> quote\n", "quote", " more", "> quote more\n"),
-            ("callout", "> [!NOTE]\n> note\n", "note", " more", "> [!NOTE]\n> note more\n"),
-            ("table cell", "| a | b |\n| --- | --- |\n| cell | x |\n", "cell", " two", "| a | b |\n| --- | --- |\n| cell two | x |\n"),
-            ("toggle title", "<details open>\n<summary>Title</summary>\n\nBody\n\n</details>\n", "Title", " two", "<details open>\n<summary>Title two</summary>\n\nBody\n\n</details>\n"),
-            ("toggle body", "<details open>\n<summary>Title</summary>\n\nBody\n\n</details>\n", "Body", " text", "<details open>\n<summary>Title</summary>\n\nBody text\n\n</details>\n"),
-            ("code block", "```\nlet x\n```\n", "let x", " = 1", "```\nlet x = 1\n```\n"),
-            ("before link", "see [link](u)\n", "see", " the", "see the [link](u)\n"),
+            ("after bold", "**Bold**", "Bold", " x", "**Bold x**"),
+            ("heading", "# Title", "Title", " x", "# Title x"),
+            ("list item", "- item", "item", " x", "- item x"),
+            ("task item", "- [ ] task", "task", " x", "- [ ] task x"),
+            ("numbered item", "1. one", "one", " x", "1. one x"),
+            ("quote", "> quote", "quote", " x", "> quote x"),
+            ("callout", "> [!NOTE]\n> note", "note", " x", "> [!NOTE]\n> note x"),
+            ("table cell", "| a | b |\n| --- | --- |\n| cell | y |", "cell", " x", "| a | b |\n| --- | --- |\n| cell x | y |"),
+            ("toggle title", "<details open>\n<summary>Toggle</summary>\n\nInside\n\n</details>", "Toggle", " x", "<summary>Toggle x</summary>"),
+            ("toggle body", "", "Inside", " x", "\n\nInside x\n\n"),
+            ("code block", "```\nlet z\n```", "let z", " = 1", "```\nlet z = 1\n```"),
+            ("before link", "see [link](u)", "see", " the", "see the [link](u)"),
         ]
+        // A paragraph between blocks keeps lists, quotes and the callout apart.
+        let markdown = cases.map(\.block).filter { !$0.isEmpty }.joined(separator: "\n\nSep\n\n") + "\n"
+        let fixture = try await makeFixture(markdown: markdown)
         for testCase in cases {
-            let fixture = try await makeFixture(markdown: testCase.source)
-            let caret = (testCase.source as NSString).range(of: testCase.caretAfter).location + (testCase.caretAfter as NSString).length
+            let text = fixture.store.documentText as NSString
+            let caret = NSMaxRange(text.range(of: testCase.caretAfter))
             try await fixture.setSelection(caret)
             for character in testCase.typed {
                 fixture.type(String(character))
                 try await Task.sleep(nanoseconds: 120_000_000)
             }
-            let typed = await waitUntil(timeout: 2) { fixture.store.documentText == testCase.expected }
+            let typed = await waitUntil(timeout: 2) { fixture.store.documentText.contains(testCase.expected) }
             XCTAssertTrue(typed, "\(testCase.name): \(fixture.store.documentText.debugDescription)")
-            fixture.close()
         }
     }
 

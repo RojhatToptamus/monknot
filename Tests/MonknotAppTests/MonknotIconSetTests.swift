@@ -127,44 +127,44 @@ final class MonknotIconSetTests: XCTestCase {
     // MARK: - What renders
 
     /// Renders every picture of every place through `MonknotSystemGlyph`, as the app draws it, at zoom
-    /// 0.8, 1 and 2 in light and dark, measures the ink it draws, and checks that the pictures in each
+    /// 0.8, 1 and 2, measures the ink it draws, and checks that the pictures in each
     /// place read at one optical size and that each glyph's ink is centred in its box.
     func testRenderedGlyphsReadAsOneSizeAndSitCentred() throws {
-        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
-            for zoom in [0.8, 1.0, 2.0] {
-                for place in Self.places {
-                    let target = MonknotSymbolOptics.targetOpticalSize(nominal: place.nominal)
-                    let glyphScale = MonknotMetrics.interfaceGlyph(100, theme: theme, zoomScale: zoom) / 100
-                    for name in existing(place.glyphs) {
-                        let rendered = try XCTUnwrap(RenderedGlyph(name, nominal: place.nominal, theme: theme, zoomScale: zoom),
-                                                     "\(name) drew nothing")
-                        let metrics = try XCTUnwrap(SymbolInkMetrics.metrics(for: name))
-                        // What it draws is what the measure promised, to a pixel at 2×.
-                        let pointSize = MonknotMetrics.interfaceGlyph(
-                            MonknotSymbolOptics.pointSizeBase(for: name, nominal: place.nominal), theme: theme, zoomScale: zoom)
-                        // SF Symbols draw a touch tighter at display sizes, so the measure, taken at 100 pt,
-                        // holds to 3 % past a pixel.
-                        let tolerance = max(0.6, pointSize * 0.03)
-                        XCTAssertEqual(rendered.ink.width, metrics.widthPerPoint * pointSize, accuracy: tolerance,
-                                       "\(name) in the \(place.name) at \(zoom)")
-                        XCTAssertEqual(rendered.ink.height, metrics.heightPerPoint * pointSize, accuracy: tolerance,
-                                       "\(name) in the \(place.name) at \(zoom)")
-                        if MonknotSymbolOptics.role(for: name) == .picture {
-                            // Measured on what rendered: the drawn box, and the base's share of it.
-                            let base = sqrt(metrics.baseWidthPerPoint * metrics.baseHeightPerPoint)
-                                / sqrt(metrics.widthPerPoint * metrics.heightPerPoint)
-                            let optical = sqrt(rendered.ink.width * rendered.ink.height) * sqrt(base)
-                                * pow(max(metrics.inkCoverage, 0.05) / 0.33, 0.06)
-                            let spansTarget = max(rendered.ink.width, rendered.ink.height) >= target * glyphScale - 0.5
-                            XCTAssertTrue(abs(optical - target * glyphScale) <= 0.6 * max(1, glyphScale) || spansTarget,
-                                          "\(name) in the \(place.name) at \(zoom) reads \(optical), not \(target * glyphScale)")
-                        }
-                        // Its ink sits where SF Symbols centres it: no glyph is pushed off its column.
-                        XCTAssertEqual(rendered.ink.midX, rendered.box.midX + rendered.symbolInkOffset.x, accuracy: 0.35,
-                                       "\(name) in the \(place.name) at \(zoom) sits off its column")
-                        XCTAssertEqual(rendered.ink.midY, rendered.box.midY + rendered.symbolInkOffset.y, accuracy: 0.35,
-                                       "\(name) in the \(place.name) at \(zoom) sits off its row")
+        // A glyph's size depends on the zoom alone, and it is drawn in black whatever the theme.
+        let theme = AppTheme.defaultLight
+        for zoom in [0.8, 1.0, 2.0] {
+            for place in Self.places {
+                let target = MonknotSymbolOptics.targetOpticalSize(nominal: place.nominal)
+                let glyphScale = MonknotMetrics.interfaceGlyph(100, theme: theme, zoomScale: zoom) / 100
+                for name in existing(place.glyphs) {
+                    let rendered = try XCTUnwrap(RenderedGlyph(name, nominal: place.nominal, theme: theme, zoomScale: zoom),
+                                                 "\(name) drew nothing")
+                    let metrics = try XCTUnwrap(SymbolInkMetrics.metrics(for: name))
+                    // What it draws is what the measure promised, to a pixel at 2×.
+                    let pointSize = MonknotMetrics.interfaceGlyph(
+                        MonknotSymbolOptics.pointSizeBase(for: name, nominal: place.nominal), theme: theme, zoomScale: zoom)
+                    // SF Symbols draw a touch tighter at display sizes, so the measure, taken at 100 pt,
+                    // holds to 3 % past a pixel.
+                    let tolerance = max(0.6, pointSize * 0.03)
+                    XCTAssertEqual(rendered.ink.width, metrics.widthPerPoint * pointSize, accuracy: tolerance,
+                                   "\(name) in the \(place.name) at \(zoom)")
+                    XCTAssertEqual(rendered.ink.height, metrics.heightPerPoint * pointSize, accuracy: tolerance,
+                                   "\(name) in the \(place.name) at \(zoom)")
+                    if MonknotSymbolOptics.role(for: name) == .picture {
+                        // Measured on what rendered: the drawn box, and the base's share of it.
+                        let base = sqrt(metrics.baseWidthPerPoint * metrics.baseHeightPerPoint)
+                            / sqrt(metrics.widthPerPoint * metrics.heightPerPoint)
+                        let optical = sqrt(rendered.ink.width * rendered.ink.height) * sqrt(base)
+                            * pow(max(metrics.inkCoverage, 0.05) / 0.33, 0.06)
+                        let spansTarget = max(rendered.ink.width, rendered.ink.height) >= target * glyphScale - 0.5
+                        XCTAssertTrue(abs(optical - target * glyphScale) <= 0.6 * max(1, glyphScale) || spansTarget,
+                                      "\(name) in the \(place.name) at \(zoom) reads \(optical), not \(target * glyphScale)")
                     }
+                    // Its ink sits where SF Symbols centres it: no glyph is pushed off its column.
+                    XCTAssertEqual(rendered.ink.midX, rendered.box.midX + rendered.symbolInkOffset.x, accuracy: 0.35,
+                                   "\(name) in the \(place.name) at \(zoom) sits off its column")
+                    XCTAssertEqual(rendered.ink.midY, rendered.box.midY + rendered.symbolInkOffset.y, accuracy: 0.35,
+                                   "\(name) in the \(place.name) at \(zoom) sits off its row")
                 }
             }
         }

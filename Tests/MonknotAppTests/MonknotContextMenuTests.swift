@@ -352,11 +352,12 @@ final class MonknotContextMenuTests: FileOperationsTestCase {
             title == "-" ? .separator : .item(.init(title: title, systemImage: nil, isEnabled: true, isDestructive: false, perform: {}))
         }
 
-        let middle = NSPoint(x: visible.midX, y: visible.midY)
-        controller.present(entries: entries, at: middle, in: h.window, theme: .defaultLight, zoomScale: 1)
+        // Near the top of the screen the whole menu fits below the pointer, on a display of any size.
+        let top = NSPoint(x: visible.midX, y: visible.maxY - 20)
+        controller.present(entries: entries, at: top, in: h.window, theme: .defaultLight, zoomScale: 1)
         var surface = try XCTUnwrap(controller.openSurfaceFrame)
-        XCTAssertEqual(surface.minX, middle.x)
-        XCTAssertEqual(surface.maxY, middle.y, "The top-left corner sits at the pointer")
+        XCTAssertEqual(surface.minX, top.x)
+        XCTAssertEqual(surface.maxY, top.y, "The top-left corner sits at the pointer")
 
         let corner = NSPoint(x: visible.maxX - 10, y: visible.minY + 10)
         controller.present(entries: entries, at: corner, in: h.window, theme: .defaultLight, zoomScale: 1)
