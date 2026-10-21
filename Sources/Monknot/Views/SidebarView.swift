@@ -100,8 +100,15 @@ struct SidebarView: View {
         moveTarget ?? (isDropTargeted ? .root : nil)
     }
 
+    // The modifiers are split across helpers, in their order, so each chain stays short enough for
+    // the compiler.
     var body: some View {
-        followingTree(sidebarColumn)
+        presentingSheets(handlingRequests(followingOperations(followingTree(sidebarColumn))))
+    }
+
+    /// New items, Select All, Recents and file drops on the sidebar.
+    private func handlingRequests(_ content: some View) -> some View {
+        content
             .onChange(of: newItemRequest) { _, request in
                 guard let request else { return }
                 newItemRequest = nil
@@ -134,6 +141,11 @@ struct SidebarView: View {
                     }
                 )
             }
+    }
+
+    /// The name prompt and the review of links a move rewrites.
+    private func presentingSheets(_ content: some View) -> some View {
+        content
             .sheet(item: $sidebarPrompt) { prompt in
                 SidebarNameInputSheet(
                     theme: theme,
@@ -192,6 +204,11 @@ struct SidebarView: View {
                 followMovedFolders()
                 resolvePendingLanding()
             }
+    }
+
+    /// Lands a moved or copied item once its operation ends, and keeps the open folders saved.
+    private func followingOperations(_ content: some View) -> some View {
+        content
             // An item Edit › Undo or Redo moved or copied lands as a dropped one does.
             .onChange(of: store.fileOperationLanding) { _, landing in
                 guard let landing else { return }

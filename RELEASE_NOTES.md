@@ -1,25 +1,25 @@
-# Monknot 0.1.8
+# Monknot 0.1.9
 
-This release plays video and audio, opens images with the PDF markup tools, and makes everyday file work in the sidebar dependable.
+This release edits Markdown in place in Preview, brings writing assistance there, lists every file in the folder, and gives the window a new look.
 
-## Files and folders
+## Editing in Preview
 
-- Selects folders in the sidebar; Paste, New File and New Folder put items in the selected folder.
-- Copies, cuts, pastes, duplicates, renames and moves files and folders reliably, including between windows, and keeps open documents, unsaved text, links and Recents with them.
-- Moves several items in one drag, copies with Option, and shows what a drop will do.
-- Matches the context menus for files, folders and empty space, and says why when an item can't be created, pasted or shown.
-- Offers Monknot in Finder's Open With menu and adds an Open in Monknot service.
+- Edits Markdown as rendered text in Preview and writes each change to the file as Markdown, so syntax Monknot does not render stays as written.
+- Inserts headings, lists, to-dos, toggles, callouts, quotes, tables, dividers, code, images, video, audio, files, a new page or a table of contents from the `/` menu at the start of a line.
+- Moves a block by dragging its handle; clicking the handle turns the block into another kind, duplicates it or deletes it.
+- Shows a format bar over selected text and lists workspace notes to link after `[[`.
+- Fixes typos and grammar and offers on-device completions while editing in Preview, as in Source. Show Writing Tools switches to Source and opens them there.
 
-## Viewing
+## Files and the sidebar
 
-- Plays video and audio in the workspace with the standard macOS controls.
-- Opens images fitted to the window and marks them up with the PDF tools; saving writes the markup into the image.
-- Adds Command-scroll zoom and text copy to PDFs.
-- Lists LICENSE, README and similar files as text, and keeps binary files out of the editor and search.
+- Lists every file in the folder except hidden ones, build folders such as `node_modules`, and packages; archives, Office documents and other files open in their default app.
+- Shows a Jupyter notebook's cells and outputs in Preview and its JSON in Source.
+- Selects several items with Shift- and Command-click, moves through the tree with the arrow keys, and copies, moves, duplicates or trashes the whole selection.
+- Undoes and redoes moves, copies, renames and Move to Trash from the Edit menu.
+- Opens a new file in its own tab.
 
-## Window and terminal
+## Window
 
-- Keeps the window controls still while the sidebar and terminal open and close, and slides panes smoothly.
-- Keeps counters, toolbars, tabs and Settings steady as their content changes.
-- Keeps each terminal session's screen and scrollback, scrolls full-screen programs with the mouse wheel, and types the paths of files dropped on it.
-- Follows the theme's light or dark look in menus, controls and scroll bars.
+- Sets the document and terminal on rounded cards in one window colour, with the same controls, menus and popovers throughout.
+- Keeps the outline rail short in long documents and opens the list of headings when the pointer rests on it.
+- Keeps pinned tabs open on Command-W.
