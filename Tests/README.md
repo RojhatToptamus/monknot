@@ -21,9 +21,12 @@ is set, since a shared runner is several times slower than a Mac at a desk.
 
 A test process is never the active app, at a desk or on CI. Tests that need a key window (keys,
 WebKit page focus, SwiftUI focus) use `KeyTestWindow`, which answers as the key and main window.
-A click on an AppKit control queues its mouse-up before the mouse-down, since the control tracks
-the press in a loop of its own. Tests that record an animation frame by frame skip on CI
-(`skipFrameByFrameRecordingOnCI`), whose virtual display drops frames.
+Keys for a web page go through `PageKeyboard`, which returns once the page has received them:
+WebKit hands a page one key at a time, so on a slow runner a test that reads the page a moment
+after a key could read it before the key arrived. A click on an AppKit control queues its mouse-up
+before the mouse-down, since the control tracks the press in a loop of its own. Tests that record
+an animation frame by frame skip on CI (`skipFrameByFrameRecordingOnCI`), whose virtual display
+drops frames.
 
 ## Parallel allowlist
 

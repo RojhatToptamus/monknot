@@ -547,22 +547,8 @@ final class MarkdownEditorMenuTests: WorkspaceStoreTestCase {
         }
 
         private func send(characters: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags = []) {
-            for type in [NSEvent.EventType.keyDown, .keyUp] {
-                guard let event = NSEvent.keyEvent(
-                    with: type,
-                    location: .zero,
-                    modifierFlags: modifiers,
-                    timestamp: ProcessInfo.processInfo.systemUptime,
-                    windowNumber: window.windowNumber,
-                    context: nil,
-                    characters: characters,
-                    charactersIgnoringModifiers: characters,
-                    isARepeat: false,
-                    keyCode: keyCode
-                ) else { continue }
-                window.sendEvent(event)
-            }
-            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            PageKeyboard(window: window, webView: { self.webView }, settle: 0.05)
+                .send(characters: characters, keyCode: keyCode, modifiers: modifiers)
         }
 
         private static func literal(_ text: String) -> String {

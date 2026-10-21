@@ -1238,59 +1238,31 @@ final class PreviewFlowFixture {
     /// Types through AppKit's key handling, as a keyboard would.
     func type(_ text: String) {
         for character in text {
-            send(.keyDown, characters: String(character), keyCode: 0)
-            send(.keyUp, characters: String(character), keyCode: 0)
-            pump()
+            keyboard.send(characters: String(character), keyCode: 0)
         }
     }
 
     func press(_ key: Key) {
-        send(.keyDown, characters: key.characters, keyCode: key.keyCode, modifiers: key.modifiers)
-        send(.keyUp, characters: key.characters, keyCode: key.keyCode, modifiers: key.modifiers)
-        pump()
+        keyboard.send(characters: key.characters, keyCode: key.keyCode, modifiers: key.modifiers)
     }
 
     /// Holds a key down for `duration` with a repeat or two, as a held key would.
     func hold(_ key: Key, for duration: TimeInterval) async {
-        send(.keyDown, characters: key.characters, keyCode: key.keyCode, modifiers: key.modifiers)
-        pump()
+        keyboard.send([.keyDown], characters: key.characters, keyCode: key.keyCode, modifiers: key.modifiers)
         let deadline = Date().addingTimeInterval(duration)
         var repeated = false
         while Date() < deadline {
             try? await Task.sleep(nanoseconds: 50_000_000)
             if !repeated, deadline.timeIntervalSinceNow < duration / 2 {
-                send(.keyDown, characters: key.characters, keyCode: key.keyCode, modifiers: key.modifiers, isRepeat: true)
+                keyboard.send([.keyDown], characters: key.characters, keyCode: key.keyCode, modifiers: key.modifiers, isRepeat: true)
                 repeated = true
             }
         }
-        send(.keyUp, characters: key.characters, keyCode: key.keyCode, modifiers: key.modifiers)
-        pump()
+        keyboard.send([.keyUp], characters: key.characters, keyCode: key.keyCode, modifiers: key.modifiers)
     }
 
-    private func send(
-        _ type: NSEvent.EventType,
-        characters: String,
-        keyCode: UInt16,
-        modifiers: NSEvent.ModifierFlags = [],
-        isRepeat: Bool = false
-    ) {
-        guard let event = NSEvent.keyEvent(
-            with: type,
-            location: .zero,
-            modifierFlags: modifiers,
-            timestamp: ProcessInfo.processInfo.systemUptime,
-            windowNumber: window.windowNumber,
-            context: nil,
-            characters: characters,
-            charactersIgnoringModifiers: characters,
-            isARepeat: isRepeat,
-            keyCode: keyCode
-        ) else { return }
-        window.sendEvent(event)
-    }
-
-    private func pump() {
-        RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+    private var keyboard: PageKeyboard {
+        PageKeyboard(window: window, webView: { self.webView })
     }
 
     func set(_ options: EditorTextCheckingOptions) {

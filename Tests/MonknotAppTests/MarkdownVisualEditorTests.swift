@@ -218,6 +218,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         undoManager.undo()
         let undone = await waitUntil { fixture.store.documentText == "One two\n" }
         XCTAssertTrue(undone, "Only the typing on the new page is taken back: \(fixture.store.documentText)")
+        XCTAssertTrue(undoManager.canUndo, "The typing on the page before is still a step")
         undoManager.undo()
         let undoneAgain = await waitUntil { fixture.store.documentText == "One\n" }
         XCTAssertTrue(undoneAgain, fixture.store.documentText)
@@ -1984,22 +1985,8 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         }
 
         private func send(characters: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags = []) {
-            for type in [NSEvent.EventType.keyDown, .keyUp] {
-                guard let event = NSEvent.keyEvent(
-                    with: type,
-                    location: .zero,
-                    modifierFlags: modifiers,
-                    timestamp: ProcessInfo.processInfo.systemUptime,
-                    windowNumber: window.windowNumber,
-                    context: nil,
-                    characters: characters,
-                    charactersIgnoringModifiers: characters,
-                    isARepeat: false,
-                    keyCode: keyCode
-                ) else { continue }
-                window.sendEvent(event)
-            }
-            RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+            PageKeyboard(window: window, webView: { self.webView })
+                .send(characters: characters, keyCode: keyCode, modifiers: modifiers)
         }
 
         func snapshot(to url: URL) async throws {
