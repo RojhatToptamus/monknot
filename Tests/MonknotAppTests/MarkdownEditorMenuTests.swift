@@ -39,7 +39,8 @@ final class MarkdownEditorMenuTests: WorkspaceStoreTestCase {
         XCTAssertTrue(fixture.store.documentText.contains("/"), "The / typed stays: \(fixture.store.documentText.debugDescription)")
         fixture.press(.escape)
         let closed = await waitUntil { await fixture.openMenus().isEmpty }
-        XCTAssertTrue(closed)
+        let afterEscape = await fixture.openMenus()
+        XCTAssertTrue(closed, "Esc closes the block menu, and no other opens: \(afterEscape)")
 
         // A click on another block's grip while the slash menu is open.
         try await fixture.setSelection((fixture.store.documentText as NSString).range(of: "/").location + 1)

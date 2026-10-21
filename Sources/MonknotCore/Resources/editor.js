@@ -5985,9 +5985,14 @@
         keepAttached();
       },
       setItems(items) {
+        // A row the keys or the pointer moved to stays highlighted while it is still listed, so a
+        // list that arrives after ↓ does not change what ↩ chooses.
+        const kept = state.index > 0 ? state.visible[state.index]?.id : undefined;
         state.items = items;
         state.index = 0;
         render();
+        const at = kept === undefined ? -1 : state.visible.findIndex((item) => item.id === kept);
+        if (at > 0) setIndex(at, true);
         keepAttached();
       },
       closeSubmenuMark() {

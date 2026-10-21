@@ -431,6 +431,25 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         XCTAssertEqual(menuShown, false, "Choosing a note closes the menu")
     }
 
+    /// Ranking runs off the main thread, so a list can arrive after ↓: the row the keys moved to stays
+    /// highlighted while it is listed, and ↩ chooses it.
+    func testAListArrivingAfterTheKeysMovedKeepsTheirRow() async throws {
+        let fixture = try await makeFixture(markdown: "See\n", notes: Self.wikilinkNotes)
+        try await fixture.setSelection(3)
+        fixture.type(" [[pro")
+        let rows = await fixture.wikilinkRows(matching: { $0.first == "Prototype" && $0.contains("Project Plan") })
+        fixture.press(.down)
+        // The same list again, as a late answer: the page takes only the one carrying its current
+        // query's serial, whichever of these that is.
+        let titles = String(decoding: try JSONEncoder().encode(rows), as: UTF8.self)
+        _ = try await fixture.evaluate("for (let serial = 1; serial <= 20; serial += 1) window.MonknotEditor.wikilinkSuggestions({ serial, titles: \(titles) }); true")
+        let highlighted = try await fixture.evaluate("document.querySelector('.mk-menu.mk-visible .mk-menu-row.mk-selected .mk-row-label')?.textContent ?? ''") as? String
+        XCTAssertEqual(highlighted, "Project Plan", "The list that arrived kept the row ↓ moved to")
+        fixture.press(.return)
+        let inserted = await waitUntil { fixture.store.documentText == "See [[Project Plan]]\n" }
+        XCTAssertTrue(inserted, fixture.store.documentText)
+    }
+
     func testChoosingANoteInsertsTheLinkAsOneUndoableStepWithTheCaretAfterIt() async throws {
         let fixture = try await makeFixture(markdown: "See\n", notes: Self.wikilinkNotes)
         try await fixture.setSelection(3)

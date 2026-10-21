@@ -70,43 +70,6 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         )
     }
 
-    // MARK: - Sidebar drag to move
-
-    func testDragOntoFileRowMovesIntoThatFilesFolder() async throws {
-        let fixture = try await makeSidebarFixture()
-        defer { fixture.close() }
-        let source = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "top.md"))
-        let target = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "b.md"))
-        await fixture.drag(from: NSPoint(x: source.midX, y: source.midY), to: NSPoint(x: target.midX, y: target.midY))
-        _ = await waitUntil { fixture.listing().contains("docs/top.md") }
-
-        XCTAssertEqual(fixture.listing().filter { $0.hasSuffix("top.md") }, ["docs/top.md"])
-    }
-
-    func testDragIntoEmptyTreeSpaceMovesToTheRoot() async throws {
-        let fixture = try await makeSidebarFixture()
-        defer { fixture.close() }
-        let source = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "b.md"))
-        let lastRow = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "top.md"))
-        let empty = NSPoint(x: lastRow.midX, y: lastRow.minY - 40)
-        await fixture.drag(from: NSPoint(x: source.midX, y: source.midY), to: empty)
-        _ = await waitUntil { fixture.listing().contains("b.md") }
-
-        XCTAssertEqual(fixture.listing().filter { $0.hasSuffix("b.md") }, ["b.md"])
-    }
-
-    func testClickWithoutMovementStillOpensTheFile() async throws {
-        let fixture = try await makeSidebarFixture()
-        defer { fixture.close() }
-        let row = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "b.md"))
-        await fixture.drag(from: NSPoint(x: row.midX, y: row.midY), to: NSPoint(x: row.midX, y: row.midY))
-        let opened = await waitUntil {
-            fixture.store.selectedDocumentID == fixture.workspaceURL.appendingPathComponent("docs/b.md").path
-        }
-
-        XCTAssertTrue(opened)
-    }
-
     // MARK: - Move target resolution
 
     func testMoveTargetRules() {

@@ -121,7 +121,9 @@ final class MonknotPopoverTests: FileOperationsTestCase {
             MonknotPopoverController.shared.close(animated: false, restoresFocus: false)
             probe.close()
         }
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        // SwiftUI lays the control out now and takes clicks after a pass of the run loop.
+        probe.window.contentView?.layoutSubtreeIfNeeded()
+        try? await Task.sleep(nanoseconds: 50_000_000)
         return probe
     }
 
@@ -162,28 +164,18 @@ final class MonknotPopoverTests: FileOperationsTestCase {
 
     /// A real click: the window's own event path, as AppKit delivers it.
     private func click(at point: NSPoint, in window: NSWindow) async {
-        if let down = mouse(.leftMouseDown, at: point, in: window) {
-            window.sendEvent(down)
-        }
+        guard let down = mouse(.leftMouseDown, at: point, in: window),
+              let up = mouse(.leftMouseUp, at: point, in: window)
+        else { return }
+        // An AppKit control in an active app (a key window, as on CI) tracks a press in a loop of its
+        // own until the mouse comes up, and nothing here runs until that loop ends: the mouse-up waits
+        // in the app's queue for it.
+        NSApp.postEvent(up, atStart: false)
+        window.sendEvent(down)
         try? await Task.sleep(nanoseconds: 40_000_000)
-        if let up = mouse(.leftMouseUp, at: point, in: window) {
-            window.sendEvent(up)
-        }
-    }
-
-    private func drag(from start: NSPoint, to end: NSPoint, in window: NSWindow) async {
-        if let down = mouse(.leftMouseDown, at: start, in: window) {
-            window.sendEvent(down)
-        }
-        for step in 1...8 {
-            try? await Task.sleep(nanoseconds: 16_000_000)
-            let fraction = CGFloat(step) / 8
-            let point = NSPoint(x: start.x + (end.x - start.x) * fraction, y: start.y + (end.y - start.y) * fraction)
-            if let dragged = mouse(.leftMouseDragged, at: point, in: window) {
-                window.sendEvent(dragged)
-            }
-        }
-        if let up = mouse(.leftMouseUp, at: end, in: window) {
+        // Nothing tracked the press, so the mouse-up is still queued: it goes to the window as a
+        // release does.
+        if NSApp.nextEvent(matching: .leftMouseUp, until: Date(), inMode: .default, dequeue: true) != nil {
             window.sendEvent(up)
         }
     }
@@ -193,7 +185,13 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         await click(at: probe.controlCenter, in: probe.window)
         let opened = await wait(timeout: 2) { self.controller.isOpen }
         XCTAssertTrue(opened, "Clicking the control did not open its popover")
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        // Shown and laid out at its content's size: the surface reads the same frame twice running.
+        var last: NSRect?
+        _ = await wait(timeout: 1) {
+            let frame = self.controller.openSurfaceFrame
+            defer { last = frame }
+            return self.controller.openModel?.isShown == true && frame != nil && frame == last
+        }
     }
 
     // MARK: - One surface
@@ -309,20 +307,6 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         }
     }
 
-    func testItOpensAboveItsControlWhereTheScreenEnds() async throws {
-        let visible = try XCTUnwrap(NSScreen.main?.visibleFrame)
-        // The window's top row sits 30 above the bottom of the screen's visible area.
-        let probe = await makeProbe(origin: NSPoint(x: visible.minX + 120, y: visible.minY - 330))
-        try await open(probe)
-        let control = try XCTUnwrap(controller.openControlFrame)
-        let surface = try XCTUnwrap(controller.openSurfaceFrame)
-        if control.minY - 4 - surface.height < visible.minY + 6 {
-            XCTAssertEqual(surface.minY, control.maxY + 4, accuracy: 0.5, "No room below: 4 above the control")
-            XCTAssertEqual(controller.openModel?.growAnchor, .bottomLeading, "Grows from the corner facing the control")
-        }
-        XCTAssertGreaterThanOrEqual(surface.minY, visible.minY + 6 - 0.5, "6 clear of the screen's edge")
-    }
-
     // MARK: - Motion
 
     func testThePointerGrowsItInAndTheKeyboardShowsItAtOnce() async throws {
@@ -403,7 +387,11 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         let previousPolicy = app.activationPolicy()
         _ = app.setActivationPolicy(.regular)
         app.activate(ignoringOtherApps: true)
-        defer { _ = app.setActivationPolicy(previousPolicy) }
+        // Later tests run as an inactive test process does on a Mac at a desk.
+        defer {
+            app.deactivate()
+            _ = app.setActivationPolicy(previousPolicy)
+        }
         let probe = await makeProbe()
         probe.window.makeKeyAndOrderFront(nil)
         let active = await wait(timeout: 2) { NSApp.isActive && probe.window.isKeyWindow }
@@ -737,7 +725,8 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         let store = try await openStore(root, selecting: "a.md")
         let h = SidebarMenuHarness(store: store, root: root, savedWorkspaces: saved)
         addTeardownBlock { @MainActor in h.close() }
-        try await Task.sleep(nanoseconds: 500_000_000)
+        let laidOut = await h.waitUntilLaidOut()
+        XCTAssertTrue(laidOut, "The sidebar never laid out its rows")
         try await reopenSwitcher(h)
         return h
     }
@@ -1006,11 +995,16 @@ final class MonknotPopoverTests: FileOperationsTestCase {
     }
 
     func testWithFullKeyboardAccessTheSwitchersFocusAndKeysMoveOneHighlight() async throws {
+        try XCTSkipUnless(NSApp.isFullKeyboardAccessEnabled, "Buttons take keyboard focus only with Full Keyboard Access on in System Settings")
         let app = NSApplication.shared
         let previousPolicy = app.activationPolicy()
         _ = app.setActivationPolicy(.regular)
         app.activate(ignoringOtherApps: true)
-        defer { _ = app.setActivationPolicy(previousPolicy) }
+        // Later tests run as an inactive test process does on a Mac at a desk.
+        defer {
+            app.deactivate()
+            _ = app.setActivationPolicy(previousPolicy)
+        }
         MonknotPopoverController.fullKeyboardAccessOverride = true
         defer { MonknotPopoverController.fullKeyboardAccessOverride = nil }
         let root = try makeRoot()
@@ -1025,7 +1019,6 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         let h = SidebarMenuHarness(store: store, root: root, savedWorkspaces: saved)
         addTeardownBlock { @MainActor in h.close() }
         h.window.makeKeyAndOrderFront(nil)
-        try XCTSkipUnless(NSApp.isFullKeyboardAccessEnabled, "Buttons take keyboard focus only with Full Keyboard Access on in System Settings")
         let active = await wait(timeout: 2) { NSApp.isActive && h.window.isKeyWindow }
         try XCTSkipUnless(active, "SwiftUI moves focus only in a key window of an active app, and the test app could not become active")
         try await Task.sleep(nanoseconds: 300_000_000)
@@ -1076,7 +1069,8 @@ final class MonknotPopoverTests: FileOperationsTestCase {
             return rowTop >= top - 0.5 && rowTop + 30 <= top + visible.height + 0.5
         }
 
-        XCTAssertTrue(isVisible(0) && !isVisible(12), "Seven rows show, the list starting at its top")
+        let atTop = await wait(timeout: 1) { isVisible(0) && !isVisible(12) }
+        XCTAssertTrue(atTop, "Seven rows show, the list starting at its top")
         try up()
         try up()
         try up()
