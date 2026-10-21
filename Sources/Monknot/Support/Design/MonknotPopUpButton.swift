@@ -159,11 +159,7 @@ struct MonknotPopUpLabel<Value: View>: View {
         let shape = RoundedRectangle(cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale))
         HStack(spacing: MonknotMetrics.interfaceDensity(6, theme: theme, zoomScale: zoomScale)) {
             value()
-            Image(systemName: "chevron.down")
-                .font(.system(
-                    size: MonknotMetrics.interfaceGlyph(MonknotMetrics.chevronPointSizeBase, theme: theme, zoomScale: zoomScale),
-                    weight: .semibold
-                ))
+            MonknotSecondaryGlyph(systemImage: "chevron.down", theme: theme, zoomScale: zoomScale)
                 // `ink3` at rest, `ink` with its control hovered or open (design.md §5.3).
                 .monknotStateStyle(
                     !isEnabled ? theme.disabledForegroundColor

@@ -41,7 +41,7 @@ enum MonknotMenuCommand: String, CaseIterable {
         switch self {
         case .newFile: return MonknotWorkspaceIcons.newFile
         case .newFolder: return MonknotWorkspaceIcons.newFolder
-        case .rename: return "pencil"
+        case .rename: return MonknotWorkspaceIcons.rename
         case .copyPath: return MonknotWorkspaceIcons.copyPath
         case .copyRelativePath:
             return MonknotSFSymbol.resolve("point.topleft.down.to.point.bottomright.curvepath", fallback: "link")

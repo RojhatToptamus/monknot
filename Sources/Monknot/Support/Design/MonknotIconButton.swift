@@ -379,11 +379,12 @@ struct MonknotTabCloseButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(
-                    size: MonknotMetrics.interfaceGlyph(MonknotMetrics.closeGlyphPointSizeBase, theme: theme, zoomScale: zoomScale),
-                    weight: .semibold
-                ))
+            MonknotSecondaryGlyph(
+                systemImage: systemImage,
+                pointSizeBase: MonknotMetrics.closeGlyphPointSizeBase,
+                theme: theme,
+                zoomScale: zoomScale
+            )
                 .monknotStateStyle(
                     isDisabled
                         ? theme.disabledForegroundColor

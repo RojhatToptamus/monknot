@@ -60,11 +60,7 @@ struct MonknotActionButton: View {
             // because the glyph's own side bearing already adds space on its side.
             HStack(spacing: scaled(7)) {
                 if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.system(
-                            size: MonknotMetrics.interfaceGlyph(14, theme: theme, zoomScale: zoomScale),
-                            weight: .regular
-                        ))
+                    MonknotSystemGlyph(systemImage: systemImage, nominalPointSizeBase: 14, theme: theme, zoomScale: zoomScale)
                         .frame(width: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale))
                         .accessibilityHidden(true)
                 }

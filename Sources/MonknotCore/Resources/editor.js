@@ -5520,7 +5520,7 @@
   }
 
   /// An SF Symbol drawn by the app; `context` picks its size: "menu" beside a label (15),
-  /// "tool" alone in a button (17), "small" for a check (11).
+  /// "tool" alone in a button (17), "small" for a check or a chevron (the chrome's 10 semibold).
   function icon(name, context = "menu") {
     const span = document.createElement("span");
     span.className = "mk-icon";
@@ -6050,7 +6050,7 @@
     { id: "bullet", label: "Bulleted list", icon: "list.bullet", hint: "-", group: "Basic blocks", keywords: ["unordered", "ul", "bullet", "points"] },
     { id: "numbered", label: "Numbered list", icon: "list.number", hint: "1.", group: "Basic blocks", keywords: ["ordered", "ol", "numbers", "steps"] },
     { id: "todo", label: "To-do list", icon: "checklist", hint: "[]", group: "Basic blocks", keywords: ["task", "todo", "checkbox", "check"] },
-    { id: "toggle", label: "Toggle list", icon: "arrowtriangle.right", group: "Basic blocks", keywords: ["details", "collapse", "expand", "disclosure", "summary"] },
+    { id: "toggle", label: "Toggle list", icon: "chevron.right.square", group: "Basic blocks", keywords: ["details", "collapse", "expand", "disclosure", "summary"] },
     { id: "page", label: "Page", icon: "doc", group: "Basic blocks", keywords: ["new", "note", "file", "subpage", "document"] },
     { id: "callout", label: "Callout", icon: "text.bubble", group: "Basic blocks", keywords: ["note", "tip", "warning", "important", "caution", "alert", "admonition"] },
     { id: "quote", label: "Quote", icon: "text.quote", hint: ">", group: "Basic blocks", keywords: ["blockquote", "citation"] },
@@ -6076,7 +6076,7 @@
     { id: "bullet", label: "Bulleted list", icon: "list.bullet" },
     { id: "numbered", label: "Numbered list", icon: "list.number" },
     { id: "todo", label: "To-do list", icon: "checklist" },
-    { id: "toggle", label: "Toggle list", icon: "arrowtriangle.right" },
+    { id: "toggle", label: "Toggle list", icon: "chevron.right.square" },
     { id: "code", label: "Code", icon: "chevron.left.forwardslash.chevron.right" },
     { id: "quote", label: "Quote", icon: "text.quote" },
     { id: "callout", label: "Callout", icon: "text.bubble" }
@@ -6928,7 +6928,7 @@
         const kind = lastState.link.kind === "wikilink" ? "wikilink" : "markdown";
         window.monknotPostLinkInteraction?.(kind, lastState.link.href);
       }));
-      linkCard.appendChild(button("pencil", "Edit link", "⌘K", () => {
+      linkCard.appendChild(button("character.cursor.ibeam", "Edit link", "⌘K", () => {
         const selection = lastSelection;
         if (selection) openLinkEditor(selection, "link", true);
       }));

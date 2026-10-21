@@ -14,8 +14,10 @@ enum MonknotMetrics {
     /// The close and clear target of a tab or a field, and its xmark.
     static let closeTargetSizeBase: CGFloat = 16
     static let closeGlyphPointSizeBase: CGFloat = 9
-    /// Disclosure, pop-up and submenu chevrons, everywhere (design.md §8.2).
+    /// Secondary marks (design.md §6): disclosure, pop-up and submenu chevrons and a menu row's
+    /// check, everywhere, Preview's menus included. Semibold, so at 10 their stroke is a row glyph's.
     static let chevronPointSizeBase: CGFloat = 10
+    static let secondaryGlyphWeight: Font.Weight = .semibold
     /// A bar inside a card or a panel (the terminal header, the PDF toolbar, panel headers): 40 tall,
     /// 6 padding, items 2 apart, groups 8 apart, never a rule (design.md §10.6).
     static let barHeightBase: CGFloat = 40
@@ -113,72 +115,84 @@ enum MonknotMetrics {
     }
 }
 
-/// Every SF Symbol's point size (design.md §8.2). Symbols differ widely in how much of their box
-/// they fill — at one point size `pencil` draws an 11 pt mark and `folder.badge.plus` a 20 pt one —
-/// so a list of glyphs at one size reads ragged. Pictures are therefore sized by what they draw:
-/// each symbol's ink box and density are measured once, and its point size is chosen so its optical
-/// size (the box's geometric mean, lightly weighted by ink) is the same as its neighbours'. Marks —
-/// open strokes and lettering (chevrons, plus, xmark, ellipsis, arrows, B I S, "Aa") — are not
-/// pictures and keep their nominal size, or the ceiling listed for them.
+/// Every SF Symbol's point size (design.md §8.2). An SF Symbol's stroke is a fixed share of its point
+/// size, so glyphs set at different sizes draw different line weights, and symbols differ widely in
+/// how much of their box they fill — at one point size `pencil` draws an 11 pt sliver and
+/// `folder.badge.plus` a 20 pt mark. Each place a glyph sits (a bar button, a segment, a row, a small
+/// button) therefore has one target, and every glyph in it is drawn within 8 % of that target in
+/// points, so its stroke is its neighbours'. Within that band a picture is sized by what it draws: its
+/// ink is measured once, and its optical size is set to the target. A mark — an open sign read by its
+/// extent — is drawn at the target; lettering (B I U S) at the nominal, like type.
 enum MonknotSymbolOptics {
-    /// The optical size a picture is sized to: 0.9 of the nominal, at most 14.5 (13.5 beside a
-    /// label, 14.5 alone in a bar button, 11.7 in a small button).
+    enum Role: Equatable {
+        /// An object with area, sized by its measured optical size.
+        case picture
+        /// An open sign read by its extent (chevrons, single arrows, + − ×, ✓, …, Aa): at the target.
+        case mark
+        /// The letters a format command applies (B I U S): at the nominal, like type.
+        case lettering
+    }
+
+    static func role(for systemImage: String) -> Role {
+        switch systemImage {
+        case "chevron.left", "chevron.right", "chevron.up", "chevron.down",
+             "arrow.left", "arrow.right", "arrow.up", "arrow.down",
+             "plus", "minus", "xmark", "checkmark", "ellipsis", "textformat", "textformat.size":
+            return .mark
+        case "bold", "italic", "underline", "strikethrough":
+            return .lettering
+        default:
+            return .picture
+        }
+    }
+
+    /// The optical size every glyph in a place is drawn to: 0.9 of the nominal, at most 14.5 (14.5 in
+    /// a bar button, 14.4 in a segment, 13.5 beside a label, 11.7 in a small button).
     static func targetOpticalSize(nominal: CGFloat) -> CGFloat {
         min(nominal * 0.9, 14.5)
     }
 
-    /// The longest side a picture may draw: its column, at most 16.
-    static func longestSide(nominal: CGFloat) -> CGFloat {
-        min(nominal * 1.2, 16)
-    }
+    /// How far from the target a glyph may be drawn, in points: within it, strokes differ by at most
+    /// 8 % either way, which reads as one weight.
+    static let strokeBand: ClosedRange<CGFloat> = 0.92...1.08
 
-    /// How far measuring may move a picture from its nominal size.
-    static let scaleRange: ClosedRange<CGFloat> = 0.8...1.12
+    /// The longest side any glyph may draw: 1.3 × the target, about 2/3 of a button and inside the
+    /// 18 glyph column.
+    static func longestSide(nominal: CGFloat) -> CGFloat {
+        targetOpticalSize(nominal: nominal) * 1.3
+    }
 
     static func pointSizeBase(for systemImage: String, nominal: CGFloat) -> CGFloat {
-        if let ceiling = markCeiling(for: systemImage) {
-            return min(nominal, ceiling)
-        }
+        let target = targetOpticalSize(nominal: nominal)
         guard let metrics = SymbolInkMetrics.metrics(for: systemImage) else {
-            return nominal
+            return role(for: systemImage) == .lettering ? nominal : target
         }
-        let optical = targetOpticalSize(nominal: nominal) / metrics.opticalSizePerPoint
-        let ranged = min(max(optical, nominal * scaleRange.lowerBound), nominal * scaleRange.upperBound)
-        // The column is a hard edge: a very wide glyph (the Save badge) shrinks past the range to fit.
-        return min(ranged, longestSide(nominal: nominal) / metrics.longestSidePerPoint)
-    }
-
-    /// A mark's ceiling, or nil for a picture. Open strokes span their whole box, so at the nominal
-    /// size they read largest in a bar; lettering is sized as text.
-    static func markCeiling(for systemImage: String) -> CGFloat? {
-        switch systemImage {
-        case "character.cursor.ibeam":
-            return 12.5
-        case "textformat":
-            return 13
-        case "xmark":
-            return 14
-        case "plus", "chevron.left", "chevron.right":
-            return 15
-        case "minus", "ellipsis", "checkmark", "chevron.up", "chevron.down",
-             "arrow.up", "arrow.down", "arrow.left", "arrow.right",
-             "bold", "italic", "underline", "strikethrough", "character.textbox", "textformat.size":
-            return .infinity
-        default:
-            return nil
+        let size: CGFloat
+        switch role(for: systemImage) {
+        case .mark:
+            size = target
+        case .lettering:
+            size = nominal
+        case .picture:
+            let optical = target / metrics.opticalSizePerPoint
+            size = min(max(optical, target * strokeBand.lowerBound), target * strokeBand.upperBound)
         }
-    }
-
-    static func horizontalOffsetBase(for systemImage: String) -> CGFloat {
-        systemImage == "magnifyingglass" ? -0.5 : 0
+        // The longest side is a hard edge: a very wide glyph shrinks to fit.
+        return min(size, longestSide(nominal: nominal) / metrics.longestSidePerPoint)
     }
 }
 
-/// What a symbol draws, measured once from its rendered image at a 100 pt reference: its ink box
-/// and how much of that box its ink fills, both per point of point size.
+/// What a symbol draws, measured once from its rendered image at a 100 pt reference: its ink box,
+/// its base's box, and how much of the ink box its ink fills, all per point of point size.
 struct SymbolInkMetrics: Equatable {
     let widthPerPoint: CGFloat
     let heightPerPoint: CGFloat
+    /// The box of the layer the others are drawn on (a pencil's square, a badge's folder, Save's tray),
+    /// when the symbol is drawn in layers, that layer covers most of the whole box and the others lie
+    /// mostly inside it; otherwise the whole box. Layers side by side (a list's bullets and lines, a
+    /// stack of pages) are one shape.
+    let baseWidthPerPoint: CGFloat
+    let baseHeightPerPoint: CGFloat
     /// The share of the ink box the ink covers.
     let inkCoverage: CGFloat
 
@@ -186,11 +200,19 @@ struct SymbolInkMetrics: Equatable {
         max(widthPerPoint, heightPerPoint)
     }
 
-    /// The box's geometric mean, weighted a little by density, so a dense glyph (a filled photo)
-    /// is set a little smaller than a light one of the same box.
+    /// How big the symbol reads: the geometric mean of its box and its base's box — the eye sizes a
+    /// pencil on a square mostly by the square, so a mark poking out of the base counts half — weighted
+    /// a little by density, so a dense glyph (a filled photo) is set a little smaller than a light one.
     var opticalSizePerPoint: CGFloat {
-        sqrt(widthPerPoint * heightPerPoint) * pow(max(inkCoverage, 0.05) / 0.33, 0.06)
+        let whole = sqrt(widthPerPoint * heightPerPoint)
+        let base = sqrt(baseWidthPerPoint * baseHeightPerPoint)
+        return sqrt(whole * base) * pow(max(inkCoverage, 0.05) / 0.33, 0.06)
     }
+
+    /// A layer counts as the base when its box covers at least this share of the whole box, and at
+    /// least `overlayInside` of the other layers' ink lies inside it.
+    static let baseCoverage: CGFloat = 0.7
+    static let overlayInside: CGFloat = 0.5
 
     private static let referencePointSize: CGFloat = 100
     private static let cache = SymbolInkMetricsCache()
@@ -204,9 +226,18 @@ struct SymbolInkMetrics: Equatable {
         return measured
     }
 
+    /// Draws the symbol with a palette of pure red, green and blue, one per layer, so one pass gives
+    /// both the ink and each layer's box.
     private static func measure(_ systemImage: String) -> SymbolInkMetrics? {
+        let layerColors = [
+            NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1),
+            NSColor(srgbRed: 0, green: 1, blue: 0, alpha: 1),
+            NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1),
+        ]
+        let configuration = NSImage.SymbolConfiguration(pointSize: referencePointSize, weight: .regular)
+            .applying(NSImage.SymbolConfiguration(paletteColors: layerColors))
         guard let symbol = NSImage(systemSymbolName: systemImage, accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: referencePointSize, weight: .regular))
+            .withSymbolConfiguration(configuration)
         else { return nil }
         let size = symbol.size
         let canvas = Int(referencePointSize * 2)
@@ -236,29 +267,48 @@ struct SymbolInkMetrics: Equatable {
         ))
         NSGraphicsContext.restoreGraphicsState()
 
-        var minX = canvas, minY = canvas, maxX = -1, maxY = -1
+        var whole = CGRect.null
+        var layers = [CGRect](repeating: .null, count: layerColors.count)
+        var layerOfPixel = [Int8](repeating: -1, count: canvas * canvas)
         var ink: CGFloat = 0
         let bytesPerRow = bitmap.bytesPerRow
         for y in 0..<canvas {
             for x in 0..<canvas {
-                let alpha = CGFloat(pixels[y * bytesPerRow + x * 4 + 3]) / 255
+                let offset = y * bytesPerRow + x * 4
+                let alpha = CGFloat(pixels[offset + 3]) / 255
                 guard alpha > 0 else { continue }
                 ink += alpha
-                if alpha > 0.08 {
-                    minX = min(minX, x)
-                    maxX = max(maxX, x)
-                    minY = min(minY, y)
-                    maxY = max(maxY, y)
-                }
+                guard alpha > 0.08 else { continue }
+                let red = pixels[offset], green = pixels[offset + 1], blue = pixels[offset + 2]
+                let layer = red >= green && red >= blue ? 0 : (green >= blue ? 1 : 2)
+                layerOfPixel[y * canvas + x] = Int8(layer)
+                let pixel = CGRect(x: x, y: y, width: 1, height: 1)
+                layers[layer] = layers[layer].union(pixel)
+                whole = whole.union(pixel)
             }
         }
-        guard maxX >= minX, maxY >= minY else { return nil }
-        let width = CGFloat(maxX - minX + 1)
-        let height = CGFloat(maxY - minY + 1)
+        guard !whole.isNull else { return nil }
+        let drawn = layers.indices.filter { !layers[$0].isNull }
+        var base = whole
+        if drawn.count > 1,
+           let largest = drawn.max(by: { layers[$0].width * layers[$0].height < layers[$1].width * layers[$1].height }),
+           layers[largest].width * layers[largest].height >= baseCoverage * whole.width * whole.height {
+            var others = 0, inside = 0
+            for index in layerOfPixel.indices where layerOfPixel[index] >= 0 && Int(layerOfPixel[index]) != largest {
+                others += 1
+                let point = CGPoint(x: CGFloat(index % canvas) + 0.5, y: CGFloat(index / canvas) + 0.5)
+                if layers[largest].contains(point) { inside += 1 }
+            }
+            if others > 0, CGFloat(inside) >= overlayInside * CGFloat(others) {
+                base = layers[largest]
+            }
+        }
         return SymbolInkMetrics(
-            widthPerPoint: width / referencePointSize,
-            heightPerPoint: height / referencePointSize,
-            inkCoverage: ink / (width * height)
+            widthPerPoint: whole.width / referencePointSize,
+            heightPerPoint: whole.height / referencePointSize,
+            baseWidthPerPoint: base.width / referencePointSize,
+            baseHeightPerPoint: base.height / referencePointSize,
+            inkCoverage: ink / (whole.width * whole.height)
         )
     }
 }
@@ -285,8 +335,8 @@ private final class SymbolInkMetricsCache: @unchecked Sendable {
     }
 }
 
-/// Shared SF Symbol renderer for chrome. Point-size normalization, weight,
-/// rendering mode, and positional correction have one owner.
+/// Shared SF Symbol renderer for chrome. Point size, weight and rendering mode have one owner. No glyph
+/// is nudged: SF Symbols centres each one's ink in its box (design.md §8.6).
 struct MonknotSystemGlyph: View {
     let systemImage: String
     let nominalPointSizeBase: CGFloat
@@ -307,11 +357,25 @@ struct MonknotSystemGlyph: View {
                 weight: .regular
             ))
             .symbolRenderingMode(.monochrome)
-            .offset(x: MonknotMetrics.interfaceGlyph(
-                MonknotSymbolOptics.horizontalOffsetBase(for: systemImage),
-                theme: theme,
-                zoomScale: zoomScale
+    }
+}
+
+/// A secondary mark (design.md §6): a disclosure or pop-up chevron, a menu row's check, the close and
+/// clear `xmark`. Smaller than the glyph beside it and semibold, so its stroke — 1.21 at 10 pt, 1.09
+/// at 9 — matches a row glyph's (1.17) instead of reading thinner.
+struct MonknotSecondaryGlyph: View {
+    let systemImage: String
+    var pointSizeBase: CGFloat = MonknotMetrics.chevronPointSizeBase
+    let theme: AppTheme
+    let zoomScale: Double
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(
+                size: MonknotMetrics.interfaceGlyph(pointSizeBase, theme: theme, zoomScale: zoomScale),
+                weight: MonknotMetrics.secondaryGlyphWeight
             ))
+            .symbolRenderingMode(.monochrome)
     }
 }
 

@@ -11,6 +11,13 @@ enum MonknotWorkspaceIcons {
     }
 
     static let newFolder = "folder.badge.plus"
+    /// A letter with the text cursor: the name is edited in place.
+    static let rename = "character.cursor.ibeam"
+    /// Back and forward through the documents opened: arrows with a shaft, drawn as marks.
+    static let back = "arrow.left"
+    static let forward = "arrow.right"
+    /// Save, in the PDF and image bar: the tray with the arrow into it.
+    static let save = "square.and.arrow.down"
     static let openFolder = "folder"
     static let searchWorkspace = "magnifyingglass"
 

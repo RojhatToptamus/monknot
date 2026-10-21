@@ -25,7 +25,7 @@ struct MarkdownSymbolQuickOpenView: View {
         ) {
             VStack(spacing: 0) {
                 MonknotCommandOverlayField(
-                    systemImage: "list.bullet.indent",
+                    systemImage: MonknotWorkspaceIcons.outline,
                     placeholder: "Go to heading…",
                     text: Binding(
                         get: { state.query },

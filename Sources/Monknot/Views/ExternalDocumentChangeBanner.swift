@@ -281,7 +281,7 @@ struct ExternalDocumentReconciliationSheet: View {
     private func diffFileHeader(_ state: ExternalDocumentReviewState) -> some View {
         let summary = ExternalDocumentDiffSummary(diff: state.diskToMineDiff)
         return HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
-            MonknotFileKindGlyph(systemImage: "doc.text", theme: theme, zoomScale: zoomScale)
+            MonknotFileKindGlyph(systemImage: WorkspaceFileGlyph(path: state.documentID).systemImage, theme: theme, zoomScale: zoomScale)
                 .foregroundStyle(theme.tertiaryForegroundColor)
                 .accessibilityHidden(true)
             Text(state.displayName)
@@ -518,13 +518,13 @@ struct ExternalDocumentReconciliationSheet: View {
         if state.review.diskRevision == nil {
             status(
                 "The disk file is unavailable. Save a copy or keep your local version.",
-                systemImage: "exclamationmark.triangle",
+                systemImage: "exclamationmark.triangle.fill",
                 color: removedColor
             )
         } else if state.hasMergeConflict {
             status(
                 "The changes overlap and cannot be merged automatically.",
-                systemImage: "exclamationmark.triangle",
+                systemImage: "exclamationmark.triangle.fill",
                 color: theme.mutedForegroundColor
             )
         } else if state.canMerge {
@@ -542,11 +542,18 @@ struct ExternalDocumentReconciliationSheet: View {
         }
     }
 
+    /// A 12 status line with its glyph at label + 2 (design.md §6); a warning's triangle is filled
+    /// (§8.7).
     private func status(_ text: String, systemImage: String, color: Color) -> some View {
-        Label(text, systemImage: systemImage)
-            .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
-            .foregroundStyle(color)
-            .lineLimit(2)
+        HStack(alignment: .firstTextBaseline, spacing: scaled(6)) {
+            MonknotSystemGlyph(systemImage: systemImage, nominalPointSizeBase: 14, theme: theme, zoomScale: zoomScale)
+                .accessibilityHidden(true)
+            Text(text)
+                .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+                .lineLimit(2)
+        }
+        .foregroundStyle(color)
+        .accessibilityElement(children: .combine)
     }
 
     private var addedColor: Color {

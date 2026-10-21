@@ -302,7 +302,7 @@ private struct DocumentTabItemView: View {
         let metrics = DocumentTabMetrics(theme: theme, zoomScale: zoomScale)
         MonknotTab(
             title: metrics.fittedLabel(label, isPinned: tab.isPinned, isMissing: isMissing),
-            systemImage: tab.kind.resolvedSystemImage,
+            systemImage: tab.fileGlyph.systemImage,
             isSelected: isSelected,
             placement: .chrome,
             status: status,

@@ -362,7 +362,8 @@ struct SidebarView: View {
                             zoomScale: zoomScale,
                             availableSidebarHeight: geometry.size.height,
                             kindGlyph: { entry in
-                                (store.document(id: entry.documentID)?.kind ?? .markdown).resolvedSystemImage
+                                (store.document(id: entry.documentID)?.fileGlyph
+                                    ?? WorkspaceFileGlyph(path: entry.documentID)).systemImage
                             },
                             openDocument: openDocument,
                             location: locationActions
@@ -1080,7 +1081,7 @@ struct SidebarView: View {
             ? MonknotWorkspaceIcons.dragItems
             : item.kind == .folder
                 ? MonknotWorkspaceIcons.openFolder
-                : (item.document?.kind.resolvedSystemImage ?? WorkspaceDocumentKind.unsupported.resolvedSystemImage)
+                : (item.document?.fileGlyph ?? .other).systemImage
         let copies = treeMouse.modifierFlags.contains(.option)
         dragSession.treeView = treeMouse.treeView
         treeMouse.dragSession = dragSession
@@ -1744,7 +1745,7 @@ private struct SidebarProjectHeader: View {
             )
 
             MonknotIconButton(
-                systemImage: "square.and.pencil",
+                systemImage: MonknotWorkspaceIcons.newMarkdown,
                 label: "New Markdown",
                 theme: theme,
                 zoomScale: zoomScale,
@@ -1769,12 +1770,7 @@ private struct SidebarWorkspaceChevron: View {
     @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
-        Image(systemName: "chevron.down")
-            .font(.system(
-                size: MonknotMetrics.interfaceGlyph(MonknotMetrics.chevronPointSizeBase, theme: theme, zoomScale: zoomScale),
-                weight: .semibold
-            ))
-            .symbolRenderingMode(.monochrome)
+        MonknotSecondaryGlyph(systemImage: "chevron.down", theme: theme, zoomScale: zoomScale)
             .monknotStateStyle(
                 !isEnabled
                     ? theme.disabledForegroundColor
@@ -2338,7 +2334,7 @@ private struct SidebarNodeRow: View {
     }
 
     private var documentIconName: String {
-        node.document?.kind.resolvedSystemImage ?? WorkspaceDocumentKind.unsupported.resolvedSystemImage
+        (node.document?.fileGlyph ?? .other).systemImage
     }
 
     /// New File and New Folder (in the folder, or beside the file), Rename and the location items,
@@ -3159,7 +3155,7 @@ private struct MarkdownLinkMoveReviewSheet: View {
             VStack(alignment: .leading, spacing: scaled(12)) {
                 HStack(spacing: scaled(8)) {
                     Text(review.plan.sourceURL.lastPathComponent)
-                    Image(systemName: "arrow.right")
+                    MonknotSystemGlyph(systemImage: "arrow.right", nominalPointSizeBase: 13, theme: theme, zoomScale: zoomScale)
                         .foregroundStyle(theme.tertiaryForegroundColor)
                         .accessibilityHidden(true)
                     Text(review.plan.destinationURL.lastPathComponent)
@@ -3180,10 +3176,7 @@ private struct MarkdownLinkMoveReviewSheet: View {
                                     HStack(alignment: .firstTextBaseline, spacing: scaled(6)) {
                                         Text(rewrite.oldDestination)
                                             .foregroundStyle(theme.tertiaryForegroundColor)
-                                        Image(systemName: "arrow.right")
-                                            .font(.system(
-                                                size: MonknotMetrics.interfaceGlyph(10, theme: theme, zoomScale: zoomScale)
-                                            ))
+                                        MonknotSystemGlyph(systemImage: "arrow.right", nominalPointSizeBase: 12, theme: theme, zoomScale: zoomScale)
                                             .foregroundStyle(theme.tertiaryForegroundColor)
                                             .accessibilityHidden(true)
                                         Text(rewrite.newDestination)

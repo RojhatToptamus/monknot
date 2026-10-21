@@ -422,11 +422,12 @@ final class MarkdownEditorWebView: PaneTransitionWebView {
 }
 
 /// SF Symbols for the page's menus and toolbars, drawn once as alpha masks the page tints with the
-/// theme's ink. Sizes follow design.md §8: 15 beside a label, 17 alone in a button, 11 for a check.
+/// theme's ink. Sizes follow design.md §8: 15 beside a label, 17 alone in a button, and the chrome's
+/// 10 semibold secondary marks for a check and a chevron.
 enum MarkdownEditorSymbolAssets {
     /// Glyphs beside a label in the slash, block, Turn Into, callout and table menus (15 nominal).
-    private static let menuSymbols = [
-        "textformat", "list.bullet", "list.number", "checklist", "arrowtriangle.right", "doc",
+    static let menuSymbols = [
+        "textformat", "list.bullet", "list.number", "checklist", "chevron.right.square", "doc",
         "text.bubble", "text.quote", "tablecells", "minus", "arrow.up.right.square", "photo",
         "play.rectangle", "speaker.wave.2", "chevron.left.forwardslash.chevron.right", "paperclip",
         "bookmark", "list.bullet.rectangle", "calendar", "face.smiling", "info.circle", "lightbulb",
@@ -436,13 +437,13 @@ enum MarkdownEditorSymbolAssets {
         "magnifyingglass", "doc.text", "link"
     ]
     /// Glyphs alone in a format bar or link card button (17 nominal).
-    private static let toolSymbols = [
+    static let toolSymbols = [
         "bold", "italic", "strikethrough", "curlybraces", "link", "arrow.up.right.square",
-        "pencil", "trash", "link.badge.minus"
+        MonknotWorkspaceIcons.rename, "trash", "link.badge.minus"
     ]
-    /// A menu row's check and submenu chevron, the chevron of a dropdown and a callout's title (11
-    /// nominal).
-    private static let smallSymbols = ["checkmark", "chevron.right", "chevron.down"]
+    /// A menu row's check and submenu chevron, the chevron of a dropdown and a callout's title: the
+    /// chrome's secondary marks (`MonknotSecondaryGlyph`), 10 semibold.
+    static let smallSymbols = ["checkmark", "chevron.right", "chevron.down"]
 
     @MainActor private static var cached: [String: [String: Any]]?
 
@@ -451,23 +452,28 @@ enum MarkdownEditorSymbolAssets {
     static func icons() -> [String: [String: Any]] {
         if let cached { return cached }
         var result: [String: [String: Any]] = [:]
-        let sets: [(String, [String], CGFloat)] = [("menu", menuSymbols, 15), ("tool", toolSymbols, 17), ("small", smallSymbols, 11)]
+        let sets: [(String, [String], CGFloat)] = [("menu", menuSymbols, 15), ("tool", toolSymbols, 17)]
         for (context, names, nominal) in sets {
             for name in names {
                 let resolved = MonknotSFSymbol.resolve(name, fallback: name == "link.badge.minus" ? "xmark" : "questionmark")
                 let pointSize = MonknotSymbolOptics.pointSizeBase(for: resolved, nominal: nominal)
-                if let icon = icon(resolved, pointSize: pointSize) {
+                if let icon = icon(resolved, pointSize: pointSize, weight: .regular) {
                     result["\(context):\(name)"] = icon
                 }
+            }
+        }
+        for name in smallSymbols {
+            if let icon = icon(name, pointSize: MonknotMetrics.chevronPointSizeBase, weight: .semibold) {
+                result["small:\(name)"] = icon
             }
         }
         cached = result
         return result
     }
 
-    private static func icon(_ name: String, pointSize: CGFloat) -> [String: Any]? {
+    private static func icon(_ name: String, pointSize: CGFloat, weight: NSFont.Weight) -> [String: Any]? {
         guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular))
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: pointSize, weight: weight))
         else { return nil }
         let size = symbol.size
         guard size.width > 0, size.height > 0 else { return nil }

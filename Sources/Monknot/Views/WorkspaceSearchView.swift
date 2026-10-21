@@ -567,7 +567,7 @@ private struct WorkspaceReplaceConfirmationSheet: View {
                     VStack(spacing: 0) {
                         ForEach(Array(preview.fileResults.enumerated()), id: \.element.documentID) { index, result in
                             HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
-                                MonknotFileKindGlyph(systemImage: "doc.text", theme: theme, zoomScale: zoomScale)
+                                MonknotFileKindGlyph(systemImage: WorkspaceFileGlyph(path: result.documentID).systemImage, theme: theme, zoomScale: zoomScale)
                                     .foregroundStyle(theme.tertiaryForegroundColor)
 
                                 Text(result.relativePath)
@@ -731,7 +731,7 @@ private struct WorkspaceSearchFileRow: View {
 
     var body: some View {
         HStack(spacing: scaled(8)) {
-            MonknotFileKindGlyph(systemImage: group.kind.resolvedSystemImage, theme: theme, zoomScale: zoomScale)
+            MonknotFileKindGlyph(systemImage: WorkspaceFileGlyph(path: group.documentID).systemImage, theme: theme, zoomScale: zoomScale)
                 .foregroundStyle(theme.tertiaryForegroundColor)
                 .accessibilityHidden(true)
 

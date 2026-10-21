@@ -1161,7 +1161,7 @@ private struct PDFAnnotationToolbar: View {
     /// is (design.md §1.3, §10.2).
     private var saveButton: some View {
         MonknotIconButton(
-            systemImage: "externaldrive.badge.checkmark",
+            systemImage: MonknotWorkspaceIcons.save,
             label: isImage ? "Save Image" : "Save PDF",
             theme: theme,
             zoomScale: zoomScale,
@@ -1602,7 +1602,7 @@ struct PDFNavigatorSectionControl: View {
             ),
             MonknotSegmentOption(
                 id: PDFNavigatorSection.outline.controlID,
-                systemImage: "list.bullet.indent",
+                systemImage: MonknotWorkspaceIcons.outline,
                 accessibilityLabel: "Outline"
             ),
             MonknotSegmentOption(

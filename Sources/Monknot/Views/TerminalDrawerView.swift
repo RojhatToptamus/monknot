@@ -268,7 +268,7 @@ private struct TerminalTabChip: View {
     var body: some View {
         MonknotTab(
             title: "\(index)",
-            systemImage: "terminal",
+            systemImage: MonknotWorkspaceIcons.terminal,
             isSelected: isSelected,
             placement: .card,
             glyphTint: statusTint,
@@ -333,7 +333,7 @@ private struct TerminalEmptySurface: View {
 
     var body: some View {
         MonknotEmptyState(
-            systemImage: "terminal",
+            systemImage: MonknotWorkspaceIcons.terminal,
             title: "No terminal session",
             detail: "Start a shell in this workspace.",
             theme: theme,

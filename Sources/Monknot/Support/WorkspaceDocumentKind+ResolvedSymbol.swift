@@ -24,26 +24,6 @@ struct MonknotFileKindGlyph: View {
     }
 }
 
-extension WorkspaceDocumentKind {
-    /// Runtime-resolved SF Symbol (macOS 14+ safe fallbacks).
-    var resolvedSystemImage: String {
-        switch self {
-        case .markdown:
-            return MonknotSFSymbol.resolve("doc.text", fallback: systemImage)
-        case .pdf:
-            return MonknotSFSymbol.resolve("doc.richtext", fallback: systemImage)
-        case .text:
-            return MonknotSFSymbol.resolve("doc.text", fallback: systemImage)
-        case .image:
-            return MonknotSFSymbol.resolve("photo", fallback: systemImage)
-        case .media:
-            return MonknotSFSymbol.resolve("play.rectangle", fallback: systemImage)
-        case .unsupported:
-            return systemImage
-        }
-    }
-}
-
 extension EditorMode {
     var resolvedSystemImage: String {
         switch self {
@@ -51,17 +31,6 @@ extension EditorMode {
             return MonknotSFSymbol.resolve("text.alignleft", fallback: systemImage)
         case .preview:
             return MonknotSFSymbol.resolve("eye", fallback: systemImage)
-        }
-    }
-}
-
-extension WorkspaceSearchResultKind {
-    var resolvedSystemImage: String {
-        switch self {
-        case .text:
-            return MonknotSFSymbol.resolve("doc.text", fallback: systemImage)
-        case .pdf:
-            return WorkspaceDocumentKind.pdf.resolvedSystemImage
         }
     }
 }

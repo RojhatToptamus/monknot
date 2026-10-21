@@ -3281,7 +3281,7 @@ struct WindowNavigationControls: View {
         // Two bar buttons, 2 apart (design.md §5.1).
         HStack(spacing: scaled(MonknotMetrics.barItemGapBase)) {
             MonknotIconButton(
-                systemImage: "chevron.left",
+                systemImage: MonknotWorkspaceIcons.back,
                 label: "Back",
                 theme: theme,
                 zoomScale: zoomScale,
@@ -3291,7 +3291,7 @@ struct WindowNavigationControls: View {
             )
 
             MonknotIconButton(
-                systemImage: "chevron.right",
+                systemImage: MonknotWorkspaceIcons.forward,
                 label: "Forward",
                 theme: theme,
                 zoomScale: zoomScale,
@@ -3510,7 +3510,7 @@ private struct AmbiguousMarkdownLinkPicker: View {
                     LazyVStack(spacing: scaled(2)) {
                         ForEach(documents) { document in
                             MonknotCommandOverlayRow(
-                                leading: .glyph(document.kind.resolvedSystemImage),
+                                leading: .glyph(document.fileGlyph.systemImage),
                                 title: document.displayName,
                                 detail: (document.relativePath as NSString).deletingLastPathComponent,
                                 isSelected: focusedDocumentID == document.id,

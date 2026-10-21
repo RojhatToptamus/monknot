@@ -171,10 +171,11 @@ extension MonknotMenuRowLabel where Trailing == EmptyView {
     }
 }
 
-/// The current value's check at the end of a menu row (editor.css `.mk-row-check`): an 11 `checkmark`
-/// in `ink2`, `ink4` disabled. A pop-up's menu checks its value with it, as Preview's menus do.
+/// The current value's check at the end of a menu row (editor.css `.mk-row-check`): the 10 semibold
+/// secondary `checkmark` in `ink2`, `ink4` disabled. A pop-up's menu checks its value with it, as
+/// Preview's menus do.
 struct MonknotMenuRowCheck: View {
-    static let pointSizeBase: CGFloat = 11
+    static let pointSizeBase: CGFloat = MonknotMetrics.chevronPointSizeBase
 
     var isDisabled = false
     let theme: AppTheme
@@ -186,7 +187,7 @@ struct MonknotMenuRowCheck: View {
     }
 
     var body: some View {
-        MonknotSystemGlyph(systemImage: "checkmark", nominalPointSizeBase: Self.pointSizeBase, theme: theme, zoomScale: zoomScale)
+        MonknotSecondaryGlyph(systemImage: "checkmark", pointSizeBase: Self.pointSizeBase, theme: theme, zoomScale: zoomScale)
             .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.mutedForegroundColor)
             .frame(width: Self.width(theme: theme, zoomScale: zoomScale))
             .accessibilityHidden(true)
@@ -421,8 +422,7 @@ struct MonknotDisclosureChevron: View {
     }
 
     var body: some View {
-        Image(systemName: "chevron.right")
-            .font(.system(size: glyphScaled(MonknotMetrics.chevronPointSizeBase), weight: .semibold))
+        MonknotSecondaryGlyph(systemImage: "chevron.right", theme: theme, zoomScale: zoomScale)
             // Only the turn animates. A value-keyed animation here would also animate the row's
             // move when the list lays out the folder's children in the same transaction, so the
             // chevron would draw at its old place and slide back.

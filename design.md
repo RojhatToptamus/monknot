@@ -17,6 +17,7 @@ sections for what you are touching:
 |---|---|
 | a colour, a fill, a theme | §1, §2, §3, §14 |
 | a control: button, tab, row, field, menu, pop-up, segmented control | §0, §4, §5, §6, §7, §8 |
+| a glyph: its symbol, its size, a file's kind | §8, §6, §10.7 |
 | a right-click menu, or dragging files in the sidebar | §5.8, §10.4 (Moving files), §11 |
 | a popover: the switcher, Stroke Width, Text Style | §5.9, §2, §11 |
 | the outline rail and its panel | §10.5, §5.6, §9.6, §11 |
@@ -409,11 +410,12 @@ native text treatment.
 
 ### 5.1 Icon-only button
 
-**Two sizes, no third** (`MonknotIconButton`). Every bar uses the `28 × 28` box, radius 8, a **17pt
-symbol** centred (optically capped, §8.2) — the same button as the Preview format bar's. A button
-inside a row or a field (match options, a row's Remove, a stepper's − and +) is the small `22 × 22`
-box, radius 6, a 13pt symbol. No padding value — the box and the centring do it. Back and forward are
-two regular buttons 2 apart, with no shell around them. A button that shows or hides a panel has no
+**Two sizes, no third** (`MonknotIconButton`). Every bar uses the `28 × 28` box, radius 8, its glyph
+centred at the bar's **14.5 optical size** (nominal 17, §8.2) — the same button as the Preview format
+bar's. A button inside a row or a field (match options, a row's Remove, a stepper's − and +) is the
+small `22 × 22` box, radius 6, its glyph at **11.7** (nominal 13). No padding value — the box and the
+centring do it. Back and forward are two regular buttons 2 apart, with no shell around them: arrows
+with a shaft, `arrow.left` and `arrow.right`. A button that shows or hides a panel has no
 on state (§1.3). A button that opens a menu of commands (More) is the same button (`MonknotMenuButton`),
 holding `press` while its menu shows; the menu is Monknot's menu (§5.8), below the button and 4 clear of
 it, above it where the screen ends, and ending on the button's trailing edge where it would cross the
@@ -487,7 +489,7 @@ command list beside it in a bar are one surface:
 ### 5.4 Button with glyph and label
 
 Padding **10 leading / 12 trailing** — asymmetric on purpose, because the glyph's own side bearing
-adds optical space on the left. Glyph 14 in a 16 column, gap 7, label 13.
+adds optical space on the left. Glyph 14 nominal (12.6 optical, §8.2) in a 16 column, gap 7, label 13.
 
 ### 5.5 Segmented control
 
@@ -695,10 +697,10 @@ material, another radius and shadow, and a spring beside Monknot's menus read as
 |---|---|
 | Glyph beside a label | **label + 2** (13 → 15) on sidebar rows, menu rows and tabs alike. At 1.0 the icon sits below cap height and reads as an afterthought; past 1.3 it leads and the name becomes its caption. |
 | Gap, glyph to label | **8** beside a 13 label in rows and tabs; menu rows take **10** (their glyph reads lighter, at `ink2`), a push button's glyph **7**. Always smaller than the glyph it follows, or the two stop grouping as one object. |
-| Icon-only button | **glyph fills 60% of the box.** 17/28 in bars, 13/22 in rows and fields; a segment's 16 in its 28 × 24 cell. Below 55% the button looks empty; above 70% the glyph crowds the radius. |
+| Icon-only button | **the glyph's optical size is about half the box, its longest side at most two thirds.** 14.5 in a 28 bar button (nominal 17), 11.7 in a 22 (nominal 13), 14.4 in a segment's 28 × 24 cell (nominal 16); longest side 1.3 × that (18.9, 15.2, 18.7). Smaller, the button looks empty; above 70 % the glyph crowds the radius. |
 | Row height | **28** in the chrome, the same as a tab chip, so the sidebar's rows and the titlebar's tabs share one rhythm. Menus and popovers take 30, overlays 34. |
 | Row padding-x | **8** on every row, leading and trailing equal. A row's glyph therefore sits 18 from the list's edge (10 inset + 8), and its label 44. |
-| Secondary glyph (close, chevron) | chevrons **10**, semibold (Preview's menus and bars: 11, regular); the close and clear `xmark` **9** semibold in a **16** round target. Deliberately off the label ratio — these are not content, and sizing them like content gives a row three things all claiming to be the subject. |
+| Secondary glyph (close, chevron, check) | chevrons and a menu row's check **10**, the close and clear `xmark` **9** in a **16** round target, all **semibold**, everywhere — Preview's menus and bars too (`MonknotSecondaryGlyph`). Semibold so their stroke (1.21 at 10, 1.09 at 9) is a row glyph's (1.17 at 13.5 regular): a smaller mark at regular weight reads as a thinner set. Deliberately off the label ratio — these are not content, and sizing them like content gives a row three things all claiming to be the subject. |
 | Dot indicator | **glyph ÷ 2.5** → 6. |
 | Bar divider | Only in Preview's floating bars (the format bar, link card and table bar): **1 × 16** in `line`, 3 clear on each side. Docked bars — the titlebar, the terminal's bar, the PDF bar — group by space alone: items 2 apart, groups 8 apart. Never full height — a full-height rule turns a bar into a table. |
 | Bar height | **tab height + 16** for the titlebar (44: 8 of air each side of a 28 control); **40** for every bar below it (`MonknotBar`: the terminal's and the PDF's, the sidebar and panel headers, the banners), 6 padding; a header over a list (the sidebar, Find in Workspace, Links) pads by the 10 list inset instead, so its title or monogram sits on the rows' glyph column and its last button ends on the list's edge. |
@@ -742,35 +744,48 @@ size.
 - **Never `.frame(width:height:)` on the symbol itself** — it squashes glyphs whose aspect is not
   square.
 
-### 8.2 The two sizes, measured
+### 8.2 One size and one stroke per place
 
-- **Beside a label:** nominally 15pt next to a 13pt label in the 18pt column, on sidebar rows, menu
-  rows and tabs alike, so a file reads the same in a tab, the sidebar and a menu.
-- **Alone in a button:** nominally 17pt in a 28pt button, 13pt in a 22pt one.
+Every place a glyph sits has a **nominal** size: 15 beside a label (sidebar rows, menu rows, tabs, in
+the 18 column), 17 alone in a 28 button, 16 in a segment, 13 in a 22 button, 14 beside a push
+button's or a 12 status line's label. The nominal is not what is drawn. `MonknotSymbolOptics` derives
+one **target** from it — 0.9 of the nominal, at most 14.5: **14.5 in a bar button, 14.4 in a segment,
+13.5 beside a label, 11.7 in a small button** — and every glyph in the place is drawn to it.
 
-**A nominal size is not what a glyph draws.** At 15pt `pencil` draws an 11pt mark and
-`folder.badge.plus` a 20pt one, so a menu of glyphs at one point size reads ragged: some tiny, some
-big. Every picture is therefore sized by what it draws (`MonknotSymbolOptics`, `SymbolInkMetrics`):
-its ink box and density are measured once from the rendered symbol, and its point size is chosen so
-its **optical size** — the ink box's geometric mean, weighted a little by ink so a filled photo is
-set a touch smaller than an outline — is the same as its neighbours':
+**Why one point size per glyph fails.** SF Symbols differ widely in how much of their box they fill:
+at 15 pt `pencil` draws an 11 pt sliver and `folder.badge.plus` a 20 pt mark, so a menu of glyphs at
+one size reads tiny here, big there. **Why sizing each to its box also fails.** An SF Symbol's stroke
+is a fixed share of its point size (0.087 of it at regular), so a glyph scaled up to fill draws a
+heavier line than its neighbour: the old rule let a bar mix 12 and 19 pt glyphs, strokes from 1.04 to
+1.65, and that is what made the set look thrown together. The rule holds both:
 
-- the target is 0.9 of the nominal, at most 14.5: **13.5 beside a label, 14.5 alone in a bar
-  button, 11.7 in a small one**;
-- its longest side stays inside its column, at most 16, even if that shrinks it further (a very
-  wide badge);
-- measuring moves a picture between 0.8 and 1.12 of its nominal, never further.
+- **The stroke band.** Every glyph in a place but lettering is drawn between **0.92 and 1.08 of the
+  target** in points, so no two strokes in a bar differ by more than 16 %, which reads as one weight.
+  Weight is `.regular` everywhere (secondary marks are the one exception, §6).
+- **Pictures** — objects with area — are sized within the band so their **optical size** meets the
+  target. It is measured once from the rendered symbol (`SymbolInkMetrics`): the geometric mean of
+  its ink box, weighted a little by ink so a dense glyph (a filled photo) is set a touch smaller.
+  A symbol drawn as a **base with something on it** — a pencil on a square, a badge on a folder, an
+  arrow into a tray — counts its base half: the eye sizes `square.and.pencil` by its square, so
+  measured whole (the pencil's tip in its box) it read smaller than the search glyph beside it. The
+  base is the layer covering at least 70 % of the box with most of the others' ink inside it; layers
+  side by side (a list's bullets and lines, a stack of pages, a letter and a cursor) are one shape.
+- **Marks** — open signs read by their extent: chevrons, single arrows, `plus`, `minus`, `xmark`,
+  `checkmark`, `ellipsis` and `textformat`'s Aa — are drawn **at the target**, so their stroke is the
+  place's.
+- **Lettering** — B, I, U and S, the letters a format command applies — is set **at the nominal**,
+  like type, so the four share a cap height.
+- **Longest side** at most **1.3 × the target** (18.9 in a bar button, 17.6 in the 18 column, 15.2 in
+  a small button): a very wide glyph shrinks to fit, and one that would have to leave the band to fit
+  is the wrong glyph for the set.
+- A narrow picture (a cursor, a bookmark, a list of lines) stops at the band's edge with its long side
+  already spanning the target, so it reads as tall as its neighbours; a stack of pages stops at the
+  other edge rather than draw a lighter stroke.
 
-**Marks are not pictures.** Open strokes and lettering keep their nominal size or the ceiling listed
-for them, because their extent, not their ink, is what reads: `plus`, back and forward 15 and `xmark`
-14 in a bar (an open stroke spans its whole box, so at the nominal it reads largest); whole-word
-search 12.5; `textformat` 13; `minus`, `ellipsis`, `checkmark`, the chevrons, single arrows and B I
-S at their nominal. Preview's editor glyphs come from the same function, so its menus and the
-chrome's are one set (`MarkdownEditorSymbolAssets`). `WorkspaceChromeMetricsTests` checks the
-menus' and bars' glyphs, by name, land on their target within half a point.
-
-Both scale by the zoom factor. Weight is `.regular` **everywhere** — `.medium` on a 15pt symbol
-reads as a different icon set two rows down.
+Both scale by the zoom factor. `MonknotIconSetTests` renders every glyph of every place through
+`MonknotSystemGlyph` at zoom 0.8, 1 and 2, light and dark, and checks the band, the optical size and
+the centring on what was drawn. Preview's editor glyphs come from the same function
+(`MarkdownEditorSymbolAssets`), so its menus and the chrome's are one set.
 
 ### 8.3 Fixed glyph column
 
@@ -779,8 +794,9 @@ tab too.
 
 SF Symbols have different intrinsic widths — `folder` is wide, `doc.text` narrow, `doc.richtext`
 narrower still — so without a fixed column the label's left edge moves from row to row. **This is
-the single cause of a ragged-looking sidebar and this is the fix.** The column is 18 because the
-widest glyph in the set at 15pt measures about 17.4pt; its side bearing absorbs the rest.
+the single cause of a ragged-looking sidebar and this is the fix.** The column is 18 because no glyph
+beside a label may draw longer than 17.6 (1.3 × its 13.5 target, §8.2); its side bearing absorbs the
+rest.
 
 ### 8.4 Vertical alignment
 
@@ -798,25 +814,47 @@ identical regardless of which symbol occupies it. Never rely on a symbol's own s
 
 ### 8.6 Optical adjustment
 
-Exactly one symbol needs a nudge because its ink is off-centre in its box: `magnifyingglass` moves
-**0.5pt left**. Nothing else; measure before adding one. The disclosure `chevron.right` is centred
+**No glyph is nudged.** SF Symbols centres each glyph's ink in its box — across by its alignment rect,
+so a badged folder sits on the column by its folder and the badge hangs outside — and measured, the
+search glyph is centred too: the half point it was once pushed left put it off its column. Measure
+the rendered ink before adding a nudge (`MonknotIconSetTests`). The disclosure `chevron.right` is centred
 with no nudge: its ink sits on the file glyphs' centre line, and because it turns as a folder opens,
 any horizontal nudge would also drop the open chevron below the row's centre. These positional nudges are separate from the point-size corrections above;
 neither changes the control or glyph-column geometry.
 
 ### 8.7 The set
 
-`sidebar.left` · `chevron.left` / `chevron.right` · `chevron.right` / `chevron.down` (disclosure) ·
-`text.alignleft` (source) · `eye` (preview) · `sidebar.right` · `doc.text` markdown · `doc.richtext`
-PDF · `photo` image · `play.rectangle` video and audio · `waveform` audio's empty state · `folder` (a
-workspace) · `terminal` · `arrow.up.left.and.arrow.down.right` (terminal fullscreen) · `xmark` · `plus` ·
-`square.and.pencil` (New Markdown) · `magnifyingglass` · `ellipsis` (More) ·
-`externaldrive.badge.checkmark` (Save) · `gearshape` · `list.bullet.indent` (Go to Symbol, the PDF
-navigator's Outline).
+`sidebar.left` · `arrow.left` / `arrow.right` (back and forward) · `chevron.right` / `chevron.down`
+(disclosure) · `text.alignleft` (source) · `eye` (preview) · `sidebar.right` · `folder` (a workspace)
+· `terminal` · `arrow.up.left.and.arrow.down.right` (terminal fullscreen) · `xmark` · `plus` ·
+`square.and.pencil` (New Markdown, New File) · `character.cursor.ibeam` (Rename, Preview's Edit
+Link) · `magnifyingglass` · `ellipsis` (More) · `square.and.arrow.down` (Save) · `gearshape` ·
+`list.bullet.indent` (Go to Symbol, the PDF navigator's Outline). The shared names live in
+`MonknotWorkspaceIcons`, so one action draws one glyph wherever it appears.
+
+**A file's glyph says what it holds** (`WorkspaceFileGlyph`, from the file's kind and name), the same
+in a tab, a sidebar row, Recents, Quick Open and Find in Workspace:
+
+| File | Glyph |
+|---|---|
+| Markdown note | `doc.text` |
+| PDF | `doc.richtext` |
+| Plain text: `.txt`, `.log`, `.rst`, README, LICENSE | `doc.plaintext` |
+| Code: source, scripts, HTML, notebooks, SVG, Makefile | `chevron.left.forwardslash.chevron.right` |
+| Data: JSON, YAML, TOML, XML, plist, `.env` | `curlybraces` |
+| Table: CSV, TSV | `tablecells` |
+| Image | `photo` |
+| Video | `play.rectangle` |
+| Audio | `waveform` |
+| Opens in its own app | `doc` |
+
+No other file shows the Markdown page. Source and Preview stay disabled, not hidden, for a file
+without a preview (§10.2).
 
 Use the **outline (non-fill) variant everywhere** except for three status marks, where the fill is the
 state: `folder.fill` for the active workspace, `pin.fill` on a pinned tab, and
-`exclamationmark.triangle.fill` for a warning.
+`exclamationmark.triangle.fill` for a warning (a banner, a status line). An empty state's 34 glyph is
+an illustration and stays outline.
 
 ### 8.8 Rendering mode
 
@@ -924,7 +962,7 @@ Everything else zooms with the workspace — including **every page of Settings*
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ ● ● ●  ⊟  ‹ ›   [ Tab ]  Tab   Tab                [≡|◉]  ⊞   │  titlebar, chrome
+│ ● ● ●  ⊟  ← →   [ Tab ]  Tab   Tab                [≡|◉]  ⊞   │  titlebar, chrome
 │ ▣ Workspace ⌄  ⌕ ✎╭───────────────────────────╮ ╭──────────╮ │
 │ › Notes          │                           │ │ terminal │ │
 │   Product brief  │        document card       │ │   card   │ │
@@ -1075,7 +1113,7 @@ Rows are the **row primitive** (§0), on purpose.
 
 **One glyph per row.** A folder's disclosure chevron (10pt semibold, centred in the column, turning
 90° over 120 ms, instantly with Reduce Motion) sits in the 18pt glyph column, and folders carry no
-folder glyph. Files use `doc.text` / `doc.richtext` / `photo` / `play.rectangle` in the same column.
+folder glyph. Files use their kind's glyph (§8.7) in the same column.
 Names at one depth therefore share a left edge, and a child steps right by exactly the 14 indent.
 
 Label 13/400 at `ink2` and glyph at `ink3` at rest — the same ladder as tabs, menus and Settings —
@@ -1311,26 +1349,28 @@ not.
 ### 10.7 Scale table — every box and glyph at 1×
 
 Glyph size and box size are two different numbers and both are fixed. **A glyph is never sized to
-fill its box.** If an icon looks small, that is correct — macOS chrome glyphs are 15–17pt, never 20+.
+fill its box.** If an icon looks small, that is correct — a bar's glyphs read at 14.5, a row's at 13.5
+(§8.2), never 20+. Glyphs are given below by their nominal size; §8.2 turns it into what is drawn.
 
 | Region | Metrics |
 |---|---|
 | Frame | gaps 6 · cards radius 12, `cardring` 1 · card top 8 below the tab chips |
-| Titlebar | bar 44 · edges 18 leading (sidebar glyph column), 12 trailing (terminal bar's buttons) · traffic light 12 · icon button 28 box / 17 glyph, no border · segmented 28 outer (24 cells + 2 padding on a track) / 16 glyph · items 2 apart, groups 8 · strip inset 3 · 3 between tabs |
+| Titlebar | bar 44 · edges 18 leading (sidebar glyph column), 12 trailing (terminal bar's buttons) · traffic light 12 · icon button 28 box / 17 nominal glyph (14.5 optical), no border, back and forward `arrow.left` / `arrow.right` · segmented 28 outer (24 cells + 2 padding on a track) / 16 glyph · items 2 apart, groups 8 · strip inset 3 · 3 between tabs |
 | Tab | 28 · padding-x 10 · kind glyph 15 in the 18 column · gap 8 · label 13/400 · close 9 in 16, in the glyph column on hover (a pinned tab's `pin.slash` unpins) · unsaved dot 6 on the glyph · pin or warning badge 10 · max width 220 · no minimum |
 | Bar | 40 · padding 6 (10 for a header over a list) · 28 controls 2 apart, groups 8 apart · no rule (terminal, PDF, panel headers, banners) |
 | Sidebar | width 240 (196 minimum) · header 40: monogram 18 (radius 6, initial 10.5/600), name 13/600, chevron 10, search and New Markdown 28/17 · row 28 · padding-x 8 · disclosure chevron 10 or file glyph 15 in the 18 column · gap 8 · label 13/400 · indent 14 · list inset 10, top 4 · no gap between rows · Recents header: chevron, group header, count 12 · footer 28 |
-| Context menu | width 232, up to 320 (at least its control's) · list inset 6 · row 30, 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · separator `line2` 4 inside the inset, 6 each side · no shortcuts · radius 12, `e2` · a control's menu 4 below it · a pop-up's check 11 `ink2` at the row's end, its values at most 380 tall, then scrolling under the 4 / 6 thumb in a 9 lane |
+| Context menu | width 232, up to 320 (at least its control's) · list inset 6 · row 30, 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · separator `line2` 4 inside the inset, 6 each side · no shortcuts · radius 12, `e2` · a control's menu 4 below it · a pop-up's check 10 semibold `ink2` at the row's end, its values at most 380 tall, then scrolling under the 4 / 6 thumb in a 9 lane |
 | Outline | rail 38, 10 from the scroll lane, centred · slot 12, shrinking to keep it ≤ 380, never under 4 · marks 2 thick, 16 / 12 / 9 / 6 by depth, 24 highlighted · panel 8 left of the rail, 232 – 320 wide, ≤ 380 tall, the 6 inset, rows 30, 14 per depth, current mark 12 × 2 · opens after 200 ms on the rail, closes 100 ms after the pointer leaves |
 | Popover | `surf2`, radius 12, `e2`, no arrow · 4 below its control (above where the screen ends) · list: the 6 inset, 6 outside its control · form: padding 12, rows 10 apart, controls 8 apart · switcher 340, Stroke Width 210, Text Style 248 |
 | Sidebar drag | start 4 · source row 35 % · copy 28 tall, ≤ 240, radius 8, `e2`, glyph and name · target region `accsoft`, radius 8 · auto-scroll zone one row, ≤ 12 rows/s · landing tint 900 ms |
 | Menus | list inset 6 · row 30 (34 in an overlay), rows 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · detail 12 `ink3` · group header 12 `ink3` · separator `line2` 4 inside the inset · overlay header 44, footer 32 |
-| Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with an 11 `chevron.down`; a callout's title the same 11 `chevron.down` · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink3` keys, submenu chevron 11, at most 380 tall; a menu of plain names (languages) has no glyph column · handles: + 22×24 and grip 18×24, the + a 16 × 16 glyph and the grip 10 × 16 (§8.9), radius 6, 1 apart, `ink3` at rest, `hover` fill with `ink` on hover, `press` and `ink` held or while the block menu shows, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
+| Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with a 10 semibold `chevron.down`; a callout's title the same · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink3` keys, submenu chevron and check 10 semibold, at most 380 tall; a menu of plain names (languages) has no glyph column · handles: + 22×24 and grip 18×24, the + a 16 × 16 glyph and the grip 10 × 16 (§8.9), radius 6, 1 apart, `ink3` at rest, `hover` fill with `ink` on hover, `press` and `ink` held or while the block menu shows, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
 | Terminal | the bar (40) · session tabs 28, hugging glyph + number · Expand, New, Hide 28/17 |
 | PDF | the bar (40): navigator 28/17, page count 12 tabular · undo, redo · modes segmented · markup actions · style pop-up · zoom pop-up · save with the unsaved dot · navigator: header 40, segmented 28, rows 28, 14 per level |
 | Elsewhere | field 28 · push button 28 bars / 30 sheets · small icon button 22/13 · toggle 32×18, knob 14 · stepper 28 · slider track 4 / knob 16 · colour well 44×22 · overlay row 34 · Settings row ≥ 40, padding 12 × 8 |
 
-**Hard ceilings.** No chrome glyph draws more than 16 on its longest side (§8.2). No square button over 28. No row over 34. The only larger
+**Hard ceilings.** No glyph draws longer than 1.3 × its target (§8.2): 18.9 in a bar button, 17.6 in
+the 18 column, 15.2 in a small button. No square button over 28. No row over 34. The only larger
 glyphs anywhere are empty-state illustrations at 34, which are not controls.
 
 ### 10.7a PDF and image bar
@@ -1797,11 +1837,14 @@ Before calling any UI work done:
 - [ ] Rows that hold the same kind of thing use identical numbers.
 - [ ] Symbols sit in the 18pt column, tabs included, `.regular`, `.monochrome`, cap-height centred.
 - [ ] Icon buttons are 28/17 in bars and 22/13 in rows and fields; no third size.
+- [ ] Every glyph in a bar or a list is drawn on one stroke (0.92–1.08 of its place's target) and its
+      pictures meet one optical size; `MonknotIconSetTests` lists the place's glyphs (§8.2).
+- [ ] A file shows its kind's glyph (`WorkspaceFileGlyph`); only a Markdown note shows `doc.text`.
 - [ ] Every bar below the titlebar is 40 with items 2 apart and groups 8 apart, and no rule.
 - [ ] One scroll thumb (§5.7) on every surface: check documents with "Show scroll bars: Always",
       where WebKit would otherwise draw its own 17pt bar.
-- [ ] No chrome glyph draws more than 16 on its longest side; pictures sized by `MonknotSymbolOptics`,
-      never a hand-picked point size (§8.2). No square button over 28 (§10.7).
+- [ ] No glyph draws longer than 1.3 × its target; every glyph sized by `MonknotSymbolOptics` (or
+      `MonknotSecondaryGlyph` for a chevron, a check or a close), never a hand-picked point size (§8.2). No square button over 28 (§10.7).
 - [ ] Every metric derives from the workspace zoom through `MonknotMetrics` (§9.3). No `.scaleEffect`
       for zoom (§9.2); only a surface's grow-in scales.
       Nothing clamped but the UI-font factor.
@@ -1894,3 +1937,9 @@ symptom, so they are worth checking deliberately rather than hoping to notice.
     the outline is long: in a long document it covers the page, and the headings past its end can only
     be reached by scrolling it first. Bound it, shrink the slots, and scroll a bounded list with its
     highlight kept in view (§10.5).
+23. **Glyphs sized past their stroke** — scaling a small glyph up to fill (a pencil at 19 pt beside
+    14 pt neighbours) draws a heavier line, and the bar reads as icons from two sets. Keep every
+    glyph in its place's stroke band; a glyph that cannot reach the target inside it is the wrong
+    glyph (§8.2).
+24. **One glyph for every file** — a `.txt`, a `.json` and a `.swift` wearing the Markdown note's page
+    read as notes. Give each kind its glyph (`WorkspaceFileGlyph`, §8.7).

@@ -81,7 +81,7 @@ struct WorkspaceQuickOpenView: View {
             hover: state.select(index:)
         ) { document, isSelected in
             MonknotCommandOverlayRow(
-                leading: .glyph(document.kind.resolvedSystemImage),
+                leading: .glyph(document.fileGlyph.systemImage),
                 title: document.displayName,
                 detail: (document.relativePath as NSString).deletingLastPathComponent,
                 isSelected: isSelected,
