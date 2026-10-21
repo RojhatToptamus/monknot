@@ -215,6 +215,39 @@ public struct WorkspaceTabState: Codable, Equatable, Sendable {
         return selectedDocumentID
     }
 
+    /// What File › Close Tab (⌘W) does to the active tab.
+    public enum CloseCommandOutcome: Equatable, Sendable {
+        case close(String)
+        case activate(String)
+        case none
+    }
+
+    /// ⌘W closes the active tab unless it is pinned: a pinned tab stays open and the most recently
+    /// active unpinned tab in `recentDocumentIDs` (newest first), else the first unpinned one, takes
+    /// its place, as in VS Code. With every tab pinned ⌘W does nothing; the tab's menu still closes it.
+    public func closeCommandOutcome(recentDocumentIDs: [String]) -> CloseCommandOutcome {
+        guard let selectedDocumentID, let selectedTab = tab(for: selectedDocumentID) else {
+            return .none
+        }
+        guard selectedTab.isPinned else {
+            return .close(selectedDocumentID)
+        }
+
+        let unpinnedIDs = Set(tabs.filter { !$0.isPinned }.map(\.documentID))
+        if let recentID = recentDocumentIDs.first(where: unpinnedIDs.contains) {
+            return .activate(recentID)
+        }
+        if let firstUnpinned = tabs.first(where: { !$0.isPinned }) {
+            return .activate(firstUnpinned.documentID)
+        }
+        return .none
+    }
+
+    /// The tabs Close Other Tabs closes: every unpinned tab but `documentID`'s, in strip order.
+    public func documentIDsClosedByCloseOthers(keeping documentID: String) -> [String] {
+        tabs.filter { $0.documentID != documentID && !$0.isPinned }.map(\.documentID)
+    }
+
     public mutating func togglePin(documentID: String) {
         guard let index = tabs.firstIndex(where: { $0.documentID == documentID }) else {
             return

@@ -1572,9 +1572,7 @@ struct ContentView: View {
     /// Cancel stops there and leaves the rest open. The kept tab becomes the active one.
     private func closeOtherTabs(keeping documentID: String) {
         guard !store.isBusy, !isResolvingUnsavedChanges else { return }
-        let others = tabState.tabs
-            .filter { $0.documentID != documentID && !$0.isPinned }
-            .map(\.documentID)
+        let others = tabState.documentIDsClosedByCloseOthers(keeping: documentID)
         guard !others.isEmpty else { return }
         if tabState.selectedDocumentID != documentID {
             activateTab(id: documentID)
@@ -1636,15 +1634,16 @@ struct ContentView: View {
         }
     }
 
+    /// File › Close Tab and ⌘W. A pinned tab stays open (design.md §10.3); its menu closes it.
     private func closeActiveTab() {
-        guard let selectedDocumentID = tabState.selectedDocumentID else { return }
-
-        if tabState.tab(for: selectedDocumentID)?.isPinned == true {
-            togglePinTab(id: selectedDocumentID)
-            return
+        switch tabState.closeCommandOutcome(recentDocumentIDs: documentNavigationHistory.backStack.reversed()) {
+        case .close(let documentID):
+            closeTab(id: documentID)
+        case .activate(let documentID):
+            activateTab(id: documentID)
+        case .none:
+            break
         }
-
-        closeTab(id: selectedDocumentID)
     }
 
     private func togglePinTab(id documentID: String) {

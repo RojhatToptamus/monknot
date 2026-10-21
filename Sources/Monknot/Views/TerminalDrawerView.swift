@@ -272,11 +272,10 @@ private struct TerminalTabChip: View {
             isSelected: isSelected,
             placement: .card,
             glyphTint: statusTint,
-            closeLabel: "Kill Terminal \(index)",
+            hoverButton: MonknotTab.HoverButton(label: "Kill Terminal \(index)", action: kill),
             theme: theme,
             zoomScale: zoomScale,
-            select: select,
-            close: kill
+            select: select
         )
         .contextMenu {
             MonknotMenuCommandButton(.restartTerminal, action: restart)

@@ -167,6 +167,29 @@ final class DocumentTabBarLayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(readme, MonknotMetrics.tabMaxWidthBase)
     }
 
+    /// A pinned tab's hover button is its pin, which unpins it; only an unpinned tab's closes.
+    func testAPinnedTabsHoverButtonUnpinsInsteadOfClosing() {
+        var closed = 0
+        var toggled = 0
+        let pinned = MonknotTab.HoverButton.documentTab(
+            isPinned: true, label: "a.md", close: { closed += 1 }, togglePin: { toggled += 1 }
+        )
+        XCTAssertEqual(pinned.label, "Unpin a.md")
+        XCTAssertEqual(pinned.systemImage, "pin.slash")
+        pinned.action()
+        XCTAssertEqual(toggled, 1)
+        XCTAssertEqual(closed, 0, "Clicking a pinned tab's pin never closes it")
+
+        let unpinned = MonknotTab.HoverButton.documentTab(
+            isPinned: false, label: "a.md", close: { closed += 1 }, togglePin: { toggled += 1 }
+        )
+        XCTAssertEqual(unpinned.label, "Close a.md")
+        XCTAssertEqual(unpinned.systemImage, "xmark")
+        unpinned.action()
+        XCTAssertEqual(closed, 1)
+        XCTAssertEqual(toggled, 1)
+    }
+
     func testTabCloseButtonsScaleWithTheSixteenPointTrailingSlot() {
         let theme = AppTheme.defaultDark
         for zoomScale in WorkspaceZoomPolicy.supportedLevels {

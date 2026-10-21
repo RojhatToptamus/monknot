@@ -43,6 +43,58 @@ final class WorkspaceTabStateTests: XCTestCase {
         XCTAssertTrue(state.isEmptyByUserChoice)
     }
 
+    func testCloseCommandClosesAnUnpinnedTabButLeavesAPinnedOneOpen() {
+        let (readme, guide, notes) = documents()
+        var state = WorkspaceTabState()
+        [readme, guide, notes].forEach { state.open($0) }
+        state.togglePin(documentID: readme.id)
+        // Strip: README (pinned), Guide, Notes.
+
+        state.activate(documentID: guide.id)
+        XCTAssertEqual(state.closeCommandOutcome(recentDocumentIDs: [readme.id]), .close(guide.id))
+
+        // ⌘W on the pinned tab moves to the most recently active unpinned tab, skipping pinned ones
+        // and tabs no longer open, and never unpins or closes it.
+        state.activate(documentID: readme.id)
+        XCTAssertEqual(
+            state.closeCommandOutcome(recentDocumentIDs: ["/tmp/MonknotWorkspace/Closed.md", readme.id, notes.id, guide.id]),
+            .activate(notes.id)
+        )
+        XCTAssertEqual(state.closeCommandOutcome(recentDocumentIDs: []), .activate(guide.id), "With no history, the first unpinned tab")
+        XCTAssertEqual(state.tabs.map(\.documentID), [readme.id, guide.id, notes.id])
+        XCTAssertEqual(state.tab(for: readme.id)?.isPinned, true)
+        XCTAssertEqual(state.selectedDocumentID, readme.id)
+    }
+
+    func testCloseCommandDoesNothingWhenEveryTabIsPinnedButAnExplicitCloseStillCloses() {
+        let (readme, guide, _) = documents()
+        var state = WorkspaceTabState()
+        [readme, guide].forEach { state.open($0) }
+        state.togglePin(documentID: readme.id)
+        state.togglePin(documentID: guide.id)
+
+        XCTAssertEqual(state.closeCommandOutcome(recentDocumentIDs: [readme.id]), .none)
+
+        // The tab's menu closes a pinned tab outright.
+        XCTAssertEqual(state.close(documentID: guide.id), readme.id)
+        XCTAssertEqual(state.tabs.map(\.documentID), [readme.id])
+
+        XCTAssertEqual(WorkspaceTabState().closeCommandOutcome(recentDocumentIDs: []), .none)
+    }
+
+    func testCloseOtherTabsKeepsPinnedTabsAndTheKeptOne() {
+        let (readme, guide, notes) = documents()
+        var state = WorkspaceTabState()
+        [readme, guide, notes].forEach { state.open($0) }
+        state.togglePin(documentID: notes.id)
+        // Strip: Notes (pinned), README, Guide.
+
+        XCTAssertEqual(state.documentIDsClosedByCloseOthers(keeping: guide.id), [readme.id])
+        XCTAssertEqual(state.documentIDsClosedByCloseOthers(keeping: notes.id), [readme.id, guide.id])
+        state.togglePin(documentID: readme.id)
+        XCTAssertEqual(state.documentIDsClosedByCloseOthers(keeping: guide.id), [])
+    }
+
     func testRemapAndPrunePreserveOnlyAvailableOrExplicitlyPreservedTabs() {
         let (readme, _, notes) = documents()
         var state = WorkspaceTabState()
