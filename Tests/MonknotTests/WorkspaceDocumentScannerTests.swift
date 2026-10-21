@@ -24,13 +24,13 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         let result = try WorkspaceDocumentScanner().scan(rootURL: root)
         let relativePaths = result.documents.map(\.relativePath).sorted()
 
-        XCTAssertEqual(relativePaths, ["Clip.mp4", "Guide.pdf", "Makefile", "Notes.txt", "Notes/Todo.markdown", "Notes/image.png", "Preview.html", "README.md", "diagram.mmd"])
+        XCTAssertEqual(relativePaths, ["Clip.avi", "Clip.mp4", "Guide.pdf", "Makefile", "Notes.txt", "Notes/Todo.markdown", "Notes/archive.zip", "Notes/image.png", "Preview.html", "README.md", "diagram.mmd"])
         XCTAssertEqual(
             result.documents.first(where: { $0.displayName == "Clip.mp4" })?.kind,
             .media,
             "Media is listed by its extension; the scan never reads the file"
         )
-        XCTAssertNil(result.documents.first(where: { $0.displayName == "Clip.avi" }))
+        XCTAssertEqual(result.documents.first(where: { $0.displayName == "Clip.avi" })?.kind, .unsupported)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Guide.pdf" })?.kind, .pdf)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "README.md" })?.kind, .markdown)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Notes.txt" })?.kind, .text)
@@ -39,9 +39,9 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "diagram.mmd" })?.kind, .text)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Makefile" })?.kind, .text)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "image.png" })?.kind, .image)
-        XCTAssertNil(result.documents.first(where: { $0.displayName == "archive.zip" }))
-        XCTAssertEqual(result.root.children?.map(\.name), ["Empty", "Notes", "Clip.mp4", "diagram.mmd", "Guide.pdf", "Makefile", "Notes.txt", "Preview.html", "README.md"])
-        XCTAssertEqual(result.root.children?.first(where: { $0.name == "Notes" })?.children?.map(\.name), ["image.png", "Todo.markdown"])
+        XCTAssertEqual(result.documents.first(where: { $0.displayName == "archive.zip" })?.kind, .unsupported)
+        XCTAssertEqual(result.root.children?.map(\.name), ["Empty", "Notes", "Clip.avi", "Clip.mp4", "diagram.mmd", "Guide.pdf", "Makefile", "Notes.txt", "Preview.html", "README.md"])
+        XCTAssertEqual(result.root.children?.first(where: { $0.name == "Notes" })?.children?.map(\.name), ["archive.zip", "image.png", "Todo.markdown"])
     }
 
     func testNodeLookupFindsFoldersAndFilesByPath() throws {

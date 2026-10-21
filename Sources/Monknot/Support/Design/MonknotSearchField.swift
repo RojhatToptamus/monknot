@@ -1,8 +1,8 @@
 import MonknotCore
 import SwiftUI
 
-/// Shared search-field symbol with the same optical centering as search
-/// buttons. Point size can vary by role without changing the correction.
+/// The search field's glyph: `magnifyingglass` sized as a picture beside the query (14 nominal), drawn
+/// as the search buttons draw it.
 struct MonknotSearchGlyph: View {
     let theme: AppTheme
     let zoomScale: Double

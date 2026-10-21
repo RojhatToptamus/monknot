@@ -6,15 +6,16 @@ import UniformTypeIdentifiers
 /// Where keyboard focus goes when a file is chosen in the sidebar.
 enum SidebarDocumentOpenFocus {
     /// Whether the document takes keyboard focus: one shown for typing does, ready for it. Any
-    /// other file, such as an image, a PDF, a video or a preview, leaves focus in the tree, where
-    /// the Edit menu's Copy, Cut and Paste act on the selected file.
+    /// other file, such as an image, a PDF, a video or an HTML preview, leaves focus in the tree,
+    /// where the Edit menu's Copy, Cut and Paste act on the selected file. Markdown Preview is
+    /// edited in place, so it is shown for typing too.
     static func movesFocusToDocument(
         _ document: WorkspaceDocument,
         editorMode: EditorMode,
         isSplitViewEnabled: Bool
     ) -> Bool {
         guard document.capabilities.canEditText else { return false }
-        return !document.hasPreviewMode || editorMode == .source || isSplitViewEnabled
+        return !document.hasPreviewMode || document.kind == .markdown || editorMode == .source || isSplitViewEnabled
     }
 }
 
@@ -273,10 +274,17 @@ struct ContentView: View {
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
     @AppStorage(TerminalWorkingDirectoryPreference.key)
     private var terminalWorkingDirectory = TerminalWorkingDirectoryPreference.defaultValue.rawValue
-    @SceneStorage("Monknot.isTerminalDrawerOpen") private var terminalPreferredVisible = false
+    /// The side panes this window asks for (design.md §10.0). `SceneStorage` restores them with the
+    /// window but takes no writes outside a scene (a SwiftUI preview, a window hosted by a test), so a
+    /// choice the window makes is held in `@State` and the stored value is read until it makes one.
+    @SceneStorage("Monknot.isTerminalDrawerOpen") private var storedTerminalPreference = false
+    @State private var sessionTerminalPreference: Bool?
     @State private var isTerminalVisible = false
     @State private var isTerminalFullscreen = false
     @State private var terminalRevealRequest: UInt = 0
+    /// Held, not observed: the card edge moves on every frame of a pane transition, and only the tab
+    /// strip that follows it should redraw.
+    @State private var chromeAlignment = ChromeAlignmentModel()
     @StateObject private var terminalFocusRestorer = TerminalFocusRestorer()
     @StateObject private var goToLineFocusRestorer = TerminalFocusRestorer()
     @StateObject private var searchFocusRestorer = TerminalFocusRestorer()
@@ -294,6 +302,8 @@ struct ContentView: View {
     @State private var pendingPDFPageNavigationRequest: PDFPageNavigationRequest?
     @State private var pdfPageNavigationSerial = 0
     @State private var pdfNavigatorToggleCommandSerial = 0
+    /// Each change opens the sidebar's workspace switcher.
+    @State private var workspaceSwitcherRequest = 0
     @State private var pdfSelectionSnapshot: PDFSelectionSnapshot?
     @State private var pdfExcerptCopyTask: Task<Void, Never>?
     /// Observable only when the editor selection goes between empty and non-empty, which is all the
@@ -319,9 +329,12 @@ struct ContentView: View {
     @State private var documentSearch = DocumentSearchState()
     @State private var searchOptions = MonknotSearchOptions()
     @State private var isSidebarVisible = true
-    @SceneStorage("Monknot.sidebarPreferredVisible") private var sidebarPreferredVisible = true
+    @SceneStorage("Monknot.sidebarPreferredVisible") private var storedSidebarPreference = true
+    @State private var sessionSidebarPreference: Bool?
     @State private var sidebarRevealRequest: UInt = 0
     @State private var sidebarNewItemRequest: SidebarNewItemRequest?
+    /// Each change selects every row the sidebar's tree shows.
+    @State private var sidebarSelectAllRequest = 0
     @State private var successNotice: SuccessNotice?
     @State private var pendingWorkspaceRemoval: SavedWorkspaceRemoval?
     @State private var pendingPDFExportDocument: WorkspaceDocument?
@@ -329,11 +342,127 @@ struct ContentView: View {
     @State private var isExportingPDF = false
     @State private var isResolvingUnsavedChanges = false
     @State private var isKeyboardShortcutsHelpPresented = false
+    /// `InitialLayout.overlay`, until the first document shows.
+    @State private var pendingInitialOverlay: InitialLayout.Overlay?
     @ObservedObject private var systemAppearance = SystemAppearanceMonitor.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openSettings) private var openSettings
     private let tabStatePersistence = WorkspaceTabStatePersistence()
     private let viewportStatePersistence = DocumentViewportStatePersistence()
+
+    /// Which side panes a new window shows before its scene has stored a choice of its own (a
+    /// restored window keeps what it had). Previews and the UI tour start in other layouts.
+    struct InitialLayout: Equatable {
+        var showsSidebar = true
+        var showsTerminal = false
+        /// An overlay shown once the first document is open, for the UI tour's design reviews.
+        var overlay: Overlay?
+
+        enum Overlay: Equatable {
+            case quickOpen
+            case documentSearch(String)
+            case workspaceSearch(String)
+            case keyboardShortcuts
+            case workspaceSwitcher
+            case pdfNavigator
+            /// Toggles the sidebar, animated, at each of these seconds after the document shows, so
+            /// the tour can record the transitions.
+            case toggleSidebar(at: [Double])
+            /// Toggles the terminal the same way.
+            case toggleTerminal(at: [Double])
+            /// Toggles the terminal's fullscreen the same way.
+            case toggleTerminalFullscreen(at: [Double])
+        }
+
+        static let standard = InitialLayout()
+    }
+
+    init(
+        store: WorkspaceStore,
+        themeStore: ThemeSettingsStore,
+        workspaceLibrary: WorkspaceLibraryStore,
+        terminationCoordinator: ApplicationTerminationCoordinator,
+        initialLayout: InitialLayout = .standard
+    ) {
+        _store = ObservedObject(wrappedValue: store)
+        _themeStore = ObservedObject(wrappedValue: themeStore)
+        _workspaceLibrary = ObservedObject(wrappedValue: workspaceLibrary)
+        self.terminationCoordinator = terminationCoordinator
+        _storedSidebarPreference = SceneStorage(wrappedValue: initialLayout.showsSidebar, "Monknot.sidebarPreferredVisible")
+        _isSidebarVisible = State(initialValue: initialLayout.showsSidebar)
+        _storedTerminalPreference = SceneStorage(wrappedValue: initialLayout.showsTerminal, "Monknot.isTerminalDrawerOpen")
+        _pendingInitialOverlay = State(initialValue: initialLayout.overlay)
+    }
+
+    private var sidebarPreferredVisible: Bool {
+        get { sessionSidebarPreference ?? storedSidebarPreference }
+        nonmutating set {
+            sessionSidebarPreference = newValue
+            storedSidebarPreference = newValue
+        }
+    }
+
+    private var terminalPreferredVisible: Bool {
+        get { sessionTerminalPreference ?? storedTerminalPreference }
+        nonmutating set {
+            sessionTerminalPreference = newValue
+            storedTerminalPreference = newValue
+        }
+    }
+
+    private func presentPendingInitialOverlay() {
+        guard let overlay = pendingInitialOverlay,
+              store.selectedDocument != nil,
+              !store.isBusy,
+              !store.isDocumentLoading else { return }
+        pendingInitialOverlay = nil
+        switch overlay {
+        case .quickOpen:
+            showQuickOpen()
+        case let .documentSearch(query):
+            showDocumentSearch()
+            documentSearch.setQuery(query)
+        case let .workspaceSearch(query):
+            showWorkspaceSearch()
+            workspaceSearch.setQuery(
+                query,
+                options: searchOptions,
+                documents: store.documents,
+                dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+                dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
+            )
+        case .keyboardShortcuts:
+            isKeyboardShortcutsHelpPresented = true
+        case .workspaceSwitcher:
+            // After the window's first layout, as a click would come, so the popover finds its anchor.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                workspaceSwitcherRequest &+= 1
+            }
+        case .pdfNavigator:
+            // Once the PDF viewer is on screen; it ignores toggles sent before it appeared.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                pdfNavigatorToggleCommandSerial &+= 1
+            }
+        case let .toggleSidebar(at: delays):
+            for delay in delays {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    toggleSidebar(animated: true)
+                }
+            }
+        case let .toggleTerminal(at: delays):
+            for delay in delays {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    toggleTerminalDrawer(animated: true)
+                }
+            }
+        case let .toggleTerminalFullscreen(at: delays):
+            for delay in delays {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    toggleTerminalFullscreen(animated: true)
+                }
+            }
+        }
+    }
 
     private var zoomScale: Double {
         get { WorkspaceZoomPolicy.clamp(persistedZoomScale) }
@@ -383,15 +512,15 @@ struct ContentView: View {
     private var chromeContent: AnyView {
         AnyView(rootContent
             .ignoresSafeArea(.container, edges: .top)
-            .background(activeTheme.surfaceColor)
+            .background(activeTheme.chromeSurfaceColor)
             .background(WindowChromeConfigurator(
-                surfaceColor: activeTheme.surfaceColor,
+                surfaceColor: activeTheme.chromeSurfaceColor,
                 isDark: activeTheme.isDark,
                 trafficLightRowHeight: MonknotMetrics.chromeHeight(
                     theme: activeTheme,
                     zoomScale: zoomScale
                 ),
-                trafficLightLeadingInset: MonknotMetrics.chromeHorizontalPadding(
+                trafficLightLeadingInset: MonknotMetrics.titlebarLeadingInset(
                     theme: activeTheme,
                     zoomScale: zoomScale
                 ),
@@ -402,6 +531,7 @@ struct ContentView: View {
                 shouldClose: { await prepareForWindowClose() }
             ))
             .background(KeyboardShortcutMonitor(handler: handleKeyDown))
+            .background(MonknotContextMenuAppearance(theme: activeTheme, zoomScale: zoomScale))
             .accentColor(activeTheme.accentColor)
         )
     }
@@ -605,6 +735,7 @@ struct ContentView: View {
                 MarkdownPDFExportOptionsSheet(
                     document: document,
                     theme: activeTheme,
+                    zoomScale: zoomScale,
                     options: $pdfExportOptions,
                     isExporting: isExportingPDF,
                     cancel: {
@@ -624,22 +755,39 @@ struct ContentView: View {
             .onAppear {
                 persistedZoomScale = WorkspaceZoomPolicy.clamp(persistedZoomScale)
             }
+            .onChange(of: store.isDocumentLoading) { _, _ in
+                presentPendingInitialOverlay()
+            }
+            .onChange(of: store.isBusy) { _, _ in
+                presentPendingInitialOverlay()
+            }
     }
 
     private var rootContentStack: some View {
         ZStack {
             VStack(spacing: 0) {
-                MonknotChromePanel(theme: activeTheme, surface: activeTheme.sidebarSurfaceColor) {
-                    primaryTitlebar
-                }
+                // The titlebar is part of the frame around the cards: no rule under it.
+                primaryTitlebar
+                    .background(activeTheme.chromeSurfaceColor)
 
                 WorkspaceSplitView(
                     isSidebarPresented: sidebarPreferredVisible,
                     isTerminalPresented: terminalPreferredVisible,
                     isTerminalFullscreen: isTerminalFullscreen,
                     layoutScale: activeTheme.layoutScale(zoomScale: zoomScale),
-                    separatorColor: NSColor(activeTheme.separatorColor),
-                    accentColor: NSColor(activeTheme.accentColor),
+                    handleInkColor: NSColor(hex: activeTheme.foreground),
+                    onDocumentLeadingEdgeChange: { edge in
+                        if chromeAlignment.documentLeadingEdge != edge {
+                            chromeAlignment.documentLeadingEdge = edge
+                        }
+                    },
+                    cardStyle: WorkspaceCardStyle(
+                        documentBackground: NSColor(activeTheme.surfaceColor),
+                        terminalBackground: NSColor(activeTheme.surfaceColor),
+                        border: NSColor(activeTheme.cardRingColor),
+                        cornerRadius: MonknotMetrics.cardCornerRadius,
+                        inset: WorkspaceSplitMetrics.dividerThickness
+                    ),
                     sidebarRevealRequest: sidebarRevealRequest,
                     terminalRevealRequest: terminalRevealRequest,
                     onSidebarPresentationChange: { isPresented, userInitiated in
@@ -673,14 +821,13 @@ struct ContentView: View {
                     showInFinder: {
                         guard let revealURL = successNotice.revealURL else { return }
                         NSWorkspace.shared.activateFileViewerSelecting([revealURL])
-                        self.successNotice = nil
+                        dismissSuccessNotice()
                     },
                     performAction: {
                         undoWorkspaceRemoval()
                     },
                     dismiss: {
-                        self.successNotice = nil
-                        self.pendingWorkspaceRemoval = nil
+                        dismissSuccessNotice()
                     }
                 )
                 .padding(20)
@@ -765,10 +912,7 @@ struct ContentView: View {
             guard successNotice != nil else { return }
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             guard !Task.isCancelled else { return }
-            withAnimation(MonknotMotion.toastAnimation(reduceMotion: reduceMotion)) {
-                successNotice = nil
-                pendingWorkspaceRemoval = nil
-            }
+            dismissSuccessNotice()
         }
     }
 
@@ -802,6 +946,18 @@ struct ContentView: View {
             closeTab: closeTab(id:),
             togglePinTab: togglePinTab(id:),
             reorderTab: reorderTab(draggedID:targetID:),
+            tabMenu: DocumentTabMenuActions(
+                closeOtherTabs: closeOtherTabs(keeping:),
+                location: { documentID in
+                    let url = URL(fileURLWithPath: documentID)
+                    return (
+                        copyPath: { copyPath(url) },
+                        copyRelativePath: { copyRelativePath(url) },
+                        revealInFinder: { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    )
+                }
+            ),
+            chromeAlignment: chromeAlignment,
             navigateBack: navigateBack,
             navigateForward: navigateForward,
             canNavigateBack: canNavigateBack,
@@ -828,9 +984,11 @@ struct ContentView: View {
             showWorkspaceSearch: showWorkspaceSearch,
             dismissWorkspaceSearch: { dismissWorkspaceSearch(restoreFocus: true) },
             workspaceSearchFocusChanged: searchFieldFocusChanged,
-            copyPath: copyPath(_:),
-            copyRelativePath: copyRelativePath(_:),
-            newItemRequest: $sidebarNewItemRequest
+            copyPath: copyPaths(_:),
+            copyRelativePath: copyRelativePaths(_:),
+            newItemRequest: $sidebarNewItemRequest,
+            workspaceSwitcherRequest: workspaceSwitcherRequest,
+            selectAllRequest: sidebarSelectAllRequest
         )
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
     }
@@ -928,7 +1086,7 @@ struct ContentView: View {
                 close: { setTerminalDrawerPresented(false, animated: true) }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(activeTheme.terminalSurfaceColor)
+            .background(activeTheme.surfaceColor)
         }
     }
 
@@ -966,6 +1124,38 @@ struct ContentView: View {
         }
     }
 
+    /// Copy Path for the sidebar's items: one path, or several one per line.
+    private func copyPaths(_ urls: [URL]) {
+        guard urls.count > 1 else {
+            urls.first.map(copyPath(_:))
+            return
+        }
+        do {
+            try WorkspacePasteboardExportService.copyPlainText(urls.map(\.path).joined(separator: "\n"))
+            showSuccessNotice("Copied \(urls.count) paths")
+        } catch {
+            store.errorMessage = "Could not copy the paths: \(error.localizedDescription)"
+        }
+    }
+
+    private func copyRelativePaths(_ urls: [URL]) {
+        guard urls.count > 1 else {
+            urls.first.map(copyRelativePath(_:))
+            return
+        }
+        guard let workspaceURL = store.workspaceURL else {
+            store.errorMessage = "Open a workspace before copying a relative path."
+            return
+        }
+        do {
+            let relativePaths = try urls.map { try WorkspaceDocumentSupport.validatedRelativePath(for: $0, in: workspaceURL) }
+            try WorkspacePasteboardExportService.copyPlainText(relativePaths.joined(separator: "\n"))
+            showSuccessNotice("Copied \(urls.count) relative paths")
+        } catch {
+            store.errorMessage = "Could not copy the relative paths: \(error.localizedDescription)"
+        }
+    }
+
     private func showSuccessNotice(_ message: String, revealURL: URL? = nil) {
         pendingWorkspaceRemoval = nil
         showSuccessNotice(message, revealURL: revealURL, actionTitle: nil)
@@ -976,7 +1166,7 @@ struct ContentView: View {
         revealURL: URL? = nil,
         actionTitle: String?
     ) {
-        withAnimation(MonknotMotion.toastAnimation(reduceMotion: reduceMotion)) {
+        withAnimation(MonknotMotion.hoverAnimation) {
             successNotice = SuccessNotice(
                 message: message,
                 revealURL: revealURL,
@@ -1089,8 +1279,13 @@ struct ContentView: View {
     private func undoWorkspaceRemoval() {
         guard let removal = pendingWorkspaceRemoval else { return }
         workspaceLibrary.restore(removal)
+        dismissSuccessNotice()
+    }
+
+    /// A toast leaves the way it came, however it is dismissed (design.md §11).
+    private func dismissSuccessNotice() {
         pendingWorkspaceRemoval = nil
-        withAnimation(MonknotMotion.toastAnimation(reduceMotion: reduceMotion)) {
+        withAnimation(MonknotMotion.hoverAnimation) {
             successNotice = nil
         }
     }
@@ -1373,6 +1568,27 @@ struct ContentView: View {
         }
     }
 
+    /// Closes every unpinned tab but `documentID`'s, asking about each one's unsaved changes in turn;
+    /// Cancel stops there and leaves the rest open. The kept tab becomes the active one.
+    private func closeOtherTabs(keeping documentID: String) {
+        guard !store.isBusy, !isResolvingUnsavedChanges else { return }
+        let others = tabState.documentIDsClosedByCloseOthers(keeping: documentID)
+        guard !others.isEmpty else { return }
+        if tabState.selectedDocumentID != documentID {
+            activateTab(id: documentID)
+        }
+
+        Task { @MainActor in
+            isResolvingUnsavedChanges = true
+            defer { isResolvingUnsavedChanges = false }
+
+            for otherID in others where tabState.tab(for: otherID) != nil {
+                guard await resolveUnsavedChangesIfNeeded(for: otherID) else { return }
+                closeResolvedTab(id: otherID)
+            }
+        }
+    }
+
     private func closeResolvedTab(id documentID: String) {
         let closedTab = tabState.tab(for: documentID)
         let wasActive = tabState.selectedDocumentID == documentID
@@ -1418,15 +1634,16 @@ struct ContentView: View {
         }
     }
 
+    /// File › Close Tab and ⌘W. A pinned tab stays open (design.md §10.3); its menu closes it.
     private func closeActiveTab() {
-        guard let selectedDocumentID = tabState.selectedDocumentID else { return }
-
-        if tabState.tab(for: selectedDocumentID)?.isPinned == true {
-            togglePinTab(id: selectedDocumentID)
-            return
+        switch tabState.closeCommandOutcome(recentDocumentIDs: documentNavigationHistory.backStack.reversed()) {
+        case .close(let documentID):
+            closeTab(id: documentID)
+        case .activate(let documentID):
+            activateTab(id: documentID)
+        case .none:
+            break
         }
-
-        closeTab(id: selectedDocumentID)
     }
 
     private func togglePinTab(id documentID: String) {
@@ -1463,12 +1680,8 @@ struct ContentView: View {
         )
         pruneDocumentViewportStates()
 
-        if let selectedDocument = store.selectedDocument {
-            if tabState.contains(documentID: selectedDocument.id) {
-                tabState.open(selectedDocument)
-            } else if !tabState.isEmptyByUserChoice {
-                tabState.open(selectedDocument)
-            }
+        if let selectedDocument = store.selectedDocument, opensTab(for: selectedDocument) {
+            tabState.open(selectedDocument)
         } else if store.selectedDocumentID == nil, tabState.tabs.isEmpty {
             tabState.activate(documentID: nil)
         }
@@ -1480,6 +1693,15 @@ struct ContentView: View {
         if tabState.selectedDocumentID != store.selectedDocumentID {
             _ = store.selectDocument(id: tabState.selectedDocumentID, selectingInSidebar: false)
         }
+    }
+
+    /// The store's document has a tab, or gets one: always while other tabs are open, and with every
+    /// tab closed only when it was asked for (a new file, today's note), so a closed strip stays
+    /// closed through a reload but never swallows a file the user just made.
+    private func opensTab(for document: WorkspaceDocument) -> Bool {
+        tabState.contains(documentID: document.id)
+            || !tabState.isEmptyByUserChoice
+            || store.pendingDocumentOpenIDs.contains(document.id)
     }
 
     private func syncSelectedTabWithStore() {
@@ -1499,10 +1721,8 @@ struct ContentView: View {
 
         let previousState = tabState
 
-        if let selectedDocument = store.selectedDocument {
-            if tabState.contains(documentID: selectedDocument.id) || !tabState.isEmptyByUserChoice {
-                tabState.open(selectedDocument)
-            }
+        if let selectedDocument = store.selectedDocument, opensTab(for: selectedDocument) {
+            tabState.open(selectedDocument)
         } else if store.selectedDocumentID == nil, tabState.tabs.isEmpty {
             tabState.activate(documentID: nil)
         }
@@ -2148,7 +2368,12 @@ struct ContentView: View {
                 isKeyboardShortcutsHelpPresented = true
             },
             undoWorkspaceReplace: { store.undoLastWorkspaceReplace() },
-            canUndoWorkspaceReplace: canUndoWorkspaceReplace
+            canUndoWorkspaceReplace: canUndoWorkspaceReplace,
+            undoFileOperation: { store.undoFileOperation() },
+            redoFileOperation: { store.redoFileOperation() },
+            fileOperationUndoActionName: store.canUndoFileOperation ? store.fileOperationUndo.undoActionName : nil,
+            fileOperationRedoActionName: store.canRedoFileOperation ? store.fileOperationUndo.redoActionName : nil,
+            fileOperationUndoPrecedesWorkspaceReplace: store.fileOperationUndo.undoPrecedesWorkspaceReplace
         )
     }
 
@@ -2167,6 +2392,21 @@ struct ContentView: View {
 
     private var canUndoWorkspaceReplace: Bool {
         store.canUndoWorkspaceReplace && !store.isBusy
+    }
+
+    /// Where ⌘Z (or ⇧⌘Z) goes now, as the Edit menu decides it.
+    private func undoCommandDestination(redo: Bool) -> MonknotUndoCommandDestination {
+        monknotUndoCommandDestination(
+            isPDFDocumentActive: isPDFViewerDocumentSelected,
+            hasNativeEditingFocus: MonknotNativePasteboardCommand.hasNativeEditingFocus,
+            terminalHasFocus: MonknotNativeUndoCommand.terminalHasFocus,
+            documentViewHasFocus: MonknotNativeUndoCommand.documentViewHasFocus,
+            canPerformNative: redo ? MonknotNativeUndoCommand.canRedo : MonknotNativeUndoCommand.canUndo,
+            canPerformWorkspaceReplace: !redo && canUndoWorkspaceReplace,
+            canPerformFileOperation: redo ? store.canRedoFileOperation : store.canUndoFileOperation,
+            fileOperationIsNewer: !redo && store.fileOperationUndo.undoPrecedesWorkspaceReplace,
+            canPerformPDF: isPDFViewerDocumentSelected && (redo ? canRedoPDFAnnotation : canUndoPDFAnnotation)
+        )
     }
 
     private var canToggleMarkdownSplitView: Bool {
@@ -2276,17 +2516,28 @@ struct ContentView: View {
             return false
         }
 
-        // Focused text keeps its own undo. A workspace Replace All is undone from it too once the
-        // text has nothing left to undo, matching the Edit menu; the terminal keeps ⌘Z to itself.
-        if action == .undoWorkspaceReplace,
-           MonknotNativePasteboardCommand.hasNativeEditingFocus,
-           MonknotNativeUndoCommand.canUndo || MonknotNativeUndoCommand.terminalHasFocus {
-            return false
-        }
-
-        if (action == .undoPDFAnnotation || action == .redoPDFAnnotation),
-           MonknotNativePasteboardCommand.hasNativeEditingFocus {
-            return false
+        // ⌘Z and ⇧⌘Z go where the Edit menu sends them: focused text keeps its own undo (a
+        // workspace Replace All is undone from it too once the text has nothing left to undo), the
+        // terminal keeps them to itself, and the sidebar's moves and copies are undone from the
+        // sidebar or with nothing focused.
+        if action == .undoWorkspaceReplace || action == .undoPDFAnnotation || action == .redoPDFAnnotation {
+            let isRedo = action == .redoPDFAnnotation
+            switch undoCommandDestination(redo: isRedo) {
+            case .native, .unavailable:
+                return false
+            case .fileOperation:
+                if isRedo {
+                    store.redoFileOperation()
+                } else {
+                    store.undoFileOperation()
+                }
+                return true
+            case .workspaceReplace:
+                store.undoLastWorkspaceReplace()
+                return true
+            case .pdf:
+                break
+            }
         }
 
         // ↑/↓ choose an input-method candidate while the search field is composing.
@@ -2366,7 +2617,14 @@ struct ContentView: View {
         }
         if documentViewOwnsFocus {
             _ = performInFocusedDocument(#selector(NSText.selectAll(_:)))
+        } else if sidebarOwnsFocus {
+            sidebarSelectAllRequest &+= 1
         }
+    }
+
+    /// The sidebar's tree (or another of its controls) has keyboard focus.
+    private var sidebarOwnsFocus: Bool {
+        TerminalFocusRestorer.firstResponder(in: responderWindow, isInside: .monknotSidebarFocusRegion)
     }
 
     /// A focused document (a PDF) takes the clipboard command or refuses it with the system beep;
@@ -2379,8 +2637,9 @@ struct ContentView: View {
     }
 
     private func putSidebarSelectionOnPasteboard(cutting: Bool) -> Bool {
-        guard let url = store.sidebarSelectionURL, !store.isBusy else { return false }
-        store.putItemOnPasteboard(at: url, cutting: cutting)
+        let urls = store.sidebarSelectionURLs
+        guard !urls.isEmpty, !store.isBusy else { return false }
+        store.putItemsOnPasteboard(at: urls, cutting: cutting)
         return true
     }
 
@@ -2891,15 +3150,9 @@ struct ContentView: View {
 
     private func toggleTerminalFullscreen(animated: Bool) {
         guard isTerminalVisible else { return }
-        let updates = {
+        // The same transition as a pane opening or closing (design.md §11).
+        updateChromeState(animated: animated) {
             isTerminalFullscreen.toggle()
-        }
-        if animated && !reduceMotion {
-            withAnimation(MonknotMotion.terminalFullscreenTransition, updates)
-        } else {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction, updates)
         }
     }
 
@@ -3025,31 +3278,27 @@ struct WindowNavigationControls: View {
     }
 
     var body: some View {
-        HStack(spacing: scaled(2)) {
+        // Two bar buttons, 2 apart (design.md §5.1).
+        HStack(spacing: scaled(MonknotMetrics.barItemGapBase)) {
             MonknotIconButton(
-                systemImage: "chevron.left",
+                systemImage: MonknotWorkspaceIcons.back,
                 label: "Back",
                 theme: theme,
                 zoomScale: zoomScale,
                 isDisabled: !canNavigateBack,
-                size: .windowNavigation,
+                size: .regular,
                 action: navigateBack
             )
 
             MonknotIconButton(
-                systemImage: "chevron.right",
+                systemImage: MonknotWorkspaceIcons.forward,
                 label: "Forward",
                 theme: theme,
                 zoomScale: zoomScale,
                 isDisabled: !canNavigateForward,
-                size: .windowNavigation,
+                size: .regular,
                 action: navigateForward
             )
-        }
-        .padding(scaled(2))
-        .overlay {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .strokeBorder(theme.borderColor, lineWidth: 1)
         }
         .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
         .fixedSize(horizontal: true, vertical: false)
@@ -3127,21 +3376,13 @@ private struct SuccessToast: View {
     }
 
     var body: some View {
-        HStack(spacing: scaled(8)) {
-            MonknotSystemGlyph(
-                systemImage: "checkmark",
-                nominalPointSizeBase: 15,
-                theme: theme,
-                zoomScale: zoomScale
-            )
-            .foregroundStyle(Color(hex: theme.semanticColors.diffAdded))
-            .accessibilityHidden(true)
+        HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
+            MonknotFileKindGlyph(systemImage: "checkmark", theme: theme, zoomScale: zoomScale)
+                .foregroundStyle(Color(hex: theme.semanticColors.diffAdded))
+                .accessibilityHidden(true)
 
             Text(notice.message)
-                .font(.system(
-                    size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale),
-                    weight: .regular
-                ))
+                .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
                 .foregroundStyle(theme.foregroundColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -3175,7 +3416,7 @@ private struct SuccessToast: View {
                 label: "Dismiss notification",
                 theme: theme,
                 zoomScale: zoomScale,
-                size: .smallAction,
+                size: .small,
                 focusRingPlacement: .contained,
                 action: dismiss
             )
@@ -3185,7 +3426,7 @@ private struct SuccessToast: View {
         .padding(.vertical, scaled(8))
         .monknotFloatingSurface(
             .e2,
-            cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale),
+            cornerRadius: theme.chromeRadius(MonknotMetrics.cardCornerRadius, zoomScale: zoomScale),
             fill: theme.elevatedSurfaceColor,
             theme: theme
         )
@@ -3269,7 +3510,7 @@ private struct AmbiguousMarkdownLinkPicker: View {
                     LazyVStack(spacing: scaled(2)) {
                         ForEach(documents) { document in
                             MonknotCommandOverlayRow(
-                                leading: .glyph(document.kind.resolvedSystemImage),
+                                leading: .glyph(document.fileGlyph.systemImage),
                                 title: document.displayName,
                                 detail: (document.relativePath as NSString).deletingLastPathComponent,
                                 isSelected: focusedDocumentID == document.id,

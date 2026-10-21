@@ -34,7 +34,8 @@ final class TerminalChromeLayoutTests: XCTestCase {
         XCTAssertEqual(window.zoomCallCount, 0)
     }
 
-    func testTerminalPanelRowUsesItsSubordinateThirtySixPointHeader() {
+    /// The terminal's header is the card's bar (design.md §10.6): 40 at every zoom.
+    func testTerminalPanelRowIsTheFortyPointCardBar() {
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             let sessions = TerminalSessionCollectionStore()
 
@@ -47,7 +48,7 @@ final class TerminalChromeLayoutTests: XCTestCase {
                     close: {}
                 )
                 let terminalHost = NSHostingView(rootView: terminalRow.frame(width: 420))
-                let expectedHeight = MonknotMetrics.interfaceControl(36, theme: theme, zoomScale: zoomScale)
+                let expectedHeight = MonknotMetrics.barHeight(theme: theme, zoomScale: zoomScale)
 
                 XCTAssertEqual(terminalHost.fittingSize.height, expectedHeight, accuracy: 0.01)
             }
@@ -160,10 +161,11 @@ final class TerminalChromeLayoutTests: XCTestCase {
             html.contains("postResize();\n            term.focus();"),
             "A pressure-hidden terminal must not focus itself outside the native visibility gate"
         )
-        XCTAssertTrue(html.contains("width: 12px;"))
-        XCTAssertTrue(html.contains("--terminal-bg: \(theme.terminalSurfaceHex);"))
-        XCTAssertTrue(html.contains("\"background\":\"\(theme.terminalSurfaceHex)\""))
-        XCTAssertFalse(html.contains("\"background\":\"\(theme.background)\""))
+        // The shared scroll thumb's lane (design.md §5.7).
+        XCTAssertTrue(html.contains("width: \(Int(MonknotScrollbarStyle.trackWidth))px;"))
+        // The terminal sits on a card on the document's canvas (design.md §10.0).
+        XCTAssertTrue(html.contains("--terminal-bg: \(theme.background);"))
+        XCTAssertTrue(html.contains("\"background\":\"\(theme.background)\""))
     }
 
     func testTerminalResizeKeepsTheFirstScrollbackAnchorAcrossObserverCallbacks() {

@@ -42,7 +42,7 @@ struct WorkspaceQuickOpenView: View {
                     close: close
                 )
 
-                Rectangle().fill(theme.separatorColor).frame(height: 1)
+                MonknotCommandOverlaySeparator(theme: theme)
 
                 resultBody
 
@@ -77,10 +77,11 @@ struct WorkspaceQuickOpenView: View {
                 ? "Start typing to filter workspace files."
                 : "Try part of a name, or ⇧⌘F to search contents.",
             theme: theme,
-            zoomScale: zoomScale
+            zoomScale: zoomScale,
+            hover: state.select(index:)
         ) { document, isSelected in
             MonknotCommandOverlayRow(
-                leading: .glyph(document.kind.resolvedSystemImage),
+                leading: .glyph(document.fileGlyph.systemImage),
                 title: document.displayName,
                 detail: (document.relativePath as NSString).deletingLastPathComponent,
                 isSelected: isSelected,

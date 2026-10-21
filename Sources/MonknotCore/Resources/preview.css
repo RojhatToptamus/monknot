@@ -6,19 +6,16 @@
   --bg: #fdfdfe;
   --fg: #1c1e22;
   --muted: #1c1e22;
+  --ok: #1f8a4c;
+  --danger: #c4372b;
+  --skill: #7436ab;
   --border: rgba(28, 30, 34, 0.14);
   --soft: rgba(28, 30, 34, 0.055);
   --soft-strong: rgba(28, 30, 34, 0.09);
-  --code-bg: #e2e2e4;
+  --code-bg: #f1f1f2;
   --code-fg: #1c1e22;
-  --quote-bg: rgba(10, 82, 163, 0.112);
-  --quote-border: rgba(10, 82, 163, 0.7);
-  --blockquote-bg: var(--quote-bg);
-  --blockquote-border: var(--quote-border);
   --table-border: var(--border);
-  --table-header-bg: var(--soft-strong);
-  --table-row-alt-bg: var(--soft);
-  --shadow: rgba(0, 0, 0, 0.08);
+  --table-header-bg: var(--soft);
   --selection-bg: #ccdbec;
   --selection-fg: #1c1e22;
   --tok-keyword: #7436ab;
@@ -30,6 +27,15 @@
   --interactive-cursor: default;
   --ui-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   --code-font: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --task-check: none;
+  /* The page's margins at the default 13 pt code size and 1× zoom (DocumentMeasure, design.md §10.11);
+     the app sends them for the current size and zoom. */
+  --document-margin-top: 33px;
+  --document-margin-bottom: max(66px, 25vh);
+  --column-gutter: 48px;
+  /* Document rhythm: one block gap, one item gap. */
+  --block-gap: 0.85em;
+  --item-gap: 0.25em;
 }
 
 :root[data-theme="dark"] {
@@ -41,11 +47,8 @@
   --border: rgba(255, 255, 255, 0.13);
   --soft: rgba(255, 255, 255, 0.055);
   --soft-strong: rgba(255, 255, 255, 0.09);
-  --code-bg: #2c2c2c;
+  --code-bg: #1d1d1f;
   --code-fg: #ebebeb;
-  --quote-bg: rgba(83, 153, 234, 0.112);
-  --quote-border: rgba(83, 153, 234, 0.82);
-  --shadow: rgba(0, 0, 0, 0.32);
   --selection-bg: #24384e;
   --selection-fg: #ebebeb;
   --tok-keyword: #c092e7;
@@ -61,7 +64,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: var(--base-font-size, 13px)/1.62 var(--ui-font);
+  font: var(--base-font-size, 13px)/1.6 var(--ui-font);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: var(--font-smoothing);
   -webkit-print-color-adjust: exact;
@@ -69,8 +72,25 @@ body {
   font-feature-settings: "ss01", "cv01";
 }
 
+/* What a side pane covers while it opens or closes (design.md §11): the host holds the web view
+   still over the card's old and new areas, and renderer.js animates these with the card's edges so
+   the column lays out, and reflows, in the part the card shows. Both are 0 at rest. */
+@property --mk-pane-left {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --mk-pane-right {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
 body {
   box-sizing: border-box;
+  padding-left: var(--mk-pane-left, 0px);
+  padding-right: var(--mk-pane-right, 0px);
 }
 
 /* A legacy scroll bar stays laid out while the preview fits, so text never rewraps when the preview
@@ -79,14 +99,32 @@ html {
   overflow-y: scroll;
 }
 
+/* Scroll bars follow the system (design.md §5.7): WebKit's overlay scroller, or with "Show scroll
+   bars: Always" Monknot's thumb, which the app's shell styles (MarkdownRenderService). This is its
+   stand-in while a side pane's transition moves the card's trailing edge. */
+.mk-pane-thumb {
+  position: fixed;
+  z-index: 2147483000;
+  width: var(--mk-scroll-thumb);
+  border-radius: calc(var(--mk-scroll-thumb) / 2);
+  background: var(--mk-scroll-thumb-color);
+  pointer-events: none;
+}
+
+/* The text column (design.md §10.11): the content-width share of the pane up to a comfortable line
+   length (--content-measure), centred, with its gutters outside it. The margins are Source's: the
+   same space above the first line and beside the text, so text starts at the same x and the first
+   line at the same y in both modes at every width; below the last line, room to read and write it
+   above the window's edge. */
 .markdown-body {
+  --column-text: min(var(--content-max-width, 88%), var(--content-measure, 45.7em));
   box-sizing: border-box;
-  width: min(var(--content-max-width, 88%), calc(100% - 28px));
+  width: min(calc(var(--column-text) + 2 * var(--column-gutter)), 100%);
   max-width: none;
   margin: 0 auto;
-  padding: 34px clamp(18px, 2.2vw, 38px) 56px;
+  padding: var(--document-margin-top) var(--column-gutter) var(--document-margin-bottom);
   color: var(--muted);
-  line-height: 1.55;
+  line-height: 1.6;
 }
 
 .markdown-body > :first-child {
@@ -97,36 +135,44 @@ html {
   margin-bottom: 0;
 }
 
+/* Headings: one weight (600), a scale that steps 1.875 / 1.45 / 1.2 / 1, tighter tracking as the
+   size grows, more space above than below so a heading belongs to what follows it. */
 h1,
 h2,
 h3,
 h4,
 h5,
 h6 {
-  margin: 1.15em 0 0.58em;
-  line-height: 1.18;
-  font-weight: 620;
+  margin: 1.5em 0 0.35em;
+  line-height: 1.3;
+  font-weight: 600;
   letter-spacing: 0;
   border: 0;
   color: var(--fg);
 }
 
 h1 {
-  font-size: 1.7rem;
+  margin-top: 1.4em;
+  font-size: 1.875em;
+  line-height: 1.2;
+  letter-spacing: -0.021em;
 }
 
 h2 {
-  font-size: 1.16rem;
+  font-size: 1.45em;
+  line-height: 1.25;
+  letter-spacing: -0.016em;
 }
 
 h3 {
-  font-size: 1.08rem;
+  font-size: 1.2em;
+  letter-spacing: -0.01em;
 }
 
 h4,
 h5,
 h6 {
-  font-size: 1rem;
+  font-size: 1em;
 }
 
 p,
@@ -136,8 +182,10 @@ blockquote,
 pre,
 details,
 figure,
+nav.toc,
+.callout,
 .table-wrapper {
-  margin: 0 0 1.08rem;
+  margin: 0 0 var(--block-gap);
 }
 
 a {
@@ -148,6 +196,8 @@ a {
 a:hover {
   cursor: var(--interactive-cursor);
   text-decoration: underline;
+  text-underline-offset: 0.18em;
+  text-decoration-thickness: 1px;
 }
 
 button,
@@ -158,7 +208,7 @@ input[type="checkbox"],
 }
 
 strong {
-  font-weight: 680;
+  font-weight: 600;
   color: var(--fg);
 }
 
@@ -169,62 +219,139 @@ hr {
   border: 0;
 }
 
+/* Quotes: a quiet bar in the text colour, no fill, so a quote reads as voice, not as a box. */
 blockquote {
   margin-left: 0;
-  padding: 0.55rem 0.75rem;
-  border-left: 2px solid var(--blockquote-border);
-  border-radius: 0 8px 8px 0;
-  background: var(--blockquote-bg);
+  margin-right: 0;
+  padding: 0.05em 0 0.05em 1em;
+  border-left: 2px solid color-mix(in srgb, var(--fg) 28%, transparent);
   color: var(--muted);
 }
 
-blockquote > :first-child {
+blockquote > :first-child,
+.callout > .callout-title + * {
   margin-top: 0;
 }
 
-blockquote > :last-child {
+blockquote > :last-child,
+.callout > :last-child,
+details > :last-child {
   margin-bottom: 0;
 }
 
+/* Callouts (`> [!NOTE]` and its kinds): a tinted panel with the kind as its title. */
+.callout {
+  --callout-tint: var(--accent);
+  padding: 0.75em 1em 0.8em;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--callout-tint) 7%, transparent);
+}
+
+.callout-tip {
+  --callout-tint: var(--ok);
+}
+
+.callout-important {
+  --callout-tint: var(--skill);
+}
+
+.callout-warning,
+.callout-caution {
+  --callout-tint: var(--danger);
+}
+
+.callout-title {
+  margin: 0 0 0.2em;
+  color: color-mix(in srgb, var(--callout-tint) 85%, var(--fg));
+  font-size: 0.875em;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+}
+
+/* Lists: markers change per level as in Notion (• ◦ ▪, 1. a. i.); every item's text starts at the
+   same edge, task items included, whose checkbox takes the marker's place. */
 ul,
 ol {
-  padding-left: 1.5rem;
+  padding-left: 1.625em;
+}
+
+ul {
+  list-style-type: disc;
+}
+
+ul ul {
+  list-style-type: circle;
+}
+
+ul ul ul {
+  list-style-type: square;
+}
+
+ol {
+  list-style-type: decimal;
+}
+
+ol ol {
+  list-style-type: lower-alpha;
+}
+
+ol ol ol {
+  list-style-type: lower-roman;
+}
+
+li {
+  padding-left: 0.125em;
+}
+
+li::marker {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
 }
 
 li + li {
-  margin-top: 0.28rem;
+  margin-top: var(--item-gap);
 }
 
-.contains-task-list {
-  padding-left: 0.25rem;
-  list-style: none;
+li > ul,
+li > ol {
+  margin: var(--item-gap) 0 0;
 }
 
 .task-list-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.55rem;
+  position: relative;
+  list-style: none;
 }
 
-.task-list-item input {
+.task-list-item > input[type="checkbox"] {
   appearance: none;
-  flex: none;
-  width: 12px;
-  height: 12px;
-  margin: 0.29rem 0 0;
-  border: 1.4px solid color-mix(in srgb, var(--fg) 28%, transparent);
-  border-radius: 3px;
-  background: transparent;
+  -webkit-appearance: none;
+  /* A form control keeps WebKit's own small font, so its em would not follow the text or zoom. */
+  font-size: inherit;
+  position: absolute;
+  /* Centred on the line, then 0.06em lower: SF's x-height sits below the line box's middle. */
+  top: calc((1.6em - 1em) / 2 + 0.06em);
+  left: -1.375em;
+  box-sizing: border-box;
+  width: 1em;
+  height: 1em;
+  margin: 0;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 42%, transparent);
+  border-radius: 0.25em;
+  background: transparent center / 0.75em no-repeat;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out;
 }
 
-.task-list-item input:checked {
+.task-list-item > input[type="checkbox"]:checked {
   border-color: var(--accent);
-  background: var(--accent);
+  background-color: var(--accent);
+  background-image: var(--task-check);
 }
 
-.task-list-item input:checked + span {
-  color: var(--muted);
+.task-list-item > input:checked + span,
+.task-list-item > input:checked + .mk-item-text {
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
   text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--fg) 30%, transparent);
 }
 
 .wikilink {
@@ -240,23 +367,88 @@ li:has(> .wikilink:only-child) {
   list-style: none;
 }
 
+/* Toggles (`<details>`): a turning triangle in the marker column, the title and body on the text
+   edge list items use, so a toggle sits in the same place read-only and while editing. */
+details > summary {
+  position: relative;
+  display: block;
+  padding-left: 1.625em;
+  list-style: none;
+  font-weight: 400;
+}
+
+details > summary::-webkit-details-marker {
+  display: none;
+}
+
+details > summary::before {
+  content: "";
+  position: absolute;
+  top: 0.55em;
+  left: 0.64em;
+  width: 0;
+  height: 0;
+  border-top: 0.3em solid transparent;
+  border-bottom: 0.3em solid transparent;
+  border-left: 0.44em solid var(--mk-ink3);
+}
+
+details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+details > :not(summary) {
+  margin-left: 1.625em;
+}
+
+details > summary + * {
+  margin-top: var(--item-gap);
+}
+
+/* Table of contents (`[TOC]`). */
+nav.toc ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+nav.toc li + li {
+  margin-top: 0.15em;
+}
+
+nav.toc a {
+  color: var(--mk-ink2, color-mix(in srgb, var(--fg) 72%, transparent));
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--fg) 22%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+nav.toc a:hover {
+  color: var(--fg);
+}
+
+nav.toc .toc-level-2 {
+  padding-left: 1.25em;
+}
+
+nav.toc .toc-level-3 {
+  padding-left: 2.5em;
+}
+
 code {
-  padding: 0.14em 0.36em;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--soft);
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  background: var(--soft-strong);
   color: var(--code-fg);
   font-family: var(--code-font);
-  font-size: 0.92em;
+  font-size: 0.875em;
 }
 
 pre {
   overflow: auto;
-  padding: 1rem 1.05rem;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  padding: 0.9em 1em;
+  border-radius: 8px;
   background: var(--code-bg);
-  box-shadow: 0 10px 30px var(--shadow);
 }
 
 pre code {
@@ -265,8 +457,21 @@ pre code {
   border: 0;
   background: transparent;
   color: var(--code-fg);
-  line-height: 1.55;
+  font-size: 0.875em;
+  line-height: 1.6;
   white-space: pre;
+}
+
+/* A notebook cell's output (JupyterNotebookMarkdown) reads as plain text under its code, aligned
+   with the code's text, not as another code block. */
+pre:has(> code.language-output) {
+  padding-top: 0;
+  padding-bottom: 0;
+  background: transparent;
+}
+
+pre code.language-output {
+  color: var(--muted);
 }
 
 .tok-keyword {
@@ -344,36 +549,44 @@ html.monknot-pdf-export body {
 :root.monknot-pdf-export pre,
 :root.monknot-pdf-export table,
 :root.monknot-pdf-export figure,
+:root.monknot-pdf-export .callout,
 :root.monknot-pdf-export img {
   break-inside: avoid;
   page-break-inside: avoid;
-}
-
-:root.monknot-pdf-export pre {
-  box-shadow: none;
 }
 
 [data-source-line] {
   scroll-margin-top: 24px;
 }
 
+/* The heading a jump landed on flashes the selection tint and lets it go over 900 ms, as a moved
+   block and a landed sidebar row do: a fill, never an outline (design.md §3, §11). */
 .monknot-source-reveal {
   border-radius: 8px;
-  outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
-  outline-offset: 6px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  transition: background 180ms ease, outline-color 180ms ease;
+  animation: monknot-source-reveal 900ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
+@keyframes monknot-source-reveal {
+  from {
+    background: color-mix(in srgb, var(--selection-bg) 70%, transparent);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--selection-bg) 70%, transparent);
+  }
+  to {
+    background: transparent;
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+/* Tables: hairline grid, a quietly filled header, no zebra rows. */
 .table-wrapper {
   width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
 
+/* A table is as wide as its columns need, up to the column, and wraps its cells before it scrolls. */
 table {
-  width: max-content;
-  min-width: 100%;
+  width: auto;
   max-width: none;
   border-spacing: 0;
   border-collapse: collapse;
@@ -381,7 +594,8 @@ table {
 
 th,
 td {
-  padding: 0.58rem 0.72rem;
+  min-width: 6em;
+  padding: 0.5em 0.75em;
   border: 1px solid var(--table-border);
   vertical-align: top;
   word-break: normal;
@@ -390,18 +604,24 @@ td {
 
 th {
   background: var(--table-header-bg);
-  font-weight: 650;
+  font-weight: 600;
   text-align: left;
 }
 
-tr:nth-child(even) td {
-  background: var(--table-row-alt-bg);
-}
-
-img {
+img,
+video {
   max-width: 100%;
   height: auto;
   border-radius: 8px;
+}
+
+video,
+audio {
+  display: block;
+}
+
+audio {
+  width: min(100%, 28em);
 }
 
 .footnotes {
@@ -417,12 +637,6 @@ img {
 .footnote-ref,
 .footnote-backref {
   font-size: 0.78em;
-}
-
-@media (max-width: 720px) {
-  .markdown-body {
-    padding: 22px 22px 48px;
-  }
 }
 
 @media print {
@@ -454,9 +668,5 @@ img {
   img {
     break-inside: avoid;
     page-break-inside: avoid;
-  }
-
-  pre {
-    box-shadow: none;
   }
 }

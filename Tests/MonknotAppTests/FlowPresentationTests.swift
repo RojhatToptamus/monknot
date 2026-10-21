@@ -177,7 +177,8 @@ final class FlowPresentationTests: FlowEditorTestCase {
         let coordinator = makeCoordinator(box, proseCompletion: prose.service)
         let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
         defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
-        window.setContentSize(NSSize(width: 120, height: 260))
+        // A text column about 64 wide inside the 48 text edges: far narrower than the word.
+        window.setContentSize(NSSize(width: 150, height: 260))
         scrollView.frame = window.contentView!.bounds
         textView.frame = scrollView.bounds
         let rangesReady = await prepareProseCompletion(coordinator, textView: textView)

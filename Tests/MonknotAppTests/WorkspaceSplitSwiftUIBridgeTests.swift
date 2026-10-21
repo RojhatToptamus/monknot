@@ -153,8 +153,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             isSidebarPresented: true,
             isTerminalPresented: true,
             layoutScale: 1,
-            separatorColor: .separatorColor,
-            accentColor: .controlAccentColor,
+            handleInkColor: .labelColor,
             onSidebarPresentationChange: { _, _ in },
             onTerminalPresentationChange: { _, _ in },
             sidebar: { Color.red },
@@ -733,7 +732,12 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             sidebarPreferred: true,
             terminalPreferred: true
         )
-        let allocationWidth: CGFloat = 1_800
+        // Too narrow for all three panes at their 200% minimums, wide enough for two.
+        let allocationWidth: CGFloat = 2 * (
+            WorkspaceSplitMetrics.sidebarMinimumWidth
+                + WorkspaceSplitMetrics.detailMinimumWidth
+                + WorkspaceSplitMetrics.terminalMinimumWidth
+        ) - 60
         let host = NSHostingView(rootView: MountedConstrainedScaleFixture(model: model))
         host.sizingOptions = []
         host.frame = NSRect(x: 0, y: 0, width: allocationWidth, height: 620)
@@ -1022,7 +1026,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         )
         let host = NSHostingView(
             rootView: MountedConstrainedScaleFixture(model: model)
-                .frame(minWidth: 920, minHeight: 620)
+                .frame(minWidth: 840, minHeight: 620)
         )
         host.sizingOptions = []
         host.frame = NSRect(x: 0, y: 0, width: 1_600, height: 720)
@@ -1094,12 +1098,14 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertFalse(paneViews[0].isHidden)
         XCTAssertFalse(paneViews[2].isHidden)
 
-        window.setContentSize(NSSize(width: 920, height: 720))
+        // Narrower than all three panes at their minimums, so the terminal must step aside.
+        let squeezedWidth: CGFloat = 860
+        window.setContentSize(NSSize(width: squeezedWidth, height: 720))
         await waitForMountedSplitHost(
             window: window,
             host: host,
             until: { splitView in
-                abs(splitView.bounds.width - 920) <= 1
+                abs(splitView.bounds.width - squeezedWidth) <= 1
                     && !splitView.arrangedSubviews[0].isHidden
                     && splitView.arrangedSubviews[2].isHidden
                     && !model.terminalEffective
@@ -1107,9 +1113,9 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             }
         )
 
-        XCTAssertEqual(window.contentView?.bounds.width ?? 0, 920, accuracy: 1)
-        XCTAssertEqual(host.bounds.width, 920, accuracy: 1)
-        XCTAssertEqual(splitView.bounds.width, 920, accuracy: 1)
+        XCTAssertEqual(window.contentView?.bounds.width ?? 0, squeezedWidth, accuracy: 1)
+        XCTAssertEqual(host.bounds.width, squeezedWidth, accuracy: 1)
+        XCTAssertEqual(splitView.bounds.width, squeezedWidth, accuracy: 1)
         XCTAssertFalse(paneViews[0].isHidden)
         XCTAssertTrue(paneViews[2].isHidden)
         XCTAssertTrue(model.terminalPreferred)

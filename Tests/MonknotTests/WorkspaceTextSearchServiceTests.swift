@@ -222,17 +222,22 @@ final class WorkspaceTextSearchServiceTests: WorkspaceSearchServiceTestCase {
         XCTAssertEqual(batch.results[0].relativePath, "small.md")
     }
 
-    func testSearchSkipsUnsupportedFiles() throws {
+    /// A file the system knows as binary is never read; one of an unknown type is read as text
+    /// only when its bytes are text.
+    func testSearchReadsUnknownTypesAsTextButNeverBinaryOnes() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let binary = root.appendingPathComponent("archive.zip")
-        try "needle".write(to: binary, atomically: true, encoding: .utf8)
+        let archive = root.appendingPathComponent("archive.zip")
+        let script = root.appendingPathComponent("init.lua")
+        let database = root.appendingPathComponent("cache.bin2")
+        try "needle".write(to: archive, atomically: true, encoding: .utf8)
+        try "local needle = 1".write(to: script, atomically: true, encoding: .utf8)
+        try Data([0x6E, 0x65, 0x65, 0x64, 0x6C, 0x65, 0x00, 0x01]).write(to: database)
 
-        let documents = [
-            WorkspaceDocument(url: binary, rootURL: root)
-        ]
+        let documents = [archive, script, database].map { WorkspaceDocument(url: $0, rootURL: root) }
+        let results = try WorkspaceSearchService().search(query: "needle", documents: documents).results
 
-        XCTAssertTrue(try WorkspaceSearchService().search(query: "needle", documents: documents).results.isEmpty)
+        XCTAssertEqual(results.map(\.relativePath), ["init.lua"])
     }
 
     func testSearchChecksTaskCancellation() async throws {

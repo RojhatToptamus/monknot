@@ -347,17 +347,159 @@ public extension AppTheme {
         AppTheme.blendHex(background, toward: foreground, amount: amount)
     }
 
-    /// The single distinct tool-panel tier (sidebar). Subtly offset from the
-    /// content canvas so the sidebar reads apart without heavy borders: lighter
-    /// in dark themes, a hair darker in light themes. Magnitudes are tuned to
-    /// the reference design, where the sidebar offset is small in light and a
-    /// touch stronger in dark so it remains perceptible against a dark canvas.
-    var sidebarSurfaceHex: String {
-        recessedSurfaceHex(amount: isDark ? 0.075 : 0.028)
+    /// The window's frame around the cards: titlebar, sidebar and the gaps between cards (design.md
+    /// §10.0). It sits below the canvas in both modes, so the document card reads as lifted out of
+    /// it: a step toward the ink in light themes, a step toward black in dark ones. The step is large
+    /// enough to see on tinted canvases such as Catppuccin Latte, where a 3 % step disappeared.
+    var chromeSurfaceHex: String {
+        isDark
+            ? AppTheme.blendHex(background, toward: "#000000", amount: 0.28)
+            : recessedSurfaceHex(amount: 0.055)
     }
 
-    /// The terminal mirrors the left sidebar as a right-edge tool panel.
-    var terminalSurfaceHex: String {
-        sidebarSurfaceHex
+    /// The terminal sits on a card beside the document's, on the same canvas (design.md §10.0).
+}
+
+// MARK: - Fills and floating surfaces (design.md §1.2, §2.1)
+
+/// The chrome and Preview's page read these, so a native menu and a menu on the page cannot drift.
+public extension AppTheme {
+    /// `hover`: the one hover fill for every row, tab, cell and button.
+    var hoverInkOpacity: Double {
+        isDark ? 0.06 : 0.055
+    }
+
+    /// `press`: replaces the hover fill while a control is held down.
+    var pressInkOpacity: Double {
+        isDark ? 0.11 : 0.10
+    }
+
+    /// `selected`: a selected sidebar or Settings row, the active terminal session, and the highlighted
+    /// row of every menu, native or on Preview's page.
+    var selectedInkOpacity: Double {
+        isDark ? 0.10 : 0.09
+    }
+
+    /// `accsoft`: the 3 pt ring around a focused field.
+    var accentSoftOpacity: Double {
+        isDark ? 0.18 : 0.14
+    }
+
+    /// `on`: a toggle that is on, such as a format in the format bar.
+    var onInkOpacity: Double {
+        isDark ? 0.17 : 0.12
+    }
+
+    /// `line`: a field's edge and Preview's divider. Dark runs lighter than light (design.md §1.2).
+    var lineInkOpacity: Double {
+        isDark ? 0.09 : 0.12
+    }
+
+    /// `line2`: dividers inside a container.
+    var dividerInkOpacity: Double {
+        isDark ? 0.06 : 0.08
+    }
+
+    /// The fill of a floating surface — a menu, popover or the format bar (`surf2`).
+    var floatingSurfaceHex: String {
+        recessedSurfaceHex(amount: isDark ? 0.11 : 0.05)
+    }
+
+    /// A floating surface's shadow hue: black in dark themes; in light ones the ink with 10 % of the
+    /// accent, so the shadow takes the theme's temperature instead of going muddy.
+    var floatingShadowHex: String {
+        isDark ? "#000000" : AppTheme.blendHex(foreground, toward: accent, amount: 0.10)
+    }
+
+    /// A floating surface's inset ring: white at 14 % in dark themes, the shadow hue at 8 % in light ones.
+    var floatingRingHex: String {
+        isDark ? "#FFFFFF" : floatingShadowHex
+    }
+
+    var floatingRingOpacity: Double {
+        isDark ? 0.14 : 0.08
+    }
+}
+
+// MARK: - The ink ladder (design.md §1.2)
+
+public extension AppTheme {
+    /// `ink2`, every label at rest: the theme ink at the lowest opacity, from 72 %, that still reads
+    /// 4.5:1 on both the chrome and the canvas. Catppuccin Latte's soft ink needs 84 %; a dark ink on
+    /// white keeps 72 %. One value for the sidebar, tabs, menus and Settings alike.
+    var labelInkOpacity: Double {
+        inkLadder.label
+    }
+
+    /// `ink3`, every glyph at rest and all secondary text: from 50 %, until it reads 3:1.
+    var glyphInkOpacity: Double {
+        inkLadder.glyph
+    }
+
+    /// The theme's `contrast` (0–100, 40 by default) scales the ladder's floors (design.md §14): at 40
+    /// they are 72 % and 50 %, at 100 a fifth higher, at 0 a sixth lower, and the contrast rule still
+    /// raises them wherever the ink would not read.
+    var inkLadderContrastFactor: Double {
+        0.85 + min(100, max(0, contrast)) / 100 * 0.375
+    }
+
+    /// `ink4`, disabled controls and placeholders.
+    static let disabledInkOpacity = 0.30
+
+    /// The smallest opacity at or above `base`, in hundredths, at which `ink` blended over each of
+    /// `surfaces` reaches `ratio`:1 against it; 1 when even the full ink cannot.
+    static func inkOpacity(ink: String, over surfaces: [String], ratio: Double, base: Double) -> Double {
+        guard RGBHex(ink) != nil else { return 1 }
+        let parsedSurfaces = surfaces.compactMap { hex in RGBHex(hex).map { (hex, $0) } }
+        var step = Int((base * 100).rounded())
+        while step < 100 {
+            let opacity = Double(step) / 100
+            let reads = parsedSurfaces.allSatisfy { hex, surface in
+                guard let blended = RGBHex(blendHex(hex, toward: ink, amount: opacity)) else { return false }
+                return blended.contrastRatio(with: surface) >= ratio
+            }
+            if reads { return opacity }
+            step += 1
+        }
+        return 1
+    }
+
+    private var inkLadder: InkLadder {
+        let factor = inkLadderContrastFactor
+        let key = "\(foreground)|\(background)|\(isDark)|\(factor)"
+        if let cached = InkLadder.cache.value(for: key) { return cached }
+        let surfaces = [chromeSurfaceHex, background]
+        let ladder = InkLadder(
+            label: Self.inkOpacity(ink: foreground, over: surfaces, ratio: 4.5, base: min(0.95, 0.72 * factor)),
+            glyph: Self.inkOpacity(ink: foreground, over: surfaces, ratio: 3.0, base: min(0.80, 0.50 * factor))
+        )
+        InkLadder.cache.store(ladder, for: key)
+        return ladder
+    }
+}
+
+private struct InkLadder: Sendable {
+    let label: Double
+    let glyph: Double
+
+    /// Themes are few and their ladders tiny; views ask for them on every render.
+    static let cache = InkLadderCache()
+}
+
+private final class InkLadderCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ladders: [String: InkLadder] = [:]
+
+    func value(for key: String) -> InkLadder? {
+        lock.lock()
+        defer { lock.unlock() }
+        return ladders[key]
+    }
+
+    func store(_ ladder: InkLadder, for key: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        if ladders.count > 64 { ladders.removeAll() }
+        ladders[key] = ladder
     }
 }

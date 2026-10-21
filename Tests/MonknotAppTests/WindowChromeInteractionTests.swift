@@ -134,9 +134,50 @@ final class WindowChromeInteractionTests: XCTestCase {
         )
     }
 
-    func testDisabledControlsDimTheirBorderNotTheirGlyphAgain() {
-        // design.md §5.1: the glyph is `ink4` and the border 40 %; nothing multiplies on top.
-        XCTAssertEqual(MonknotIconButton.disabledBorderOpacity, 0.4, accuracy: 0.001)
+    func testDisabledIconButtonsDrawInk4WithNoFill() {
+        // design.md §5.1: a disabled button is an `ink4` glyph and nothing else, whatever its state.
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
+            for active in [false, true] {
+                XCTAssertEqual(
+                    MonknotIconButton.iconColor(theme: theme, isActive: active, isHovered: true, isDisabled: true),
+                    theme.disabledForegroundColor
+                )
+                XCTAssertNil(MonknotIconButton.fill(
+                    isActive: active,
+                    drawsActiveBackground: true,
+                    isHovered: true,
+                    isPressed: true,
+                    isDisabled: true
+                ))
+            }
+            XCTAssertEqual(
+                MonknotIconButton.iconColor(theme: theme, isActive: false, isHovered: false, isDisabled: false),
+                theme.tertiaryForegroundColor,
+                "A glyph rests at ink3"
+            )
+        }
+    }
+
+    /// An enclosing `.disabled` (a PDF bar while its document loads) reaches every button in it: the
+    /// glyph draws at `ink4`, exactly as a button disabled by its own flag, and the box never changes.
+    func testIconButtonsTakeTheirDisabledLookFromAnEnclosingDisabledContainer() throws {
+        let theme = AppTheme.defaultLight
+        func button(isDisabled: Bool = false) -> MonknotIconButton {
+            MonknotIconButton(systemImage: "plus", label: "Add", theme: theme, zoomScale: 1, isDisabled: isDisabled, action: {})
+        }
+
+        let enabled = try XCTUnwrap(MonknotRenderedInk.peakAlpha(of: button()))
+        let disabledByContainer = try XCTUnwrap(MonknotRenderedInk.peakAlpha(of: button().disabled(true)))
+        let disabledByFlag = try XCTUnwrap(MonknotRenderedInk.peakAlpha(of: button(isDisabled: true)))
+
+        XCTAssertEqual(enabled, theme.glyphInkOpacity, accuracy: 0.02, "A glyph rests at ink3")
+        XCTAssertEqual(disabledByContainer, AppTheme.disabledInkOpacity, accuracy: 0.02, "Disabled by its bar, ink4")
+        XCTAssertEqual(disabledByContainer, disabledByFlag, accuracy: 0.01, "One disabled look, however it is disabled")
+        XCTAssertEqual(
+            NSHostingView(rootView: button()).fittingSize,
+            NSHostingView(rootView: button().disabled(true)).fittingSize,
+            "Disabling never changes the box"
+        )
     }
 
     func testChromeListsKeepTheSlimOverlayThumbWhenTheSystemSwitchesToLegacyScrollBars() async {
@@ -190,12 +231,66 @@ final class WindowChromeInteractionTests: XCTestCase {
         XCTAssertEqual(scrollView.scrollerStyle, .overlay)
     }
 
-    func testDocumentsKeepTheSystemScrollerAndHideItOnlyWhenOverlay() {
+    /// design.md §5.7: documents take the same slim thumb as the chrome, and follow the system's
+    /// "Show scroll bars" setting — fading when overlay, staying in a reserved lane when always.
+    func testDocumentsTakeTheMonknotThumbAndFollowTheSystemScrollerStyle() {
         let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
         scrollView.hasVerticalScroller = true
-        MonknotScrollbarStyle.applyDocument(to: scrollView)
-        XCTAssertFalse(scrollView.verticalScroller is MonknotScroller)
+        let ink = NSColor(hex: AppTheme.defaultDark.foreground)
+        MonknotScrollbarStyle.applyDocument(to: scrollView, thumbColor: ink)
+        let scroller = scrollView.verticalScroller as? MonknotScroller
+        XCTAssertNotNil(scroller)
+        XCTAssertEqual(scroller?.thumbColor, ink)
+        XCTAssertEqual(scrollView.scrollerStyle, NSScroller.preferredScrollerStyle)
         XCTAssertEqual(scrollView.autohidesScrollers, NSScroller.preferredScrollerStyle == .overlay)
+        XCTAssertEqual(scrollView.scrollerInsets.top, MonknotScrollbarStyle.endInset, "Clear of a card's rounded corners")
+        XCTAssertEqual(MonknotScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy), MonknotScrollbarStyle.trackWidth)
+    }
+
+    /// design.md §5.7: with "Show scroll bars: Always", Preview draws Monknot's thumb in its 9 lane from
+    /// the shell's first paint, not WebKit's 17 legacy bar until the setting next changes.
+    func testPreviewShellDrawsTheMonknotLaneWhenTheSystemShowsScrollBars() async throws {
+        for legacy in [true, false] {
+            let html = try MarkdownRenderService().htmlDocument(
+                markdown: String(repeating: "A paragraph long enough to scroll.\n\n", count: 120),
+                appTheme: .defaultLight,
+                zoomScale: 1,
+                baseFontSize: AppTheme.defaultLight.codeFontSize,
+                legacyScrollbars: legacy,
+                baseURL: nil
+            )
+            let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 480, height: 320))
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
+                styleMask: [.titled],
+                backing: .buffered,
+                defer: false
+            )
+            window.isReleasedWhenClosed = false
+            window.contentView = webView
+            defer { window.contentView = nil }
+            webView.loadHTMLString(html, baseURL: nil)
+
+            var probe: [Any] = []
+            for _ in 0..<100 {
+                try await Task.sleep(nanoseconds: 50_000_000)
+                // The shell's own document, not the blank page WebKit starts with.
+                if let result = try? await webView.evaluateJavaScript(
+                    "[document.documentElement.classList.contains('mk-legacy-scrollbars'), window.innerWidth - document.documentElement.clientWidth, document.readyState === 'complete' && document.getElementById('content') !== null]"
+                ) as? [Any], (result.last as? Bool) == true {
+                    probe = result
+                    break
+                }
+            }
+            XCTAssertEqual(probe.first as? Bool, legacy, "The shell carries the scroll bar style")
+            if legacy {
+                XCTAssertEqual(
+                    (probe.dropFirst().first as? NSNumber)?.doubleValue,
+                    Double(MonknotScrollbarStyle.trackWidth),
+                    "Monknot's lane, not WebKit's legacy bar"
+                )
+            }
+        }
     }
 
     private static func firstDescendant<View: NSView>(of type: View.Type, in view: NSView) -> View? {
@@ -207,55 +302,89 @@ final class WindowChromeInteractionTests: XCTestCase {
         return nil
     }
 
-    func testScrollThumbsAreSlimRadiusTwoMarks() {
-        XCTAssertEqual(MonknotScrollbarStyle.thumbRadius, 2, "design.md §7: scroll thumbs are radius-2 marks")
+    /// design.md §5.7: a slim capsule centred in its 9 lane, 2.5 from the edge at rest, wider and
+    /// darker under the pointer, never touching the ends of its lane.
+    func testScrollThumbIsASlimCapsuleInsetFromItsEdge() {
         XCTAssertLessThan(MonknotScrollbarStyle.restingThumbWidth, MonknotScrollbarStyle.hoveredThumbWidth)
         XCTAssertLessThan(MonknotScrollbarStyle.restingOpacity, MonknotScrollbarStyle.hoveredOpacity)
+        let bounds = NSRect(x: 0, y: 0, width: MonknotScrollbarStyle.trackWidth, height: 300)
+        let knob = NSRect(x: 0, y: 40, width: MonknotScrollbarStyle.trackWidth, height: 80)
+        let resting = MonknotScroller.thumbRect(knob: knob, bounds: bounds, isVertical: true, isHovered: false)
+        XCTAssertEqual(resting.width, MonknotScrollbarStyle.restingThumbWidth)
+        XCTAssertEqual(bounds.maxX - resting.maxX, 2.5, accuracy: 0.001, "Rests 2.5 from the container's edge")
+        let hovered = MonknotScroller.thumbRect(knob: knob, bounds: bounds, isVertical: true, isHovered: true)
+        XCTAssertEqual(hovered.midX, resting.midX, accuracy: 0.001, "Grows from its centre")
+        XCTAssertGreaterThan(resting.minY, knob.minY)
+    }
+
+    /// A document's lane sits flush with the card's trailing edge: only the thumb's ends are inset,
+    /// clear of the card's rounded corners. An inset across the lane would move it off the edge and
+    /// leave an unpainted strip between the thumb and the card's edge.
+    func testADocumentScrollLaneIsFlushWithTheTrailingEdge() throws {
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        scrollView.hasVerticalScroller = true
+        scrollView.documentView = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 2_000))
+        MonknotScrollbarStyle.applyDocument(to: scrollView)
+        scrollView.scrollerStyle = .legacy
+        scrollView.tile()
+
+        XCTAssertEqual(scrollView.scrollerInsets.left, 0)
+        XCTAssertEqual(scrollView.scrollerInsets.right, 0)
+        XCTAssertEqual(scrollView.scrollerInsets.top, MonknotScrollbarStyle.endInset)
+        XCTAssertEqual(scrollView.scrollerInsets.bottom, MonknotScrollbarStyle.endInset)
+        let scroller = try XCTUnwrap(scrollView.verticalScroller)
+        XCTAssertEqual(scroller.frame.maxX, scrollView.bounds.maxX, accuracy: 0.5, "The lane touches the edge")
+        XCTAssertEqual(scroller.frame.width, MonknotScrollbarStyle.trackWidth, accuracy: 0.5)
+
+        // With both scrollers, each lane ends where the other begins; only far ends are inset.
+        let both = MonknotScrollbarStyle.endInsets(hasVertical: true, hasHorizontal: true)
+        XCTAssertEqual(both.right, 0)
+        XCTAssertEqual(both.bottom, 0)
+        XCTAssertEqual(both.top, MonknotScrollbarStyle.endInset)
+        XCTAssertEqual(both.left, MonknotScrollbarStyle.endInset)
     }
 
     func testDisabledRowsDrawNoHoverOrPressFillButKeepTheirSelection() {
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
-            func fill(selected: Bool = false, hovered: Bool = false, pressed: Bool = false, enabled: Bool) -> Color {
-                MonknotRowButtonStyle.fill(
+            func fill(selected: Bool = false, open: Bool = false, hovered: Bool = false, pressed: Bool = false, enabled: Bool) -> Color {
+                MonknotListRowButtonStyle.fill(
                     theme: theme,
                     isSelected: selected,
-                    isActive: false,
+                    isOpen: open,
                     isHovered: hovered,
                     isPressed: pressed,
                     isEnabled: enabled
                 )
             }
 
+            XCTAssertEqual(fill(enabled: true), .clear)
             XCTAssertEqual(fill(hovered: true, enabled: true), theme.hoverFillColor)
             XCTAssertEqual(fill(hovered: true, pressed: true, enabled: true), theme.pressedFillColor)
+            // A row whose popover is open holds the pressed fill, as an open icon button or pop-up (§5.1).
+            XCTAssertEqual(fill(open: true, enabled: true), theme.pressedFillColor)
+            XCTAssertEqual(fill(open: true, enabled: false), .clear)
             XCTAssertEqual(fill(hovered: true, enabled: false), .clear)
             XCTAssertEqual(fill(hovered: true, pressed: true, enabled: false), .clear)
-            XCTAssertEqual(fill(selected: true, hovered: true, enabled: false), theme.selectedRowColor)
+            // Selection is the neutral fill, never an accent tint (design.md §1.4).
+            XCTAssertEqual(fill(selected: true, hovered: true, enabled: false), theme.chromeSelectedFillColor)
         }
     }
 
-    func testWindowNavigationUsesReferenceSegmentGeometryAcrossSupportedZooms() {
+    /// Back and forward are two ordinary bar buttons side by side, 2 apart, with no shell (design.md §5.1).
+    func testWindowNavigationIsTwoRegularButtonsTwoApartAtEveryZoom() {
         let theme = AppTheme.defaultDark
-        let navigationSize = MonknotIconButton.IconButtonSize.windowNavigation
-        let chromeSize = MonknotIconButton.IconButtonSize.chrome
-
         for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-
-            XCTAssertEqual(
-                navigationSize.dimension(theme: theme, zoomScale: zoomScale),
-                chromeSize.dimension(theme: theme, zoomScale: zoomScale),
-                accuracy: 0.001
-            )
-            XCTAssertLessThan(
-                navigationSize.height(theme: theme, zoomScale: zoomScale),
-                chromeSize.height(theme: theme, zoomScale: zoomScale)
-            )
-            XCTAssertEqual(
-                navigationSize.iconSize(theme: theme, zoomScale: zoomScale),
-                MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
-                accuracy: 0.001,
-                "Navigation chevrons use their specified optical size"
-            )
+            let host = NSHostingView(rootView: WindowNavigationControls(
+                navigateBack: {},
+                navigateForward: {},
+                canNavigateBack: true,
+                canNavigateForward: false,
+                theme: theme,
+                zoomScale: zoomScale
+            ))
+            let button = MonknotIconButton.IconButtonSize.regular.dimension(theme: theme, zoomScale: zoomScale)
+            let gap = MonknotMetrics.interfaceDensity(MonknotMetrics.barItemGapBase, theme: theme, zoomScale: zoomScale)
+            XCTAssertEqual(host.fittingSize.width, button * 2 + gap, accuracy: 0.01, "zoom \(zoomScale)")
         }
     }
 

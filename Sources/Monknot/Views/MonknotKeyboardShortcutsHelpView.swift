@@ -1,8 +1,8 @@
 import MonknotCore
 import SwiftUI
 
-/// Help › Keyboard Shortcuts: the same overlay as Quick Open, with the shortcuts grouped under eyebrow
-/// headers in plain 30 rows, each with its reference key cap (design.md §4.4).
+/// Help › Keyboard Shortcuts: the same overlay as Quick Open, with the shortcuts grouped under group
+/// headers in 30 menu rows, each with its reference key cap (design.md §4.4).
 struct MonknotKeyboardShortcutsHelpView: View {
     let theme: AppTheme
     let zoomScale: Double
@@ -23,43 +23,40 @@ struct MonknotKeyboardShortcutsHelpView: View {
             VStack(spacing: 0) {
                 MonknotCommandOverlayTitle(title: "Keyboard Shortcuts", theme: theme, zoomScale: zoomScale, close: close)
 
-                Rectangle().fill(theme.separatorColor).frame(height: 1)
+                MonknotCommandOverlaySeparator(theme: theme)
 
                 MonknotScrollView(theme: theme) {
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(MonknotKeyboardShortcutCatalog.sections, id: \.title) { section in
-                            Text(section.title)
-                                .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))
-                                .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: zoomScale))
-                                .textCase(.uppercase)
-                                .foregroundStyle(theme.tertiaryForegroundColor)
-                                .padding(.top, scaled(14))
-                                .padding(.bottom, scaled(4))
-                                .accessibilityAddTraits(.isHeader)
+                        ForEach(Array(MonknotKeyboardShortcutCatalog.sections.enumerated()), id: \.element.title) { index, section in
+                            MonknotMenuGroupHeader(
+                                title: section.title,
+                                isFirst: index == 0,
+                                leadingPaddingBase: MonknotMetrics.menuRowPaddingBase,
+                                theme: theme,
+                                zoomScale: zoomScale
+                            )
 
-                            ForEach(section.entries, id: \.title) { entry in
-                                HStack(spacing: scaled(12)) {
-                                    Text(entry.title)
-                                        .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
-                                        .foregroundStyle(theme.mutedForegroundColor)
-                                        .lineLimit(1)
-
-                                    Spacer(minLength: 0)
-
-                                    MonknotShortcutLabel(
-                                        shortcut: entry.shortcut,
+                            VStack(spacing: MonknotCommandOverlayMetrics.rowGapBase) {
+                                ForEach(section.entries, id: \.title) { entry in
+                                    MonknotMenuRowLabel(
+                                        leading: .none,
+                                        title: entry.title,
                                         theme: theme,
-                                        zoomScale: zoomScale,
-                                        presentation: .keyCap
-                                    )
+                                        zoomScale: zoomScale
+                                    ) {
+                                        MonknotShortcutLabel(
+                                            shortcut: entry.shortcut,
+                                            theme: theme,
+                                            zoomScale: zoomScale,
+                                            presentation: .keyCap
+                                        )
+                                    }
+                                    .accessibilityElement(children: .combine)
                                 }
-                                .frame(height: scaled(30))
-                                .accessibilityElement(children: .combine)
                             }
                         }
                     }
-                    .padding(.horizontal, scaled(16))
-                    .padding(.bottom, scaled(12))
+                    .padding(scaled(MonknotMetrics.menuListInsetBase))
                 }
             }
         }

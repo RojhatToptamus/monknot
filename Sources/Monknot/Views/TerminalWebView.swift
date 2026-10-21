@@ -319,7 +319,7 @@ struct TerminalWebView: NSViewRepresentable {
             outline: none;
             background: var(--terminal-search-hover);
           }
-          \(MonknotScrollbarStyle.webCSS(
+          \(ScrollThumbGeometry.webCSS(
               selector: ".xterm .xterm-viewport",
               restingColor: "var(--terminal-scrollbar-thumb)",
               hoveredColor: "var(--terminal-scrollbar-thumb-hover)"
@@ -746,28 +746,34 @@ struct TerminalWebView: NSViewRepresentable {
 
     static func configureBackground(of webView: WKWebView, theme: AppTheme) {
         webView.wantsLayer = true
-        webView.layer?.backgroundColor = NSColor(hex: theme.terminalSurfaceHex).cgColor
+        webView.layer?.backgroundColor = NSColor(hex: theme.background).cgColor
     }
 
+    /// xterm's files from the app's bundle or, run from the checkout (`swift test`), from the
+    /// repository's sources, as `MarkdownRenderService` finds the preview's.
     private static func bundledResource(named name: String, extension fileExtension: String) -> String {
-        guard let url = Bundle.main.url(forResource: name, withExtension: fileExtension),
-              let contents = try? String(contentsOf: url, encoding: .utf8)
-        else {
-            return ""
+        let currentDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let candidates = [
+            Bundle.main.url(forResource: name, withExtension: fileExtension),
+            currentDirectory.appendingPathComponent("Sources/Monknot/Resources/\(name).\(fileExtension)")
+        ].compactMap { $0 }
+        for url in candidates {
+            if let contents = try? String(contentsOf: url, encoding: .utf8) {
+                return contents
+            }
         }
-
-        return contents
+        return ""
     }
 
     /// The xterm.js theme, for the page and for every later theme change alike. `term.options.theme`
     /// replaces the whole theme, so a key missing from either would fall back to xterm's default.
     static func xtermTheme(_ theme: AppTheme) -> [String: String] {
         [
-            "background": theme.terminalSurfaceHex,
+            "background": theme.background,
             "foreground": theme.foreground,
             "cursor": theme.accent,
             "selectionBackground": theme.selectionBackground,
-            "black": theme.terminalSurfaceHex,
+            "black": theme.background,
             "white": theme.foreground,
             "brightWhite": theme.foreground,
             "blue": theme.accent,
@@ -819,7 +825,7 @@ struct TerminalAppearance: Equatable {
     var cssVariables: [(name: String, value: String)] {
         let foreground = theme.foreground
         return [
-            ("--terminal-bg", theme.terminalSurfaceHex),
+            ("--terminal-bg", theme.background),
             ("--terminal-fg", foreground),
             ("--terminal-muted-fg", TerminalWebView.rgba(foreground, alpha: 0.62)),
             ("--terminal-accent", theme.accent),

@@ -37,7 +37,7 @@ struct MonknotActionButton: View {
     var systemImage: String? = nil
     let role: MonknotActionRole
     let theme: AppTheme
-    var zoomScale: Double = 1
+    let zoomScale: Double
     var size: MonknotActionButtonSize = .sheet
     var isDisabled: Bool = false
     let action: () -> Void
@@ -56,13 +56,12 @@ struct MonknotActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: scaled(MonknotMetrics.Spacing.xs)) {
+            // design.md §5.4: a 14 glyph in a 16 column, 7 to the label, 10 leading and 12 trailing,
+            // because the glyph's own side bearing already adds space on its side.
+            HStack(spacing: scaled(7)) {
                 if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.system(
-                            size: MonknotMetrics.interfaceGlyph(11, theme: theme, zoomScale: zoomScale),
-                            weight: .regular
-                        ))
+                    MonknotSystemGlyph(systemImage: systemImage, nominalPointSizeBase: 14, theme: theme, zoomScale: zoomScale)
+                        .frame(width: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale))
                         .accessibilityHidden(true)
                 }
 
@@ -73,19 +72,16 @@ struct MonknotActionButton: View {
                 size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale),
                 weight: .regular
             ))
-            .foregroundStyle(foregroundColor)
-            .padding(.horizontal, scaled(MonknotMetrics.Spacing.l))
+            .monknotStateStyle(foregroundColor)
+            .padding(.leading, scaled(systemImage == nil ? MonknotMetrics.Spacing.l : 10))
+            .padding(.trailing, scaled(MonknotMetrics.Spacing.l))
             .frame(height: MonknotMetrics.interfaceControl(size.heightBase, theme: theme, zoomScale: zoomScale))
             .background {
-                shape.fill(backgroundColor)
+                shape.monknotStateStyle(backgroundColor)
                 // design.md §5.3: hover and pressed tint the button's own fill; they never replace it.
-                if let stateFill {
-                    shape.fill(stateFill)
-                }
+                shape.monknotStateStyle(stateFill ?? .clear)
             }
-            .overlay {
-                shape.strokeBorder(borderColor, lineWidth: borderWidth)
-            }
+            // Push buttons are fills, never outlines (design.md §5.3).
             .monknotFocusRing(isVisible: isFocused && !isDisabled, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale), theme: theme)
             .contentShape(shape)
         }
@@ -95,7 +91,6 @@ struct MonknotActionButton: View {
         .focused($isFocused)
         .focusEffectDisabled()
         .onHover { isHovered = $0 }
-        .animation(MonknotMotion.hoverAnimation, value: isHovered)
         .monknotPointerCursor(enabled: !isDisabled)
         .accessibilityLabel(title)
     }
@@ -106,41 +101,31 @@ struct MonknotActionButton: View {
         }
 
         switch role {
-        case .primary, .destructive:
+        case .primary:
             return theme.onAccentForegroundColor
+        // design.md §5.3: the `danger` fill carries a white label.
+        case .destructive:
+            return .white
+        // design.md §1.4: a push button's word is `ink`; a quiet one rests at `ink2`.
         case .secondary:
-            return theme.foregroundColor.opacity(0.88)
+            return theme.foregroundColor
         case .quiet:
-            return theme.foregroundColor.opacity(0.72)
+            return isHovered ? theme.foregroundColor : theme.mutedForegroundColor
         }
-    }
-
-    private var borderColor: Color {
-        if isDisabled {
-            return role == .quiet ? .clear : theme.borderColor.opacity(MonknotIconButton.disabledBorderOpacity)
-        }
-        return role == .secondary ? theme.borderColor : .clear
-    }
-
-    private var borderWidth: CGFloat {
-        if isDisabled {
-            return role == .quiet ? 0 : 1
-        }
-        return role == .secondary ? 1 : 0
     }
 
     private var backgroundColor: Color {
         if isDisabled {
-            return role == .quiet ? .clear : theme.insetFillColor
+            return role == .quiet ? .clear : theme.controlTrackFillColor.opacity(0.5)
         }
 
         switch role {
         case .primary:
             return theme.accentColor
         case .destructive:
-            return Color(hex: theme.semanticColors.diffRemoved)
+            return theme.dangerColor
         case .secondary:
-            return theme.insetFillColor
+            return theme.secondaryButtonFillColor
         case .quiet:
             return .clear
         }

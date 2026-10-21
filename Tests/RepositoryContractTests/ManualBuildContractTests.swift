@@ -28,6 +28,8 @@ final class ManualBuildContractTests: RepositoryContractTestCase {
         let requiredResources = [
             "Sources/MonknotCore/Resources/preview.css",
             "Sources/MonknotCore/Resources/renderer.js",
+            "Sources/MonknotCore/Resources/editor.css",
+            "Sources/MonknotCore/Resources/editor.js",
             "Sources/Monknot/Resources/xterm.css",
             "Sources/Monknot/Resources/xterm.js",
             "Sources/Monknot/Resources/xterm-addon-fit.js",

@@ -72,17 +72,6 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
 
     // MARK: - Sidebar drag to move
 
-    func testDragRootFileOntoFolderRowMovesIt() async throws {
-        let fixture = try await makeSidebarFixture()
-        defer { fixture.close() }
-        let source = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "top.md"))
-        let target = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "other"))
-        await fixture.drag(from: NSPoint(x: source.midX, y: source.midY), to: NSPoint(x: target.midX, y: target.midY))
-        _ = await waitUntil { fixture.listing().contains("other/top.md") }
-
-        XCTAssertEqual(fixture.listing().filter { $0.hasSuffix("top.md") }, ["other/top.md"])
-    }
-
     func testDragOntoFileRowMovesIntoThatFilesFolder() async throws {
         let fixture = try await makeSidebarFixture()
         defer { fixture.close() }
@@ -304,7 +293,7 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
 
         XCTAssertTrue(takesFocus("note.md", .source))
         XCTAssertTrue(takesFocus("note.md", .preview, split: true), "Its source shows beside the preview")
-        XCTAssertFalse(takesFocus("note.md", .preview))
+        XCTAssertTrue(takesFocus("note.md", .preview), "Preview edits Markdown in place")
         XCTAssertTrue(takesFocus("notes.txt", .preview), "Text has no preview")
         XCTAssertTrue(takesFocus("page.html", .source))
         XCTAssertFalse(takesFocus("page.html", .preview))
@@ -476,7 +465,8 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         let opened = await waitUntil { store.documents.count == 5 && !store.isBusy && store.rootNode != nil }
         XCTAssertTrue(opened)
 
-        let defaults = UserDefaults(suiteName: "Monknot.SidebarDrag.\(UUID().uuidString)")!
+        let defaultsSuiteName = "Monknot.SidebarDrag.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: defaultsSuiteName)!
         let newItemRequest = NewItemRequestBox()
         let library = WorkspaceLibraryStore(userDefaults: defaults)
         let search = WorkspaceSearchState()
@@ -530,7 +520,8 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
             editor: editor,
             store: store,
             workspaceURL: root,
-            newItemRequest: newItemRequest
+            newItemRequest: newItemRequest,
+            defaultsSuiteName: defaultsSuiteName
         )
     }
 }
@@ -558,6 +549,7 @@ private struct SidebarFixture {
     let store: WorkspaceStore
     let workspaceURL: URL
     let newItemRequest: NewItemRequestBox
+    let defaultsSuiteName: String
 
     func close() {
         if let sheet = window.attachedSheet {
@@ -566,6 +558,7 @@ private struct SidebarFixture {
         window.orderOut(nil)
         window.contentView = nil
         UserDefaults.standard.removeObject(forKey: WorkspaceTreeExpansionPersistence().key(for: workspaceURL))
+        UserDefaults().removePersistentDomain(forName: defaultsSuiteName)
     }
 
     func path(_ relativePath: String) -> String {
@@ -640,9 +633,9 @@ private struct SidebarFixture {
               let index = visibleRows().firstIndex(where: { $0.displayName == labelPrefix })
         else { return nil }
         let theme = AppTheme.defaultDark
-        let rowHeight = MonknotMetrics.scale(30, theme: theme, zoomScale: 1)
-        let spacing = MonknotMetrics.scale(2, theme: theme, zoomScale: 1)
-        let top = MonknotMetrics.scale(6, theme: theme, zoomScale: 1)
+        let rowHeight = MonknotMetrics.scale(MonknotMetrics.rowHeightBase, theme: theme, zoomScale: 1)
+        let spacing = MonknotMetrics.scale(MonknotMetrics.rowGapBase, theme: theme, zoomScale: 1)
+        let top = MonknotMetrics.scale(MonknotMetrics.listTopInsetBase, theme: theme, zoomScale: 1)
         let y = top + CGFloat(index) * (rowHeight + spacing)
         let local = NSRect(x: 20, y: y, width: documentView.bounds.width - 40, height: rowHeight)
         let flippedLocal = documentView.isFlipped

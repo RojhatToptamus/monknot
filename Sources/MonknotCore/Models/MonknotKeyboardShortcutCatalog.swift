@@ -46,8 +46,15 @@ public enum MonknotKeyboardShortcutCatalog {
         ]),
         MonknotKeyboardShortcutSection(title: "Sidebar", entries: [
             Entry(title: "Rename Selected Item", shortcut: "↩"),
-            Entry(title: "Duplicate Selected Item", shortcut: "⌘D"),
-            Entry(title: "Move Selected Item to Trash", shortcut: "⌘⌫"),
+            Entry(title: "Duplicate Selected Items", shortcut: "⌘D"),
+            Entry(title: "Move Selected Items to Trash", shortcut: "⌘⌫"),
+            Entry(title: "Undo Move or Copy", shortcut: "⌘Z"),
+            Entry(title: "Redo Move or Copy", shortcut: "⇧⌘Z"),
+            Entry(title: "Select Item Above or Below", shortcut: "↑ ↓"),
+            Entry(title: "Add Item Above or Below to Selection", shortcut: "⇧↑ ⇧↓"),
+            Entry(title: "Open or Close Folder", shortcut: "→ ←"),
+            Entry(title: "Close All Folders", shortcut: "⌘←"),
+            Entry(title: "Open Selected Items", shortcut: "⌘↓"),
         ]),
         MonknotKeyboardShortcutSection(title: "Find", entries: [
             Entry(title: "Find in Document or Terminal", shortcut: "⌘F"),
@@ -55,6 +62,10 @@ public enum MonknotKeyboardShortcutCatalog {
             Entry(title: "Find Previous", shortcut: "⇧⌘G"),
         ]),
         MonknotKeyboardShortcutSection(title: "Writing", entries: [
+            Entry(title: "Bold", shortcut: "⌘B"),
+            Entry(title: "Italic", shortcut: "⌘I"),
+            Entry(title: "Inline Code", shortcut: "⌘E"),
+            Entry(title: "Link", shortcut: "⌘K"),
             Entry(title: "Go to Heading", shortcut: "⇧⌘O"),
             Entry(title: "Complete Wikilink after [[", shortcut: "⇥"),
             Entry(title: "Inspect Links", shortcut: "⌥⌘L"),

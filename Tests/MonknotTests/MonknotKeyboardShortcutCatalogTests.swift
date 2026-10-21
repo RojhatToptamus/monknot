@@ -26,8 +26,15 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
             ],
             "Sidebar": [
                 .init(title: "Rename Selected Item", shortcut: "↩"),
-                .init(title: "Duplicate Selected Item", shortcut: "⌘D"),
-                .init(title: "Move Selected Item to Trash", shortcut: "⌘⌫"),
+                .init(title: "Duplicate Selected Items", shortcut: "⌘D"),
+                .init(title: "Move Selected Items to Trash", shortcut: "⌘⌫"),
+                .init(title: "Undo Move or Copy", shortcut: "⌘Z"),
+                .init(title: "Redo Move or Copy", shortcut: "⇧⌘Z"),
+                .init(title: "Select Item Above or Below", shortcut: "↑ ↓"),
+                .init(title: "Add Item Above or Below to Selection", shortcut: "⇧↑ ⇧↓"),
+                .init(title: "Open or Close Folder", shortcut: "→ ←"),
+                .init(title: "Close All Folders", shortcut: "⌘←"),
+                .init(title: "Open Selected Items", shortcut: "⌘↓"),
             ],
             "Find": [
                 .init(title: "Find in Document or Terminal", shortcut: "⌘F"),
@@ -35,6 +42,10 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
                 .init(title: "Find Previous", shortcut: "⇧⌘G"),
             ],
             "Writing": [
+                .init(title: "Bold", shortcut: "⌘B"),
+                .init(title: "Italic", shortcut: "⌘I"),
+                .init(title: "Inline Code", shortcut: "⌘E"),
+                .init(title: "Link", shortcut: "⌘K"),
                 .init(title: "Go to Heading", shortcut: "⇧⌘O"),
                 .init(title: "Complete Wikilink after [[", shortcut: "⇥"),
                 .init(title: "Inspect Links", shortcut: "⌥⌘L"),
@@ -60,7 +71,7 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
         for section in MonknotKeyboardShortcutCatalog.sections {
             XCTAssertEqual(section.entries, expected[section.title], section.title)
         }
-        XCTAssertEqual(allEntries.count, 33)
+        XCTAssertEqual(allEntries.count, 44)
     }
 
     func testShortcutsUseAppleKeySymbolsRatherThanWordsOrAscii() {

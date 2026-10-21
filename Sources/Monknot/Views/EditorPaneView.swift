@@ -1,6 +1,7 @@
 import AppKit
 import MonknotCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum EditorFlowEligibility {
     static func sourceMode(for document: WorkspaceDocument) -> FlowSourceMode? {
@@ -29,8 +30,11 @@ struct EditorPaneView: View {
     private var inlinePredictions = EditorTextCheckingOptions.defaultInlinePredictions
     @AppStorage(EditorTextCheckingOptions.onDeviceProseCompletionsPreferenceKey)
     private var onDeviceProseCompletions = EditorTextCheckingOptions.defaultOnDeviceProseCompletions
-    @State private var markdownCommandSerial = 0
-    @State private var markdownCommandRequest: MarkdownTextEditorCommandRequest?
+    /// Preview's undo history; it outlives the page, so switching to Source and back keeps it.
+    @State private var visualEditingSession = MarkdownVisualEditingSession()
+    @State private var notebookMarkdown = NotebookMarkdownCache()
+    /// Writing Tools asked for in Preview; Source opens them once it is showing.
+    @State private var sourceWritingToolsRequested = false
     @State private var splitScrollSyncLock = false
     @State private var splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
     @State private var previewSyncLine: Int?
@@ -121,11 +125,6 @@ struct EditorPaneView: View {
                     splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
                 }
             }
-            .onChange(of: store.activeWritingToolsDocumentID) { _, documentID in
-                if documentID != nil {
-                    markdownCommandRequest = nil
-                }
-            }
             .sheet(item: Binding(
                 get: { store.externalDocumentReview },
                 set: { value in
@@ -143,16 +142,22 @@ struct EditorPaneView: View {
             }
     }
 
-    /// An editable Markdown document keeps its toolbar row in every view mode, so switching between
-    /// Source and Preview never moves the document.
-    private var showsMarkdownToolbar: Bool {
+    /// An editable Markdown document shows its word count in every view mode. Formatting has no
+    /// docked toolbar: Preview formats from the floating bar over a selection, its block menus and
+    /// slash commands; Source from the keyboard (design.md §10.10).
+    private var showsWordCount: Bool {
         guard let document = store.selectedDocument else { return false }
         return document.kind == .markdown && document.capabilities.canEditText
     }
 
-    /// The toolbar edits the source, so it acts only while the source is on screen.
-    private var isMarkdownToolbarEnabled: Bool {
-        (editorMode == .source || isSplitViewEnabled) && store.activeWritingToolsDocumentID == nil
+    /// Preview edits an editable Markdown document in place. Beside Source it stays a preview, so
+    /// one document never has two places taking typing at once.
+    private var isPreviewEditable: Bool {
+        guard let document = store.selectedDocument,
+              document.kind == .markdown,
+              document.capabilities.canEditText
+        else { return false }
+        return editorMode == .preview && !isSplitViewEnabled && store.activeWritingToolsDocumentID == nil
     }
 
     private func supportsSplitViewRatioPersistence(forDocumentID documentID: String) -> Bool {
@@ -161,39 +166,39 @@ struct EditorPaneView: View {
     }
 
     private var editorColumn: some View {
-        VStack(spacing: 0) {
-            if showsMarkdownToolbar {
-                MonknotChromePanel(theme: theme) {
-                    MarkdownSourceToolbar(
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        statistics: textStatistics,
-                        sendCommand: sendMarkdownCommand
-                    )
-                    .equatable()
-                    .disabled(!isMarkdownToolbarEnabled)
+        editorContent
+            .frame(
+                minWidth: 0,
+                maxWidth: .infinity,
+                minHeight: 0,
+                maxHeight: .infinity,
+                alignment: .top
+            )
+            .clipped()
+            .overlay {
+                if showsWordCount {
+                    GeometryReader { proxy in
+                        if wordCountFits(paneWidth: proxy.size.width) {
+                            MarkdownWordCountLabel(theme: theme, zoomScale: zoomScale, statistics: textStatistics)
+                                .padding(.trailing, MonknotMetrics.interfaceDensity(14, theme: theme, zoomScale: zoomScale))
+                                .padding(.bottom, MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        }
+                    }
                 }
             }
-
-            editorContent
-                .frame(
-                    minWidth: 0,
-                    maxWidth: .infinity,
-                    minHeight: 0,
-                    maxHeight: .infinity,
-                    alignment: .top
-                )
-                .clipped()
-        }
     }
 
-    private func sendMarkdownCommand(_ command: MarkdownTextEditorCommand) {
-        guard isMarkdownToolbarEnabled else { return }
-        markdownCommandSerial += 1
-        markdownCommandRequest = MarkdownTextEditorCommandRequest(
-            serial: markdownCommandSerial,
-            command: command
+    /// The word count sits beside the text column, never over it: it shows only while the margin
+    /// right of the column holds it.
+    private func wordCountFits(paneWidth: CGFloat) -> Bool {
+        let column = ContentWidthPreference.textColumnWidth(
+            viewportWidth: paneWidth,
+            contentWidthPercent: contentWidthPercent,
+            fontSize: codeFontSize * CGFloat(WorkspaceZoomPolicy.documentScale(zoomScale))
         )
+        let margin = (paneWidth - column) / 2
+        return margin >= MonknotMetrics.interfaceDensity(112, theme: theme, zoomScale: zoomScale)
     }
 
     @ViewBuilder
@@ -298,6 +303,8 @@ struct EditorPaneView: View {
         case .text:
             if selectedDocument.capabilities.canPreviewHTML {
                 htmlEditor(for: selectedDocument)
+            } else if selectedDocument.capabilities.canPreviewNotebook {
+                notebookEditor(for: selectedDocument)
             } else {
                 textEditor(for: selectedDocument)
             }
@@ -352,7 +359,7 @@ struct EditorPaneView: View {
             // One player per document, so switching tabs releases the previous file.
             MediaPlayerView(document: selectedDocument, theme: theme, zoomScale: zoomScale)
                 .id(selectedDocument.id)
-        case .nativePreview, .unsupported:
+        case .unsupported:
             UnsupportedDocumentView(
                 document: selectedDocument,
                 theme: theme,
@@ -432,6 +439,61 @@ struct EditorPaneView: View {
             onVisibleSourceLineChange: { line in
                 syncSourceScroll(to: line)
             }
+        )
+    }
+
+    /// A notebook's source is its JSON; Preview renders its cells read-only. The two have no lines
+    /// in common, so split view does not sync their scrolling.
+    @ViewBuilder
+    private func notebookEditor(for selectedDocument: WorkspaceDocument) -> some View {
+        if isSplitViewEnabled {
+            HSplitView {
+                textEditor(for: selectedDocument)
+                    .frame(minWidth: 240)
+                    .background(
+                        splitViewRatioAccessor(for: selectedDocument)
+                    )
+                notebookPreviewPane(for: selectedDocument)
+                    .frame(minWidth: 240)
+            }
+        } else {
+            switch editorMode {
+            case .source:
+                textEditor(for: selectedDocument)
+            case .preview:
+                notebookPreviewPane(for: selectedDocument)
+            }
+        }
+    }
+
+    private func notebookPreviewPane(for selectedDocument: WorkspaceDocument) -> some View {
+        MarkdownPreviewView(
+            documentID: selectedDocument.id,
+            markdown: notebookMarkdown.markdown(forNotebookText: store.documentText, documentID: selectedDocument.id),
+            baseURL: URL(fileURLWithPath: selectedDocument.id).deletingLastPathComponent(),
+            resourceRoot: store.workspaceURL,
+            theme: theme,
+            zoomScale: zoomScale,
+            codeFontSize: Double(codeFontSize),
+            contentWidthPercent: contentWidthPercent,
+            usePointerCursors: usePointerCursors,
+            fontSmoothing: fontSmoothing,
+            scrollPosition: activeViewportState?.markdownPreviewScrollPosition,
+            syncScrollEnabled: false,
+            syncScrollTargetLine: nil,
+            openingTopLine: nil,
+            sourceLocation: $previewLocation,
+            searchState: $documentSearch,
+            searchOptions: searchOptions,
+            // The page's lines are the rendered notebook's, not the JSON's.
+            onSourceJump: { _ in },
+            onLinkRequest: onMarkdownPreviewLinkRequest,
+            onTaskRequest: { _ in },
+            onScrollPositionChange: { position in
+                updateViewportState(selectedDocument.id, .markdownPreviewScrollPosition(position))
+            },
+            onVisibleSourceLineChange: { _ in },
+            editing: nil
         )
     }
 
@@ -529,7 +591,6 @@ struct EditorPaneView: View {
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
             searchOptions: searchOptions,
-            commandRequest: markdownCommandRequest,
             wikilinkDocuments: store.markdownDocuments,
             onSelectionChange: onMarkdownSelectionChange,
             onOpenLink: onMarkdownLinkRequest,
@@ -542,6 +603,7 @@ struct EditorPaneView: View {
             onWritingToolsStateChange: { documentID, isActive in
                 store.setWritingToolsActive(isActive, documentID: documentID)
             },
+            writingToolsRequested: $sourceWritingToolsRequested,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },
@@ -580,6 +642,45 @@ struct EditorPaneView: View {
             onVisibleSourceLineChange: { line in
                 outlinePosition.update(line, documentID: selectedDocument.id)
                 syncSourceScroll(to: line)
+            },
+            editing: isPreviewEditable ? visualEditingConfiguration(for: selectedDocument) : nil
+        )
+    }
+
+    private func visualEditingConfiguration(for document: WorkspaceDocument) -> MarkdownVisualEditingConfiguration {
+        let documentID = document.id
+        return MarkdownVisualEditingConfiguration(
+            session: visualEditingSession,
+            initialSelection: activeViewportState?.textSelection,
+            currentText: { store.documentText },
+            applyChange: { patch in
+                let before = store.documentText
+                // The store can decline without saying so (while it is busy); then the text is the same.
+                return store.applyTextMutation(
+                    documentID: documentID,
+                    range: NSRange(location: patch.location, length: (patch.removed as NSString).length),
+                    expectedText: patch.removed,
+                    replacement: patch.inserted
+                ) != nil && store.documentText != before
+            },
+            onSelectionChange: { selection, selectedMarkdown in
+                onMarkdownSelectionChange(MarkdownEditorSelectionSnapshot(
+                    documentID: documentID,
+                    revision: 0,
+                    selectedRange: selection.range,
+                    selectedMarkdown: selectedMarkdown
+                ))
+            },
+            onImagePasteRequest: onMarkdownImagePasteRequest,
+            onFileDropRequest: onMarkdownFileDropRequest,
+            wikilinkDocuments: store.markdownDocuments,
+            createPage: { [store] name in
+                try await store.createPage(named: name, besideDocumentAt: URL(fileURLWithPath: documentID))
+            },
+            textCheckingOptions: textCheckingOptions,
+            showWritingTools: {
+                editorMode = .source
+                sourceWritingToolsRequested = true
             }
         )
     }
@@ -630,11 +731,53 @@ struct EditorPaneView: View {
 
 }
 
+/// The Markdown of the last notebook text the preview showed, so the view's other updates (a
+/// scroll, a theme change) do not parse the notebook again. While the JSON is invalid, as it is
+/// part way through an edit in split view, the notebook's last readable cells stay shown.
+@MainActor
+private final class NotebookMarkdownCache {
+    private var documentID: String?
+    private var text: String?
+    private var markdown = ""
+    private var isReadable = false
+
+    func markdown(forNotebookText text: String, documentID: String) -> String {
+        guard text != self.text || documentID != self.documentID else { return markdown }
+        let keepsLastReadable = documentID == self.documentID && isReadable
+        self.documentID = documentID
+        self.text = text
+        if let parsed = JupyterNotebookMarkdown.markdown(fromNotebookText: text) {
+            markdown = parsed
+            isReadable = true
+        } else if !keepsLastReadable {
+            markdown = JupyterNotebookMarkdown.unreadableMarkdown
+            isReadable = false
+        }
+        return markdown
+    }
+}
+
+/// A file Monknot lists but does not show (an archive, an Office document, a binary file), or one
+/// whose bytes could not be read as text: it opens in the app macOS uses for it.
 private struct UnsupportedDocumentView: View {
     let document: WorkspaceDocument
-    var detail = "Preview is not available for this file type."
+    var detail = "Monknot can't show this kind of file."
     let theme: AppTheme
     let zoomScale: Double
+
+    /// The name of the app macOS opens the file with, or nil when none is set. A program is never
+    /// offered (opening it runs it), and neither is Monknot itself, which has just failed to show it.
+    private var defaultApplicationName: String? {
+        let contentType = try? document.url.resourceValues(forKeys: [.contentTypeKey]).contentType
+        guard contentType?.conforms(to: .executable) != true,
+              !FileManager.default.isExecutableFile(atPath: document.url.path),
+              let applicationURL = NSWorkspace.shared.urlForApplication(toOpen: document.url),
+              applicationURL.standardizedFileURL != Bundle.main.bundleURL.standardizedFileURL,
+              Bundle(url: applicationURL)?.bundleIdentifier != Bundle.main.bundleIdentifier
+        else { return nil }
+        let name = FileManager.default.displayName(atPath: applicationURL.path)
+        return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
+    }
 
     var body: some View {
         MonknotEmptyState(
@@ -644,14 +787,26 @@ private struct UnsupportedDocumentView: View {
             theme: theme,
             zoomScale: zoomScale
         ) {
-            MonknotActionButton(
-                title: "Reveal in Finder",
-                systemImage: MonknotWorkspaceIcons.revealInFinder,
-                role: .secondary,
-                theme: theme,
-                zoomScale: zoomScale
-            ) {
-                NSWorkspace.shared.activateFileViewerSelecting([document.url])
+            VStack(spacing: MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: zoomScale)) {
+                if let defaultApplicationName {
+                    MonknotActionButton(
+                        title: "Open in \(defaultApplicationName)",
+                        role: .primary,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    ) {
+                        NSWorkspace.shared.open(document.url)
+                    }
+                }
+                MonknotActionButton(
+                    title: "Reveal in Finder",
+                    systemImage: MonknotWorkspaceIcons.revealInFinder,
+                    role: defaultApplicationName == nil ? .secondary : .quiet,
+                    theme: theme,
+                    zoomScale: zoomScale
+                ) {
+                    NSWorkspace.shared.activateFileViewerSelecting([document.url])
+                }
             }
         }
         .background(theme.surfaceColor)
@@ -670,12 +825,12 @@ private struct DocumentLoadingPlaceholder: View {
     var body: some View {
         VStack(spacing: scaled(12)) {
             MonknotProgressIndicator(
-                size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
+                size: MonknotMetrics.interfaceControl(MonknotMetrics.loadingSpinnerSizeBase, theme: theme, zoomScale: zoomScale),
                 theme: theme
             )
 
             Text(documentName)
-                .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale)))
+                .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
                 .foregroundStyle(theme.tertiaryForegroundColor)
                 .lineLimit(1)
                 .truncationMode(.middle)

@@ -5,6 +5,7 @@ import MonknotCore
 import PDFKit
 import SwiftUI
 import UniformTypeIdentifiers
+import WebKit
 import XCTest
 @testable import MonknotApp
 
@@ -22,6 +23,8 @@ final class DocumentViewerRoutingTests: WorkspaceStoreTestCase {
         case media
         case brokenMedia
         case loadFailure(containing: String)
+        /// A file Monknot lists but does not show: it opens in another app.
+        case otherApp
     }
 
     private struct Fixture {
@@ -54,8 +57,8 @@ final class DocumentViewerRoutingTests: WorkspaceStoreTestCase {
             Dictionary(uniqueKeysWithValues: fixtures.map { ($0.name, $0.kind) }),
             "Unexpected listing: \(listed.keys.sorted())"
         )
-        XCTAssertNil(listed["clip.avi"], "AVI is not a format AVFoundation reliably plays")
-        XCTAssertNil(listed["archive.zip"])
+        XCTAssertEqual(listed["clip.avi"], .unsupported, "AVI is not a format AVFoundation reliably plays")
+        XCTAssertNil(listed[".env"], "Hidden files stay hidden")
     }
 
     // MARK: - Opening
@@ -137,6 +140,17 @@ final class DocumentViewerRoutingTests: WorkspaceStoreTestCase {
                 self.playerView(in: host)?.player?.currentItem?.status == .failed
             }
             XCTAssertTrue(failed, "\(name) should open the player's failure state")
+        case .otherApp:
+            let settled = await waitUntil {
+                store.selectedDocumentID == document.id
+                    && self.documentTextView(in: host) == nil
+                    && self.pdfView(in: host) == nil
+                    && self.playerView(in: host) == nil
+            }
+            XCTAssertTrue(settled, "\(name) must not mount a viewer")
+            XCTAssertNil(store.documentLoadFailure, name)
+            XCTAssertFalse(store.isDocumentLoading, name)
+            XCTAssertNil(firstDescendant(of: WKWebView.self, in: host), name)
         }
     }
 
@@ -264,13 +278,14 @@ final class DocumentViewerRoutingTests: WorkspaceStoreTestCase {
         XCTAssertTrue(failed)
     }
 
-    /// Finder's Open With opens the file's folder with the file selected; a type Monknot does not
-    /// list says so instead of opening nothing.
+    /// Finder's Open With opens the file's folder with the file selected, whatever its type; a
+    /// hidden file, which the sidebar does not list, says so instead of opening nothing.
     func testOpenWithSelectsMediaAndNamesFilesItCannotOpen() async throws {
         let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotOpenWith")
         try DocumentFileTypeFixtures.writeWAV(to: root.appendingPathComponent("tone.wav"))
         try "# Note\n".write(to: root.appendingPathComponent("A.md"), atomically: true, encoding: .utf8)
         try Data("RIFF".utf8).write(to: root.appendingPathComponent("clip.avi"))
+        try Data("SECRET=1\n".utf8).write(to: root.appendingPathComponent(".env"))
 
         let store = makeWorkspaceStore()
         store.openWorkspace(root, selecting: root.appendingPathComponent("tone.wav"))
@@ -281,10 +296,53 @@ final class DocumentViewerRoutingTests: WorkspaceStoreTestCase {
         XCTAssertNil(store.errorMessage)
 
         store.openWorkspace(root, selecting: root.appendingPathComponent("clip.avi"))
+        let listed = await waitUntil { !store.isBusy && store.selectedDocument?.displayName == "clip.avi" }
+        XCTAssertTrue(listed)
+        XCTAssertEqual(store.selectedDocument?.kind, .unsupported)
+        XCTAssertNil(store.errorMessage)
+
+        store.openWorkspace(root, selecting: root.appendingPathComponent(".env"))
         let refused = await waitUntil { !store.isBusy && store.errorMessage != nil }
         XCTAssertTrue(refused)
-        XCTAssertEqual(store.errorMessage, "Monknot can't open “clip.avi”.")
+        XCTAssertEqual(store.errorMessage, "Monknot can't open “.env”.")
     }
+
+    /// A notebook opens on its JSON in Source and shows its cells and outputs in Preview.
+    func testANotebookShowsItsCellsInPreview() async throws {
+        let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotNotebook")
+        try Self.notebookJSON.write(to: root.appendingPathComponent("analysis.ipynb"), atomically: true, encoding: .utf8)
+        let store = try await openStore(root)
+        let notebook = try XCTUnwrap(store.documents.first)
+        XCTAssertTrue(notebook.hasPreviewMode)
+        let host = hostView(EditorPaneHarness(store: store, editorMode: .preview))
+
+        XCTAssertTrue(store.selectDocument(id: notebook.id))
+        var shown = ""
+        let rendered = await waitUntil(timeout: 10) {
+            guard let webView = self.firstDescendant(of: WKWebView.self, in: host) else { return false }
+            webView.evaluateJavaScript("document.getElementById('content')?.innerText ?? ''") { result, _ in
+                shown = result as? String ?? ""
+            }
+            return shown.contains("Quarterly totals") && shown.contains("print(totals)") && shown.contains("42")
+        }
+        XCTAssertTrue(rendered, "Preview shows: \(shown)")
+        XCTAssertNil(documentTextView(in: host), "Preview does not mount the JSON editor")
+        XCTAssertFalse(shown.contains("cell_type"), "Preview shows the cells, not the JSON")
+    }
+
+    private static let notebookJSON = """
+    {
+     "cells": [
+      {"cell_type": "markdown", "metadata": {}, "source": ["# Sales\\n", "Quarterly totals"]},
+      {"cell_type": "code", "execution_count": 1, "metadata": {}, "source": ["print(totals)"],
+       "outputs": [{"output_type": "stream", "name": "stdout", "text": ["42\\n"]}]}
+     ],
+     "metadata": {"kernelspec": {"language": "python", "name": "python3"}},
+     "nbformat": 4,
+     "nbformat_minor": 5
+    }
+
+    """
 
     func testOpenedMediaIsRecorded() async throws {
         let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotMediaRecents")
@@ -372,6 +430,9 @@ final class DocumentViewerRoutingTests: WorkspaceStoreTestCase {
         try text("LICENSE", "MIT License\n")
         try text("README", "Read me\n")
         try text("empty.txt", "")
+        try text("init.lua", "local x = 1\n")
+        try text("Brewfile", "brew \"git\"\n")
+        try text("analysis.ipynb", Self.notebookJSON)
 
         let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D])
         try pngBytes.write(to: root.appendingPathComponent("misnamed-png.txt"))
@@ -383,6 +444,8 @@ final class DocumentViewerRoutingTests: WorkspaceStoreTestCase {
         while large.count < 20 * 1024 * 1024 { large.append(line) }
         try large.write(to: root.appendingPathComponent("large.txt"))
         fixtures.append(Fixture(name: "large.txt", kind: .text, viewer: .loadFailure(containing: "MB")))
+        try (Data("SQLite format 3".utf8) + Data(repeating: 0, count: 32)).write(to: root.appendingPathComponent("cache.store2"))
+        fixtures.append(Fixture(name: "cache.store2", kind: .text, viewer: .loadFailure(containing: "binary data")))
 
         try DocumentFileTypeFixtures.writePDF(to: root.appendingPathComponent("guide.pdf"))
         fixtures.append(Fixture(name: "guide.pdf", kind: .pdf, viewer: .pdf))
@@ -421,8 +484,11 @@ final class DocumentViewerRoutingTests: WorkspaceStoreTestCase {
         try Data("not a movie".utf8).write(to: root.appendingPathComponent("broken.mp4"))
         fixtures.append(Fixture(name: "broken.mp4", kind: .media, viewer: .brokenMedia))
 
-        try Data("RIFF".utf8).write(to: root.appendingPathComponent("clip.avi"))
-        try Data("PK".utf8).write(to: root.appendingPathComponent("archive.zip"))
+        for name in ["clip.avi", "archive.zip", "report.docx"] {
+            try Data("PK".utf8).write(to: root.appendingPathComponent(name))
+            fixtures.append(Fixture(name: name, kind: .unsupported, viewer: .otherApp))
+        }
+        try Data("SECRET=1\n".utf8).write(to: root.appendingPathComponent(".env"))
         return (root, fixtures)
     }
 
@@ -514,16 +580,21 @@ final class DocumentViewerRoutingTests: WorkspaceStoreTestCase {
     }
 }
 
-/// The editor pane as `ContentView` mounts it, in Source mode with no split.
+/// The editor pane as `ContentView` mounts it, in Source mode unless told otherwise, with no split.
 private struct EditorPaneHarness: View {
     @ObservedObject var store: WorkspaceStore
-    @State private var editorMode = EditorMode.source
+    @State private var editorMode: EditorMode
     @State private var isSplitViewEnabled = false
     @State private var sourceLocation: MarkdownSourceLocation?
     @State private var previewLocation: MarkdownSourceLocation?
     @State private var pdfSearchTarget: WorkspaceSearchPDFTarget?
     @State private var documentSearch = DocumentSearchState()
     @StateObject private var pdfViewportCaptureBridge = PDFViewportCaptureBridge()
+
+    init(store: WorkspaceStore, editorMode: EditorMode = .source) {
+        self.store = store
+        _editorMode = State(initialValue: editorMode)
+    }
 
     var body: some View {
         EditorPaneView(

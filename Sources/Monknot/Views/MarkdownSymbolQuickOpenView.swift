@@ -25,7 +25,7 @@ struct MarkdownSymbolQuickOpenView: View {
         ) {
             VStack(spacing: 0) {
                 MonknotCommandOverlayField(
-                    systemImage: "list.bullet.indent",
+                    systemImage: MonknotWorkspaceIcons.outline,
                     placeholder: "Go to heading…",
                     text: Binding(
                         get: { state.query },
@@ -42,7 +42,7 @@ struct MarkdownSymbolQuickOpenView: View {
                     close: close
                 )
 
-                Rectangle().fill(theme.separatorColor).frame(height: 1)
+                MonknotCommandOverlaySeparator(theme: theme)
 
                 resultBody
 
@@ -76,7 +76,8 @@ struct MarkdownSymbolQuickOpenView: View {
                 ? "Add a Markdown heading, then try again."
                 : "Try a shorter part of the heading name.",
             theme: theme,
-            zoomScale: zoomScale
+            zoomScale: zoomScale,
+            hover: state.select(index:)
         ) { item, isSelected in
             MonknotCommandOverlayRow(
                 leading: .tag("H\(item.level)"),

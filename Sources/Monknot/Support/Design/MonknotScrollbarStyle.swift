@@ -3,39 +3,49 @@ import MonknotCore
 import SwiftUI
 
 enum MonknotScrollbarStyle {
-    static let trackWidth: CGFloat = 12
-    /// The thumb is a mark, not a control surface (design.md §7: scroll thumbs take radius 2). It rests
-    /// slim and quiet while the list scrolls or the pointer is over it, and widens and darkens under
-    /// the pointer so it is easy to grab with a mouse.
-    static let restingThumbWidth: CGFloat = 4
-    static let hoveredThumbWidth: CGFloat = 6
-    static let thumbRadius: CGFloat = 2
-    static let restingOpacity: CGFloat = 0.35
-    static let hoveredOpacity: CGFloat = 0.7
+    /// The lane a thumb sits in, flush with a scroll view's trailing or bottom edge (design.md §5.7).
+    /// With "Show scroll bars: Always" a document reserves this lane, so text never runs under the
+    /// thumb.
+    /// The geometry is `ScrollThumbGeometry`'s (MonknotCore), which Preview's page draws from too.
+    static let trackWidth = CGFloat(ScrollThumbGeometry.trackWidth)
+    /// The thumb is a slim capsule with no track. It rests quiet and widens and darkens under the
+    /// pointer, so it is easy to grab with a mouse.
+    static let restingThumbWidth = CGFloat(ScrollThumbGeometry.restingThumbWidth)
+    static let hoveredThumbWidth = CGFloat(ScrollThumbGeometry.hoveredThumbWidth)
+    /// Where the thumb's centre sits, measured from the container's edge: the middle of the lane, so
+    /// a resting thumb is 2.5 from the edge, close to the divider beside it, and grows from there.
+    static let thumbCenterInset: CGFloat = trackWidth / 2
+    static let restingOpacity = CGFloat(ScrollThumbGeometry.restingOpacity)
+    static let hoveredOpacity = CGFloat(ScrollThumbGeometry.hoveredOpacity)
+    /// The thumb's ends stay this far from the ends of a list or card, clear of its rounded corners.
+    static let endInset = CGFloat(ScrollThumbGeometry.endInset)
 
-    /// Documents (editor, PDF, preview) keep AppKit's own scroller, which follows System Settings ›
-    /// Appearance › Show scroll bars. A legacy scroller stays laid out while the document fits, so text
-    /// never rewraps when the document grows past one screen; an overlay scroller takes no width and
-    /// hides as usual. Re-apply when `NSScroller.preferredScrollerStyleDidChangeNotification` posts.
-    static func applyDocument(to scrollView: NSScrollView) {
-        let autohides = NSScroller.preferredScrollerStyle == .overlay
+    /// Documents (editor, plain text, PDF) take the same thumb as the chrome. They follow System
+    /// Settings › Appearance › Show scroll bars: an overlay thumb fades and takes no width; with
+    /// "Always" the thumb stays visible in a reserved lane, so text never rewraps when the document
+    /// grows past one screen. Re-apply when `NSScroller.preferredScrollerStyleDidChangeNotification`
+    /// posts.
+    static func applyDocument(to scrollView: NSScrollView, thumbColor: NSColor? = nil) {
+        let style = NSScroller.preferredScrollerStyle
+        install(on: scrollView, thumbColor: thumbColor)
+        if scrollView.scrollerStyle != style {
+            scrollView.scrollerStyle = style
+        }
+        let autohides = style == .overlay
         if scrollView.autohidesScrollers != autohides {
             scrollView.autohidesScrollers = autohides
         }
+        applyEndInsets(to: scrollView)
     }
 
-    /// Chrome lists (sidebar, search results, palettes, panels, Settings) always use the slim overlay
-    /// thumb. With a mouse attached, AppKit would otherwise give each one a legacy bar with an
-    /// opaque track, the loudest thing in a 248pt sidebar. Keep the style with `MonknotChromeScrollerBehavior`,
-    /// because AppKit resets it whenever the system setting or the attached mouse changes.
+    /// Chrome lists (sidebar, search results, palettes, panels, Settings) always use the overlay
+    /// thumb, which fades: a list never reserves a lane. Keep the style with
+    /// `MonknotChromeScrollerBehavior`, because AppKit resets it whenever the system setting or the
+    /// attached mouse changes.
     static func applyChrome(to scrollView: NSScrollView, thumbColor: NSColor) {
         scrollView.autohidesScrollers = true
-        // The vertical scroller is replaced even while hidden, so a list that turns it on later
-        // (PDFThumbnailView does) shows the chrome thumb.
-        chromeScroller(of: scrollView, vertical: true).thumbColor = thumbColor
-        if scrollView.hasHorizontalScroller {
-            chromeScroller(of: scrollView, vertical: false).thumbColor = thumbColor
-        }
+        install(on: scrollView, thumbColor: thumbColor)
+        applyEndInsets(to: scrollView)
         if scrollView.scrollerStyle != .overlay {
             scrollView.scrollerStyle = .overlay
             // Give the list back the width the legacy bar took.
@@ -48,7 +58,38 @@ enum MonknotScrollbarStyle {
         NSColor(hex: theme.foreground)
     }
 
-    private static func chromeScroller(of scrollView: NSScrollView, vertical: Bool) -> MonknotScroller {
+    /// The vertical scroller is replaced even while hidden, so a view that turns it on later
+    /// (PDFThumbnailView does) shows the Monknot thumb.
+    private static func install(on scrollView: NSScrollView, thumbColor: NSColor?) {
+        let vertical = scroller(of: scrollView, vertical: true)
+        if let thumbColor { vertical.thumbColor = thumbColor }
+        if scrollView.hasHorizontalScroller {
+            let horizontal = scroller(of: scrollView, vertical: false)
+            if let thumbColor { horizontal.thumbColor = thumbColor }
+        }
+    }
+
+    /// Clears a thumb's ends of a card's rounded corners. A scroller is inset only along its length:
+    /// an inset across it (the right one for a vertical scroller) moves the whole lane off the edge,
+    /// leaving an unpainted strip between the thumb and the card's edge. With both scrollers, each
+    /// ends where the other's lane begins, so only their far ends are inset.
+    static func endInsets(hasVertical: Bool, hasHorizontal: Bool) -> NSEdgeInsets {
+        NSEdgeInsets(
+            top: hasVertical ? endInset : 0,
+            left: hasHorizontal ? endInset : 0,
+            bottom: hasVertical && !hasHorizontal ? endInset : 0,
+            right: hasHorizontal && !hasVertical ? endInset : 0
+        )
+    }
+
+    private static func applyEndInsets(to scrollView: NSScrollView) {
+        let insets = endInsets(hasVertical: scrollView.hasVerticalScroller, hasHorizontal: scrollView.hasHorizontalScroller)
+        if !NSEdgeInsetsEqual(scrollView.scrollerInsets, insets) {
+            scrollView.scrollerInsets = insets
+        }
+    }
+
+    private static func scroller(of scrollView: NSScrollView, vertical: Bool) -> MonknotScroller {
         let current = vertical ? scrollView.verticalScroller : scrollView.horizontalScroller
         if let scroller = current as? MonknotScroller {
             return scroller
@@ -61,58 +102,21 @@ enum MonknotScrollbarStyle {
         }
         return scroller
     }
-
-    /// The same thumb for a web view's scroll bar. WebKit draws a styled scroll bar as a fixed bar and
-    /// does not repaint it when a class changes, so it cannot fade in and out like an overlay scroller:
-    /// it stays at the resting strength and brightens only under the pointer.
-    static func webCSS(
-        selector: String = "*",
-        restingColor: String = "color-mix(in srgb, CanvasText 35%, transparent)",
-        hoveredColor: String = "color-mix(in srgb, CanvasText 70%, transparent)"
-    ) -> String {
-        let restingInset = (trackWidth - restingThumbWidth) / 2
-        let hoveredInset = (trackWidth - hoveredThumbWidth) / 2
-
-        // The border is the inset, so the corner radius includes it to leave `thumbRadius` on the thumb.
-        return """
-        \(selector)::-webkit-scrollbar {
-          width: \(cssPixels(trackWidth));
-          height: \(cssPixels(trackWidth));
-          background: transparent;
-        }
-        \(selector)::-webkit-scrollbar-track {
-          background: transparent;
-        }
-        \(selector)::-webkit-scrollbar-thumb {
-          background: \(restingColor);
-          background-clip: content-box;
-          border: \(cssPixels(restingInset)) solid transparent;
-          border-radius: \(cssPixels(thumbRadius + restingInset));
-        }
-        \(selector)::-webkit-scrollbar-thumb:hover {
-          background: \(hoveredColor);
-          background-clip: content-box;
-          border: \(cssPixels(hoveredInset)) solid transparent;
-          border-radius: \(cssPixels(thumbRadius + hoveredInset));
-        }
-        \(selector)::-webkit-scrollbar-corner {
-          background: transparent;
-        }
-        """
-    }
-
-    private static func cssPixels(_ value: CGFloat) -> String {
-        value.rounded() == value ? "\(Int(value))px" : "\(value)px"
-    }
 }
 
-/// The slim overlay thumb of a chrome list. Should AppKit put the scroll view on the legacy style
-/// before `MonknotChromeScrollerBehavior` restores it, the scroller draws AppKit's own knob and track.
+/// The Monknot thumb: a slim capsule with no track, in overlay and legacy styles alike. In the legacy
+/// style its lane stays transparent, so the document's own background shows behind the thumb.
 final class MonknotScroller: NSScroller {
     /// AppKit treats scroller subclasses as legacy-only unless they opt in (see NSScroller.h).
     override class var isCompatibleWithOverlayScrollers: Bool {
         self == MonknotScroller.self
     }
+
+    override class func scrollerWidth(for controlSize: NSControl.ControlSize, scrollerStyle: NSScroller.Style) -> CGFloat {
+        MonknotScrollbarStyle.trackWidth
+    }
+
+    override var isOpaque: Bool { false }
 
     var thumbColor: NSColor = .labelColor {
         didSet {
@@ -169,52 +173,55 @@ final class MonknotScroller: NSScroller {
     }
 
     override func drawKnob() {
-        guard scrollerStyle == .overlay else {
-            super.drawKnob()
-            return
-        }
         let knobRect = rect(for: .knob)
         guard knobRect.width > 0, knobRect.height > 0 else { return }
-
-        let thickness = isHovered
-            ? MonknotScrollbarStyle.hoveredThumbWidth
-            : MonknotScrollbarStyle.restingThumbWidth
-        let visibleRect = bounds.height >= bounds.width
-            ? NSRect(
-                x: knobRect.midX - thickness / 2,
-                y: knobRect.minY + 1,
-                width: thickness,
-                height: max(0, knobRect.height - 2)
-            )
-            : NSRect(
-                x: knobRect.minX + 1,
-                y: knobRect.midY - thickness / 2,
-                width: max(0, knobRect.width - 2),
-                height: thickness
-            )
+        let rect = Self.thumbRect(
+            knob: knobRect,
+            bounds: bounds,
+            isVertical: bounds.height >= bounds.width,
+            isHovered: isHovered
+        )
         let opacity = isHovered
             ? MonknotScrollbarStyle.hoveredOpacity
             : MonknotScrollbarStyle.restingOpacity
         thumbColor.withAlphaComponent(opacity).setFill()
-        let radius = MonknotScrollbarStyle.thumbRadius
-        NSBezierPath(roundedRect: visibleRect, xRadius: radius, yRadius: radius).fill()
+        let radius = min(rect.width, rect.height) / 2
+        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
     }
 
-    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
-        guard scrollerStyle == .overlay else {
-            super.drawKnobSlot(in: slotRect, highlight: flag)
-            return
+    /// The visible capsule inside AppKit's knob rect: centred `thumbCenterInset` from the container's
+    /// edge, so it rests 2.5 from the edge and grows from its centre under the pointer.
+    static func thumbRect(knob: NSRect, bounds: NSRect, isVertical: Bool, isHovered: Bool) -> NSRect {
+        let thickness = isHovered
+            ? MonknotScrollbarStyle.hoveredThumbWidth
+            : MonknotScrollbarStyle.restingThumbWidth
+        let center = MonknotScrollbarStyle.thumbCenterInset
+        if isVertical {
+            return NSRect(
+                x: bounds.maxX - center - thickness / 2,
+                y: knob.minY + 1,
+                width: thickness,
+                height: max(thickness, knob.height - 2)
+            )
         }
+        return NSRect(
+            x: knob.minX + 1,
+            y: bounds.maxY - center - thickness / 2,
+            width: max(thickness, knob.width - 2),
+            height: thickness
+        )
     }
+
+    /// No slot in any style: the lane shows what is behind it.
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
 }
 
-/// Keeps a chrome scroll view on the overlay thumb and shows the thumb while the pointer is over the
-/// list, so a mouse user can see there is more and grab it. It fades again like any overlay scroller.
+/// Keeps a chrome list on the overlay thumb whatever "Show scroll bars" says (design.md §5.7). The thumb
+/// appears only while the list scrolls, as the system's overlay scroller does: a thumb that also
+/// appeared whenever the pointer crossed the list sat beside the divider and read as a resize handle.
 final class MonknotChromeScrollerBehavior: NSResponder {
     private weak var scrollView: NSScrollView?
-    private var trackingArea: NSTrackingArea?
     private var styleObserver: NSObjectProtocol?
-    private var lastReveal: TimeInterval = 0
 
     var thumbColor: NSColor = .labelColor {
         didSet {
@@ -228,14 +235,6 @@ final class MonknotChromeScrollerBehavior: NSResponder {
         guard self.scrollView !== scrollView else { return }
         detach()
         self.scrollView = scrollView
-        let trackingArea = NSTrackingArea(
-            rect: .zero,
-            options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
-            owner: self,
-            userInfo: nil
-        )
-        scrollView.addTrackingArea(trackingArea)
-        self.trackingArea = trackingArea
         // AppKit puts every scroll view back on the system style after posting this.
         styleObserver = NotificationCenter.default.addObserver(
             forName: NSScroller.preferredScrollerStyleDidChangeNotification,
@@ -251,10 +250,6 @@ final class MonknotChromeScrollerBehavior: NSResponder {
     }
 
     func detach() {
-        if let trackingArea, let scrollView {
-            scrollView.removeTrackingArea(trackingArea)
-        }
-        trackingArea = nil
         if let styleObserver {
             NotificationCenter.default.removeObserver(styleObserver)
         }
@@ -266,37 +261,6 @@ final class MonknotChromeScrollerBehavior: NSResponder {
         if let styleObserver {
             NotificationCenter.default.removeObserver(styleObserver)
         }
-        // A tracking area does not retain its owner; it must not outlive this object.
-        if let trackingArea, let scrollView {
-            MainActor.assumeIsolated {
-                scrollView.removeTrackingArea(trackingArea)
-            }
-        }
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        revealThumb()
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        revealThumb()
-    }
-
-    private func revealThumb() {
-        guard let scrollView,
-              scrollView.scrollerStyle == .overlay,
-              let documentView = scrollView.documentView
-        else { return }
-        let visibleSize = scrollView.contentView.bounds.size
-        guard documentView.frame.height > visibleSize.height + 1
-            || documentView.frame.width > visibleSize.width + 1
-        else { return }
-        // Flashing restarts the overlay fade; once every 0.4s is enough to keep it up while the
-        // pointer moves.
-        let now = ProcessInfo.processInfo.systemUptime
-        guard now - lastReveal > 0.4 else { return }
-        lastReveal = now
-        scrollView.flashScrollers()
     }
 }
 

@@ -135,6 +135,10 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
               root.style.setProperty('--pdf-page-height', '\(javaScriptNumber(pageSize.height))px');
               root.style.setProperty('--pdf-page-margin', '\(javaScriptNumber(margin))px');
               root.style.setProperty('--pdf-page-offset-y', '0px');
+              // A page cannot be clicked open: every toggle prints open, its body included.
+              for (const toggle of document.querySelectorAll('details')) {
+                toggle.open = true;
+              }
               // Relative links resolve against the page's \(WorkspaceResourceSchemeHandler.scheme): base,
               // which only Monknot can open; the exported PDF links to the files themselves. Links
               // within the page (footnotes, headings) stay as they are.

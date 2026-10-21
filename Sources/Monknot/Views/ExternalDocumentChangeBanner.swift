@@ -94,26 +94,15 @@ struct ExternalDocumentChangeBanner: View {
         return "This file changed on disk while you have unsaved changes."
     }
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
-    }
-
+    /// The shared banner (design.md §13): `dangersoft` when the file is gone.
     var body: some View {
-        HStack(spacing: scaled(MonknotMetrics.Spacing.l)) {
-            Image(systemName: isRemovedExternally ? "exclamationmark.triangle.fill" : "arrow.triangle.2.circlepath")
-                .font(.system(
-                    size: MonknotMetrics.interfaceGlyph(15, theme: theme, zoomScale: zoomScale),
-                    weight: .regular
-                ))
-                .foregroundStyle(isRemovedExternally ? removedColor : theme.mutedForegroundColor)
-                .frame(width: scaled(18))
-
-            Text(message)
-                .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
-                .foregroundStyle(theme.foregroundColor)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
+        MonknotBanner(
+            systemImage: isRemovedExternally ? "exclamationmark.triangle.fill" : "arrow.triangle.2.circlepath",
+            message: message,
+            tone: isRemovedExternally ? .danger : .neutral,
+            theme: theme,
+            zoomScale: zoomScale
+        ) {
             if isMarkupDocument {
                 if documentKind == .pdf {
                     MonknotActionButton(
@@ -177,16 +166,6 @@ struct ExternalDocumentChangeBanner: View {
                 }
             }
         }
-        // A docked bar (design.md §2, §13): 44 tall with 28 buttons, a soft equal fill, and one hairline.
-        .padding(.horizontal, scaled(16))
-        .padding(.vertical, scaled(8))
-        .frame(maxWidth: .infinity, minHeight: scaled(44))
-        .background(isRemovedExternally ? removedColor.opacity(theme.isDark ? 0.12 : 0.10) : theme.elevatedSurfaceColor)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(height: 1)
-        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(message)
         .confirmationDialog(
@@ -211,10 +190,6 @@ struct ExternalDocumentChangeBanner: View {
         } message: {
             Text("This replaces your unsaved local text with the latest validated disk copy.")
         }
-    }
-
-    private var removedColor: Color {
-        Color(hex: theme.semanticColors.diffRemoved)
     }
 
 }
@@ -246,9 +221,9 @@ struct ExternalDocumentReconciliationSheet: View {
                     } label: {
                         Text("Baseline used for three-way comparison")
                             .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
-                            .foregroundStyle(theme.mutedForegroundColor)
+                            .foregroundStyle(theme.tertiaryForegroundColor)
                     }
-                    .tint(theme.mutedForegroundColor)
+                    .tint(theme.tertiaryForegroundColor)
                 }
                 .padding(.horizontal, scaled(16))
                 .padding(.vertical, scaled(14))
@@ -281,9 +256,9 @@ struct ExternalDocumentReconciliationSheet: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, scaled(16))
-        .frame(height: scaled(44))
+        .frame(height: scaled(MonknotCommandOverlayMetrics.headerHeightBase))
         .overlay(alignment: .bottom) {
-            Rectangle().fill(theme.borderColor).frame(height: 1)
+            Rectangle().fill(theme.separatorColor).frame(height: 1)
         }
     }
 
@@ -294,9 +269,9 @@ struct ExternalDocumentReconciliationSheet: View {
             unifiedDiff(state.diskToMineDiff)
         }
         .background(theme.elevatedSurfaceColor)
-        .clipShape(RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
+        .clipShape(RoundedRectangle(cornerRadius: theme.chromeRadius(MonknotMetrics.cardCornerRadius, zoomScale: zoomScale)))
         .overlay {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+            RoundedRectangle(cornerRadius: theme.chromeRadius(MonknotMetrics.cardCornerRadius, zoomScale: zoomScale))
                 .strokeBorder(theme.borderColor, lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
@@ -305,41 +280,31 @@ struct ExternalDocumentReconciliationSheet: View {
 
     private func diffFileHeader(_ state: ExternalDocumentReviewState) -> some View {
         let summary = ExternalDocumentDiffSummary(diff: state.diskToMineDiff)
-        return HStack(spacing: scaled(8)) {
-            Image(systemName: "doc.text")
-                .font(.system(
-                    size: MonknotMetrics.interfaceGlyph(14, theme: theme, zoomScale: zoomScale),
-                    weight: .regular
-                ))
+        return HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
+            MonknotFileKindGlyph(systemImage: WorkspaceFileGlyph(path: state.documentID).systemImage, theme: theme, zoomScale: zoomScale)
                 .foregroundStyle(theme.tertiaryForegroundColor)
-                .frame(width: scaled(18))
+                .accessibilityHidden(true)
             Text(state.displayName)
-                .font(.system(
-                    size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale),
-                    weight: .semibold
-                ))
+                .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
                 .foregroundStyle(theme.foregroundColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Text("Disk → Mine")
                 .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
-                .foregroundStyle(theme.mutedForegroundColor)
+                .foregroundStyle(theme.tertiaryForegroundColor)
                 .lineLimit(1)
             Spacer(minLength: scaled(12))
             diffCount("+\(summary.addedLineCount)", color: addedColor, label: "added lines")
             diffCount("−\(summary.removedLineCount)", color: removedColor, label: "removed lines")
         }
-        .padding(.horizontal, scaled(10))
-        .frame(height: scaled(30))
+        .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
+        .frame(height: scaled(MonknotMetrics.menuRowHeightBase))
     }
 
     private func diffCount(_ value: String, color: Color, label: String) -> some View {
         Text(value)
-            .font(.system(
-                size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
-                weight: .regular,
-                design: .monospaced
-            ))
+            .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+            .monospacedDigit()
             .foregroundStyle(color)
             .accessibilityLabel("\(value) \(label)")
     }
@@ -482,9 +447,9 @@ struct ExternalDocumentReconciliationSheet: View {
         }
         .frame(maxWidth: .infinity, minHeight: scaled(96), maxHeight: scaled(160), alignment: .topLeading)
         .background(theme.elevatedSurfaceColor)
-        .clipShape(RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: theme.chromeRadius(MonknotMetrics.cardCornerRadius, zoomScale: zoomScale)))
         .overlay(
-            RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
+            RoundedRectangle(cornerRadius: theme.chromeRadius(MonknotMetrics.cardCornerRadius, zoomScale: zoomScale))
                 .strokeBorder(theme.borderColor, lineWidth: 1)
         )
     }
@@ -544,7 +509,7 @@ struct ExternalDocumentReconciliationSheet: View {
         .padding(.vertical, scaled(12))
         .background(theme.elevatedSurfaceColor)
         .overlay(alignment: .top) {
-            Rectangle().fill(theme.borderColor).frame(height: 1)
+            Rectangle().fill(theme.separatorColor).frame(height: 1)
         }
     }
 
@@ -553,13 +518,13 @@ struct ExternalDocumentReconciliationSheet: View {
         if state.review.diskRevision == nil {
             status(
                 "The disk file is unavailable. Save a copy or keep your local version.",
-                systemImage: "exclamationmark.triangle",
+                systemImage: "exclamationmark.triangle.fill",
                 color: removedColor
             )
         } else if state.hasMergeConflict {
             status(
                 "The changes overlap and cannot be merged automatically.",
-                systemImage: "exclamationmark.triangle",
+                systemImage: "exclamationmark.triangle.fill",
                 color: theme.mutedForegroundColor
             )
         } else if state.canMerge {
@@ -577,11 +542,18 @@ struct ExternalDocumentReconciliationSheet: View {
         }
     }
 
+    /// A 12 status line with its glyph at label + 2 (design.md §6); a warning's triangle is filled
+    /// (§8.7).
     private func status(_ text: String, systemImage: String, color: Color) -> some View {
-        Label(text, systemImage: systemImage)
-            .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
-            .foregroundStyle(color)
-            .lineLimit(2)
+        HStack(alignment: .firstTextBaseline, spacing: scaled(6)) {
+            MonknotSystemGlyph(systemImage: systemImage, nominalPointSizeBase: 14, theme: theme, zoomScale: zoomScale)
+                .accessibilityHidden(true)
+            Text(text)
+                .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+                .lineLimit(2)
+        }
+        .foregroundStyle(color)
+        .accessibilityElement(children: .combine)
     }
 
     private var addedColor: Color {
@@ -589,6 +561,6 @@ struct ExternalDocumentReconciliationSheet: View {
     }
 
     private var removedColor: Color {
-        Color(hex: theme.semanticColors.diffRemoved)
+        theme.dangerColor
     }
 }

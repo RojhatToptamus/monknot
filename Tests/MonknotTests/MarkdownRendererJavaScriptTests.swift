@@ -80,6 +80,19 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
         XCTAssertTrue(html.contains(#"<span class="tok-comment">// comment</span>"#))
     }
 
+    /// A notebook cell's output is printed text: nothing in it is highlighted as code.
+    func testANotebookOutputBlockIsPlainText() throws {
+        let html = try renderMarkdown(
+            """
+            ```output
+            # rows: 42 <ok>
+            ```
+            """
+        )
+
+        XCTAssertTrue(html.contains(#"<code class="language-output"># rows: 42 &lt;ok&gt;</code>"#), html)
+    }
+
     func testShorterFenceDoesNotCloseLongerFenceOrExposeHiddenReferenceDefinition() throws {
         let html = try renderMarkdown(
             """
@@ -114,6 +127,16 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
         XCTAssertTrue(html.contains("<td>Presentation / UI</td>"))
         XCTAssertTrue(html.contains("<code>ProductViewController</code>"))
         XCTAssertFalse(html.contains("| --- | --- | --- |"))
+    }
+
+    func testTableAcceptsGitHubDelimiterRowsOfAnyLength() throws {
+        let compact = try renderMarkdown("|a|b|\n|-|:-:|\n|1|2|")
+        XCTAssertTrue(compact.contains("<th>a</th>"), compact)
+        XCTAssertTrue(compact.contains(#"<td align="center">2</td>"#), compact)
+
+        // As on GitHub, a delimiter row with a different number of cells is no table.
+        let mismatched = try renderMarkdown("a | b\n-\nc")
+        XCTAssertFalse(mismatched.contains("<table>"), mismatched)
     }
 
     func testWorkspaceLinksRenderAsDelegatedActionTargets() throws {
@@ -202,6 +225,233 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
         let javascriptValue = context.evaluateScript("window.monknotNormalizeHeadingFragment(' Hello, **World**! ')")?.toString()
 
         XCTAssertEqual(javascriptValue, MarkdownHeadingFragment.normalized(" Hello, **World**! "))
+    }
+
+    /// CommonMark code spans (6.1): a run of N backticks closes at the next run of exactly N, so a
+    /// backtick fits inside a longer run, as the editor's paste writes it; one space each side is
+    /// dropped when both are there and the span is not all spaces; a run nothing closes is literal.
+    func testCodeSpansMatchBacktickRunsOfEqualLength() throws {
+        XCTAssertEqual(try renderMarkdown("``a`b``"), #"<p data-source-line="1"><code>a`b</code></p>"#)
+        XCTAssertEqual(try renderMarkdown("x `` ` `` y"), #"<p data-source-line="1">x <code>`</code> y</p>"#)
+        XCTAssertEqual(try renderMarkdown("` `` `"), #"<p data-source-line="1"><code>``</code></p>"#)
+        XCTAssertEqual(try renderMarkdown("`  a  `"), #"<p data-source-line="1"><code> a </code></p>"#)
+        XCTAssertEqual(try renderMarkdown("` a`"), #"<p data-source-line="1"><code> a</code></p>"#)
+        XCTAssertEqual(try renderMarkdown("` `"), #"<p data-source-line="1"><code> </code></p>"#)
+        XCTAssertEqual(try renderMarkdown("`code` and ``more``"), #"<p data-source-line="1"><code>code</code> and <code>more</code></p>"#)
+        XCTAssertEqual(try renderMarkdown("one ` tick and `code`"), #"<p data-source-line="1">one <code>tick and</code>code`</p>"#)
+        XCTAssertEqual(try renderMarkdown("a ``b` c"), #"<p data-source-line="1">a ``b` c</p>"#)
+        XCTAssertEqual(try renderMarkdown("**`x`** `[link](y)`"), #"<p data-source-line="1"><strong><code>x</code></strong> <code>[link](y)</code></p>"#)
+    }
+
+    /// The editor maps a code span's text to the source through these ranges: the whole span, and its
+    /// text inside the backtick runs and the space dropped at each end.
+    func testCodeSpanSourceRangesCoverTheRunsAndDroppedSpaces() throws {
+        let context = try rendererContext(markdown: "")
+        func code(_ text: String) throws -> [Int] {
+            let literal = try javascriptStringLiteral(text)
+            let value = context.evaluateScript("""
+            (() => {
+              const node = window.MonknotMarkdown.parseInline(\(literal), { editing: true }).find((item) => item.t === "code");
+              return [node.s, node.e, node.cs, node.ce];
+            })()
+            """)
+            return try XCTUnwrap(value?.toArray() as? [NSNumber]).map(\.intValue)
+        }
+        XCTAssertEqual(try code("x ``a`b`` y"), [2, 9, 4, 7])
+        XCTAssertEqual(try code("` a `"), [0, 5, 2, 3])
+        XCTAssertEqual(try code("`a`"), [0, 3, 1, 2])
+    }
+
+    /// CommonMark backslash escapes (6.1): a backslash before ASCII punctuation shows that character
+    /// as text, so it starts no emphasis, code, link, heading or list; before anything else the
+    /// backslash is text. Code spans and angle autolinks keep their backslashes, an escaped backtick
+    /// opens no code span, and a link's destination and title lose theirs.
+    func testBackslashEscapesShowThePunctuationAsText() throws {
+        func paragraph(_ markdown: String) throws -> String {
+            let html = try renderMarkdown(markdown)
+            let prefix = #"<p data-source-line="1">"#
+            XCTAssertTrue(html.hasPrefix(prefix) && html.hasSuffix("</p>"), html)
+            return String(html.dropFirst(prefix.count).dropLast("</p>".count))
+        }
+        XCTAssertEqual(try paragraph(#"\*not emphasized*"#), "*not emphasized*")
+        XCTAssertEqual(try paragraph(##"\# not a heading"##), "# not a heading")
+        XCTAssertEqual(try paragraph(#"1\. not a list"#), "1. not a list")
+        XCTAssertEqual(try paragraph(#"\- not an item"#), "- not an item")
+        XCTAssertEqual(try paragraph(#"\> not a quote"#), "&gt; not a quote")
+        XCTAssertEqual(try paragraph(#"\`not code\`"#), "`not code`")
+        XCTAssertEqual(try paragraph(#"\[[wiki]] \[x](y)"#), "[[wiki]] [x](y)")
+        XCTAssertEqual(try paragraph(#"**a\*b**"#), "<strong>a*b</strong>")
+        XCTAssertEqual(try paragraph(#"\\*emphasis*"#), #"\<em>emphasis</em>"#)
+        XCTAssertEqual(try paragraph(#"a \ b \q"#), #"a \ b \q"#)
+        XCTAssertEqual(try paragraph(#"`foo\`bar`"#), #"<code>foo\</code>bar`"#)
+        XCTAssertEqual(try paragraph(#"\``a`"#), "`<code>a</code>")
+        XCTAssertEqual(try paragraph(#"\<http://a.b>"#), "&lt;http://a.b&gt;")
+        XCTAssertTrue(try paragraph(#"<http://a.b/c\_d>"#).contains(#"href="http://a.b/c\_d""#))
+        XCTAssertTrue(try paragraph(#"[a](b\)c "t\"x")"#).hasPrefix(#"<a href="b)c" data-monknot-link-kind="markdown" data-monknot-destination="b)c" title="t&quot;x">a</a>"#))
+        XCTAssertEqual(try paragraph(#"![a\]b](i\_x.png)"#), #"<img src="i_x.png" alt="a]b">"#)
+        XCTAssertTrue(try renderMarkdown("[x][r]\n\n[r]: http://a/b\\_c").contains(#"href="http://a/b_c""#))
+        // A backslash ending a line is a hard break; an escaped backslash there is text and a space.
+        XCTAssertEqual(try paragraph("a\\\nb"), "a<br>b")
+        XCTAssertEqual(try paragraph("a\\\\\nb"), #"a\ b"#)
+        XCTAssertEqual(try renderMarkdown(#"# 1\. Intro"#), #"<h1 data-source-line="1" id="1-intro">1. Intro</h1>"#)
+        XCTAssertTrue(try renderMarkdown("[TOC]\n\n# a \\* b").contains(#"data-mk-toc="0">a * b</a>"#))
+        // A code span keeps its backslashes in a contents label too, and an escaped backtick opens none.
+        XCTAssertTrue(try renderMarkdown("[TOC]\n\n# `a\\*` b \\`x\\`").contains(#"data-mk-toc="0">a\* b `x`</a>"#))
+        XCTAssertTrue(try renderMarkdown("| a\\*b | c |\n| --- | --- |\n| 1 | 2 |").contains("<th>a*b</th>"))
+    }
+
+    /// Whether a paragraph line ends in a hard break depends on that line alone, so rendering a long
+    /// paragraph (the editor renders on every keystroke) takes time in proportion to its length.
+    func testLongParagraphRendersInLinearTime() throws {
+        let context = try rendererContext(markdown: "")
+        // Every thousandth line ends in a hard break, and the line after it in an escaped backslash.
+        let script = #"""
+        (() => {
+          const ending = (index) => (index % 1000 === 0 ? "\\" : index % 1000 === 1 ? "\\\\" : "");
+          const lines = Array.from({ length: 20000 }, (_, index) => "word " + index + ending(index));
+          const started = Date.now();
+          const html = window.MonknotMarkdown.renderMarkdown(lines.join("\n"));
+          return JSON.stringify({ elapsed: Date.now() - started, breaks: (html.match(/<br>/g) || []).length, escaped: html.includes("word 1001\\ word 1002"), last: html.includes("word 19999</p>") });
+        })()
+        """#
+        let output = try XCTUnwrap(context.evaluateScript(script)?.toString())
+        let result = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        XCTAssertEqual(result["breaks"] as? Int, 20, output)
+        XCTAssertEqual(result["escaped"] as? Bool, true, "A line ending in an escaped backslash is no hard break: \(output)")
+        XCTAssertEqual(result["last"] as? Bool, true, output)
+        XCTAssertLessThan(result["elapsed"] as? Int ?? .max, 1000, "A 20,000-line paragraph rendered in quadratic time: \(output)")
+    }
+
+    /// The editor maps an escaped character to the source through these ranges: the escape covers its
+    /// backslash and character, its text is the character alone, and the backslash is markup that
+    /// typing at the character's start stays outside of.
+    func testBackslashEscapeSourceRangesCoverTheBackslash() throws {
+        let context = try rendererContext(markdown: "")
+        func evaluate(_ script: String) throws -> String {
+            try XCTUnwrap(context.evaluateScript(script)?.toString())
+        }
+        func nodes(_ text: String) throws -> String {
+            try evaluate("JSON.stringify(window.MonknotMarkdown.parseInline(\(try javascriptStringLiteral(text)), { editing: true }))")
+        }
+        XCTAssertEqual(try nodes(#"a\*b"#), #"[{"t":"text","s":0,"e":1},{"t":"esc","s":1,"e":3,"cs":2,"ce":3},{"t":"text","s":3,"e":4}]"#)
+        XCTAssertEqual(try nodes(#"\\"#), #"[{"t":"esc","s":0,"e":2,"cs":1,"ce":2}]"#)
+        XCTAssertEqual(try nodes(#"**\*x**"#), #"[{"t":"strong","s":0,"e":7,"cs":2,"ce":5,"kids":[{"t":"esc","s":2,"e":4,"cs":3,"ce":4},{"t":"text","s":4,"e":5}]}]"#)
+        XCTAssertEqual(try nodes(#"`a\`"#), #"[{"t":"code","s":0,"e":4,"cs":1,"ce":3,"kids":[{"t":"text","s":1,"e":3}]}]"#)
+        let map = try evaluate("""
+        (() => {
+          const unit = { kind: "inline", region: { j: \(try javascriptStringLiteral(#"a\*b"#)) } };
+          const map = window.MonknotMarkdown.unitMap(unit, {});
+          return JSON.stringify({ visible: map.visible, segments: map.segments, constructs: map.constructs });
+        })()
+        """)
+        XCTAssertEqual(map, #"{"visible":"a*b","segments":[{"v":0,"len":1,"j":0},{"v":1,"len":1,"j":2},{"v":2,"len":1,"j":3}],"constructs":[{"type":"escape","s":1,"e":3,"cs":2,"ce":3,"inclusive":false}]}"#)
+    }
+
+    // MARK: - What the read-only Preview and PDF export show
+
+    func testTogglesRenderAsDetailsKeepingTheFilesOpenState() throws {
+        let closed = try renderMarkdown("<details>\n<summary>Closed **title**</summary>\n\nBody text\n\n</details>\nAfter")
+        XCTAssertTrue(closed.contains(#"<details data-source-line="1"><summary>Closed <strong>title</strong></summary><p data-source-line="4">Body text</p></details>"#), closed)
+        XCTAssertTrue(closed.contains(#"<p data-source-line="7">After</p>"#), closed)
+
+        let open = try renderMarkdown("<details open>\n<summary>Open</summary>\n\n- item\n\n</details>")
+        XCTAssertTrue(open.contains(#"<details data-source-line="1" open><summary>Open</summary><ul data-source-line="4"><li data-source-line="4">item</li></ul></details>"#), open)
+    }
+
+    /// Without `</details>` a toggle runs to the end of the document, as HTML closes it.
+    func testAnUnclosedToggleRunsToTheEnd() throws {
+        let html = try renderMarkdown("Before\n\n<details>\n<summary>Open ended</summary>\n\nInside\n\n# Still inside")
+        XCTAssertTrue(html.hasSuffix(#"<p data-source-line="6">Inside</p>"# + "\n" + #"<h1 data-source-line="8" id="still-inside">Still inside</h1></details>"#), html)
+        // Without a one-line summary it is no toggle; the HTML stays text.
+        XCTAssertFalse(try renderMarkdown("<details>\nNo summary").contains("<details"))
+    }
+
+    func testCalloutsRenderTheirKindAndABlankLineSplitsTwo() throws {
+        let html = try renderMarkdown("> [!NOTE]\n> First\n\n> [!WARNING]\n> Second\n\nText\n\n> Plain quote")
+        XCTAssertTrue(html.contains(#"<div data-source-line="1" class="callout callout-note" role="note"><p class="callout-title">Note</p><p data-source-line="2">First</p></div>"#), html)
+        XCTAssertTrue(html.contains(#"<div data-source-line="4" class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p data-source-line="5">Second</p></div>"#), html)
+        XCTAssertTrue(html.contains(#"<blockquote data-source-line="9"><p data-source-line="9">Plain quote</p></blockquote>"#), html)
+        // A callout with no text yet still shows its kind.
+        XCTAssertTrue(try renderMarkdown("> [!tip]").contains(#"<p class="callout-title">Tip</p></div>"#))
+    }
+
+    /// `[TOC]` lists the top-level h1–h3, indented from the shallowest level present; read-only, a
+    /// document without headings shows nothing for it.
+    func testTableOfContentsListsTopLevelHeadingsByLevel() throws {
+        let html = try renderMarkdown("[TOC]\n\n## Two **bold**\n\n### Three\n\n#### Four\n\n> # Quoted")
+        XCTAssertTrue(html.hasPrefix(##"<nav data-source-line="1" class="toc" aria-label="Table of contents"><ul><li class="toc-level-1"><a href="#two-bold" data-mk-toc="0">Two bold</a></li><li class="toc-level-2"><a href="#three" data-mk-toc="1">Three</a></li></ul></nav>"##), html)
+        XCTAssertFalse(html.contains(#">Four</a>"#))
+        XCTAssertFalse(html.contains(#">Quoted</a>"#))
+
+        let empty = try renderMarkdown("[TOC]\n\nNo headings")
+        XCTAssertEqual(empty, #"<p data-source-line="3">No headings</p>"#)
+    }
+
+    /// Image syntax pointing at a video or audio file plays it, as GitHub does.
+    func testMediaEmbedsPlayVideoAndAudio() throws {
+        let html = try renderMarkdown("![clip](movie.mp4)\n\n![song](a%20b.m4a)\n\n![photo](p.png)")
+        XCTAssertTrue(html.contains(#"<video src="movie.mp4" controls preload="metadata" aria-label="clip"></video>"#), html)
+        XCTAssertTrue(html.contains(#"<audio src="a%20b.m4a" controls preload="metadata" aria-label="song"></audio>"#), html)
+        XCTAssertTrue(html.contains(#"<img src="p.png" alt="photo">"#), html)
+    }
+
+    /// Source lines count Windows and classic Mac line endings, mixed or not, so a double-click and
+    /// split view's sync land on the right line.
+    func testSourceLinesCountCarriageReturnLineEndings() throws {
+        let html = try renderMarkdown("# A\r\n\r\nPara\r\nmore\r\n- item\r- [x] done\n\n> quote")
+        XCTAssertTrue(html.contains(#"<h1 data-source-line="1" id="a">A</h1>"#), html)
+        XCTAssertTrue(html.contains(#"<p data-source-line="3">Para more</p>"#), html)
+        XCTAssertTrue(html.contains(#"<li data-source-line="5">item</li>"#), html)
+        XCTAssertTrue(html.contains(#"<input type="checkbox" data-monknot-task data-source-line="6""#), html)
+        XCTAssertTrue(html.contains(#"<blockquote data-source-line="8">"#), html)
+        XCTAssertFalse(html.contains("\r"))
+    }
+
+    /// One carriage return in a long Unix file must not make every line search the rest of it.
+    func testOneCarriageReturnKeepsReadingLinear() throws {
+        let context = try rendererContext(markdown: "")
+        let elapsed = try XCTUnwrap(context.evaluateScript("""
+        (() => {
+          const lines = [];
+          for (let i = 0; i < 30000; i += 1) lines.push(`Line ${i} with **bold** text and a [link](x.md).`);
+          const plain = lines.join("\\n\\n");
+          const time = (source) => {
+            const start = Date.now();
+            window.MonknotMarkdown.parseDocument(source);
+            return Date.now() - start;
+          };
+          time(plain);
+          return [time(plain), time("first\\r\\n" + plain), time(plain + "\\r\\nlast")];
+        })()
+        """)?.toArray() as? [NSNumber]).map(\.doubleValue)
+        XCTAssertLessThan(elapsed[1], elapsed[0] * 4 + 100, "A CR at the start: \(elapsed)")
+        XCTAssertLessThan(elapsed[2], elapsed[0] * 4 + 100, "A CR at the end: \(elapsed)")
+    }
+
+    /// A closed toggle's body is not laid out; its empty rects must not read as the top of the window,
+    /// or split view would jump Source into the toggle.
+    func testVisibleSourceLineSkipsWhatAClosedToggleHides() throws {
+        let context = try rendererContext(markdown: "")
+        func visibleLine(_ elements: String) -> Int32? {
+            context.evaluateScript("""
+            (() => {
+              const element = (line, top, shown) => ({
+                dataset: { sourceLine: String(line) },
+                getClientRects: () => (shown ? [{ top }] : []),
+                getBoundingClientRect: () => (shown ? { top } : { top: 0, bottom: 0 })
+              });
+              const elements = \(elements);
+              target.querySelectorAll = () => elements;
+              return window.monknotVisibleSourceLine();
+            })()
+            """)?.toInt32()
+        }
+        // Lines 4 and 6 are the hidden body of the toggle on line 3.
+        XCTAssertEqual(visibleLine("[element(1, 33, true), element(3, 80, true), element(4, 0, false), element(6, 0, false), element(9, 150, true)]"), 1)
+        _ = context.evaluateScript("window.monknotRender({ markdown: 'x', renderID: 2 })")
+        XCTAssertEqual(visibleLine("[element(1, -90, true), element(3, -40, true), element(4, 0, false), element(6, 0, false), element(9, 10, true), element(11, 60, true)]"), 9)
+        _ = context.evaluateScript("window.monknotRender({ markdown: 'y', renderID: 3 })")
+        XCTAssertEqual(visibleLine("[element(1, -90, true), element(3, -4, true), element(4, 0, false), element(6, 0, false), element(9, 30, true)]"), 3)
     }
 
     private func renderMarkdown(_ markdown: String) throws -> String {

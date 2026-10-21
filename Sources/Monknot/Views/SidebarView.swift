@@ -20,11 +20,16 @@ struct SidebarView: View {
     let showWorkspaceSearch: () -> Void
     let dismissWorkspaceSearch: () -> Void
     let workspaceSearchFocusChanged: (Bool) -> Void
-    let copyPath: (URL) -> Void
-    let copyRelativePath: (URL) -> Void
+    /// Copies the paths of the items, one per line.
+    let copyPath: ([URL]) -> Void
+    let copyRelativePath: ([URL]) -> Void
     /// A New File or New Folder command from the menu, answered with the name prompt for the
     /// sidebar's target folder.
     @Binding var newItemRequest: SidebarNewItemRequest?
+    /// Each change opens the workspace switcher.
+    var workspaceSwitcherRequest = 0
+    /// Each change selects every row the tree shows: Edit › Select All while the tree has focus.
+    var selectAllRequest = 0
     /// The clipboard the sidebar's Copy, Cut and Paste use.
     var pasteboard: NSPasteboard = .general
     @State private var isDropTargeted = false
@@ -33,14 +38,28 @@ struct SidebarView: View {
     @State private var sidebarPrompt: SidebarNamePrompt?
     @State private var sidebarTreeSize: CGSize = .zero
     @State private var sidebarNodeFrames: [String: CGRect] = [:]
+    /// The row being dragged; it stays dimmed until its copy has glided back after a cancel.
     @State private var draggedSidebarNodeID: String?
-    @State private var moveDropTargetFolderID: String?
-    @State private var isMoveDropTargetingRoot = false
+    /// Every item the drag moves, when the dragged row is one of several selected: their rows dim
+    /// with it.
+    @State private var draggedItemPaths: Set<String> = []
+    /// Where a drag over the tree would land, the tree's own or a file drag from elsewhere.
+    @State private var moveTarget: SidebarMoveDropTarget?
     @State private var externalDropRowID: String?
+    /// Option is held: the drop copies, so the dragged row stays at full strength.
+    @State private var dragCopies = false
+    @State private var dragSession = SidebarDragSession()
+    /// A row whose drag Esc cancelled: the rest of that press drags nothing.
+    @State private var cancelledDragRowID: String?
+    /// An item a drop is moving or copying, which the tree shows and tints once it has landed.
+    @State private var pendingLanding: SidebarPendingLanding?
+    @State private var landing: SidebarLanding?
     @State private var recentDocuments: [RecentDocumentEntry] = []
     @State private var visibleNodes: [VisibleSidebarNode] = []
     /// Whether the clipboard held something to paste when a context menu last opened.
     @State private var treeMouse = SidebarTreeMouse()
+    /// Names typed while the tree has focus, which select the row they start.
+    @State private var typeSelect = SidebarTypeSelect()
     private let treeExpansionPersistence = WorkspaceTreeExpansionPersistence()
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -72,7 +91,13 @@ struct SidebarView: View {
     }
 
     private var tracksSidebarMoveFrames: Bool {
-        draggedSidebarNodeID != nil
+        draggedSidebarNodeID != nil || externalDropRowID != nil || isDropTargeted || landing != nil
+    }
+
+    /// What the tree tints: the target under a drag, or the whole tree for a file drag over the
+    /// sidebar that no row has taken.
+    private var effectiveMoveTarget: SidebarMoveDropTarget? {
+        moveTarget ?? (isDropTargeted ? .root : nil)
     }
 
     var body: some View {
@@ -90,6 +115,9 @@ struct SidebarView: View {
             }
             .onChange(of: store.recentDocumentChangeSerial) { _, _ in
                 refreshRecentDocuments()
+            }
+            .onChange(of: selectAllRequest) { _, _ in
+                selectAllRows()
             }
             .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { _, _ in
                 expandedWorkspacePath = nil
@@ -158,9 +186,28 @@ struct SidebarView: View {
             // The rows come from the tree, which also changes without the documents (an empty folder).
             .onChange(of: store.rootNodeRevision) { _, _ in
                 refreshVisibleNodes()
+                resolvePendingLanding()
             }
             .onChange(of: store.documentIDRemapEvent?.serial ?? 0) { _, _ in
                 followMovedFolders()
+                resolvePendingLanding()
+            }
+            // An item Edit › Undo or Redo moved or copied lands as a dropped one does.
+            .onChange(of: store.fileOperationLanding) { _, landing in
+                guard let landing else { return }
+                pendingLanding = SidebarPendingLanding(itemID: landing.itemID, deadline: Date().addingTimeInterval(10))
+                resolvePendingLanding()
+            }
+            .onChange(of: store.isBusy) { _, isBusy in
+                if !isBusy {
+                    resolvePendingLanding()
+                }
+            }
+            .onChange(of: store.errorMessage) { _, message in
+                // A refused move or copy lands nowhere.
+                if message != nil {
+                    pendingLanding = nil
+                }
             }
             .onChange(of: expandedFolderIDs) { _, _ in
                 persistExpandedFolders()
@@ -184,7 +231,8 @@ struct SidebarView: View {
                         removeWorkspace: removeWorkspace,
                         manageWorkspaces: manageWorkspaces,
                         createMarkdown: newMarkdown,
-                        showWorkspaceSearch: showWorkspaceSearch
+                        showWorkspaceSearch: showWorkspaceSearch,
+                        switcherRequest: workspaceSwitcherRequest
                     )
                 }
 
@@ -193,26 +241,13 @@ struct SidebarView: View {
             }
             .layoutPriority(1)
 
-            Rectangle()
-                .fill(theme.separatorColor)
-                .frame(height: 1)
-
             SidebarSettingsButton(theme: theme, zoomScale: zoomScale)
                 .layoutPriority(2)
         }
-        .background {
-            MonknotChromeSurfaceBackground(theme: theme, surface: theme.sidebarSurfaceColor)
-        }
-        .overlay {
-            if isMoveDropTargetingRoot {
-                RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                    .stroke(theme.accentColor.opacity(0.85), lineWidth: 2)
-                    .padding(8)
-            } else if isDropTargeted {
-                RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                    .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
-                    .padding(8)
-            }
+        .background(theme.chromeSurfaceColor)
+        .background(SidebarDragBounds(session: dragSession))
+        .onDisappear {
+            dragSession.end()
         }
     }
 
@@ -276,11 +311,14 @@ struct SidebarView: View {
                         canPaste: canPaste,
                         mouse: treeMouse
                     ) {
-                        LazyVStack(alignment: .leading, spacing: scaled(2)) {
-                            ForEach(nodes) { visibleNode in
+                        let selectedRowIDs = selectedRowIDs(in: nodes)
+                        LazyVStack(alignment: .leading, spacing: scaled(MonknotMetrics.rowGapBase)) {
+                            ForEach(Array(nodes.enumerated()), id: \.element.id) { index, visibleNode in
                                 SidebarNodeRow(
                                     visibleNode: visibleNode,
-                                    isSelected: visibleNode.shows(sidebarSelectionID),
+                                    isSelected: selectedRowIDs.contains(visibleNode.id),
+                                    joinsSelectionAbove: index > 0 && selectedRowIDs.contains(nodes[index - 1].id),
+                                    joinsSelectionBelow: index + 1 < nodes.count && selectedRowIDs.contains(nodes[index + 1].id),
                                     saveState: visibleNode.node.document.map { store.saveState(for: $0.id) } ?? .clean,
                                     gitStatus: visibleNode.node.document.flatMap { document in
                                         store.gitStatusByRelativePath[document.relativePath]
@@ -288,8 +326,8 @@ struct SidebarView: View {
                                     isExpanded: visibleNode.isExpanded(in: expandedFolderIDs),
                                     tracksMoveFrame: tracksSidebarMoveFrames,
                                     isBusy: store.isBusy,
-                                    isMoveSource: draggedSidebarNodeID == visibleNode.id,
-                                    isMoveTarget: moveDropTargetFolderID == visibleNode.dropTargetFolderID,
+                                    isMoveSource: !dragCopies
+                                        && (draggedSidebarNodeID == visibleNode.id || draggedItemPaths.contains(visibleNode.dropTargetNode.id)),
                                     theme: theme,
                                     zoomScale: zoomScale,
                                     actions: rowActions
@@ -297,8 +335,11 @@ struct SidebarView: View {
                                 .equatable()
                             }
                         }
-                        .padding(.horizontal, scaled(6))
-                        .padding(.vertical, scaled(6))
+                        .background(alignment: .topLeading) {
+                            dropTargetLayer(nodes: nodes)
+                        }
+                        .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
+                        .padding(.vertical, scaled(MonknotMetrics.listTopInsetBase))
                         // Inside the scroll view's hosting view, so the rows' drag gesture and
                         // frame readers measure in the same space.
                         .coordinateSpace(name: SidebarMoveCoordinateSpace.name)
@@ -321,7 +362,8 @@ struct SidebarView: View {
                             zoomScale: zoomScale,
                             availableSidebarHeight: geometry.size.height,
                             kindGlyph: { entry in
-                                (store.document(id: entry.documentID)?.kind ?? .markdown).resolvedSystemImage
+                                (store.document(id: entry.documentID)?.fileGlyph
+                                    ?? WorkspaceFileGlyph(path: entry.documentID)).systemImage
                             },
                             openDocument: openDocument,
                             location: locationActions
@@ -438,19 +480,36 @@ struct SidebarView: View {
 
     /// The selected row, which the tree scrolls into view when the selection changes.
     private func revealedRow(in nodes: [VisibleSidebarNode]) -> SidebarRevealedRow? {
+        // A row that just landed scrolls into view, as a new selection does.
+        if let landing, landing.opacity > 0,
+           let index = nodes.firstIndex(where: { $0.dropTargetFolderID == landing.itemID || $0.id == landing.itemID }) {
+            let rowHeight = scaled(MonknotMetrics.rowHeightBase)
+            let rowPitch = rowHeight + scaled(MonknotMetrics.rowGapBase)
+            return SidebarRevealedRow(
+                id: "landing:\(landing.itemID):\(landing.serial)",
+                frame: CGRect(x: 0, y: scaled(MonknotMetrics.listTopInsetBase) + CGFloat(index) * rowPitch, width: 1, height: rowHeight)
+            )
+        }
         guard let selectionID = sidebarSelectionID,
               let index = nodes.firstIndex(where: { $0.shows(selectionID) })
         else { return nil }
-        let rowPitch = scaled(30) + scaled(2)
+        let rowHeight = scaled(MonknotMetrics.rowHeightBase)
+        let rowPitch = rowHeight + scaled(MonknotMetrics.rowGapBase)
         return SidebarRevealedRow(
             id: selectionID,
-            frame: CGRect(x: 0, y: scaled(6) + CGFloat(index) * rowPitch, width: 1, height: scaled(30))
+            frame: CGRect(x: 0, y: scaled(MonknotMetrics.listTopInsetBase) + CGFloat(index) * rowPitch, width: 1, height: rowHeight)
         )
     }
 
-    /// The tree's own keys while it has keyboard focus: Return renames the selection, ⌘D
-    /// duplicates it and ⌘⌫ moves it to the Trash. Cut, Copy and Paste come through the Edit menu.
-    /// A held key acts once: its repeats are ignored.
+    // MARK: Selecting and the keyboard (design.md §10.4)
+
+    /// The tree's own keys while it has keyboard focus. ↑ and ↓ select the row above or below, ⇧
+    /// adding to the selection; ← and → close and open a folder or go to its parent or first
+    /// item, ⌥ for every folder inside, ⌘← closes every folder; Home and End go to the first and
+    /// last rows; ⌘↑ selects the folder holding the item and ⌘↓ opens what is selected; ⌘A selects
+    /// every row; typing a name selects the row it starts. Return renames the item, ⌘D duplicates
+    /// and ⌘⌫ moves to the Trash what is selected, once per press however long the key is held.
+    /// Cut, Copy and Paste come through the Edit menu, as Select All does in the app.
     private func handleTreeKeyDown(_ event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
         let command: SidebarTreeKeyCommand?
@@ -459,35 +518,115 @@ struct SidebarView: View {
             command = modifiers.isEmpty ? .rename : nil
         case SidebarTreeKeyCommand.deleteKeyCode:
             command = modifiers == .command ? .moveToTrash : nil
+        case SidebarTreeKeyCommand.upArrowKeyCode:
+            command = switch modifiers {
+            case []: .move(-1, extending: false)
+            case .shift: .move(-1, extending: true)
+            case .command: .selectParent
+            default: nil
+            }
+        case SidebarTreeKeyCommand.downArrowKeyCode:
+            command = switch modifiers {
+            case []: .move(1, extending: false)
+            case .shift: .move(1, extending: true)
+            case .command: .open
+            default: nil
+            }
+        case SidebarTreeKeyCommand.homeKeyCode:
+            command = modifiers.isEmpty || modifiers == .shift ? .move(Int.min, extending: modifiers == .shift) : nil
+        case SidebarTreeKeyCommand.endKeyCode:
+            command = modifiers.isEmpty || modifiers == .shift ? .move(Int.max, extending: modifiers == .shift) : nil
+        case SidebarTreeKeyCommand.leftArrowKeyCode:
+            command = switch modifiers {
+            case []: .collapse(recursively: false)
+            case .option: .collapse(recursively: true)
+            case .command: .collapseAll
+            default: nil
+            }
+        case SidebarTreeKeyCommand.rightArrowKeyCode:
+            command = switch modifiers {
+            case []: .expand(recursively: false)
+            case .option: .expand(recursively: true)
+            default: nil
+            }
         default:
-            command = modifiers == .command && event.charactersIgnoringModifiers?.lowercased() == "d"
-                ? .duplicate
-                : nil
+            if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "d" {
+                command = .duplicate
+            } else if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "a" {
+                command = .selectAll
+            } else if modifiers.subtracting(.shift).isEmpty,
+                      let characters = event.characters,
+                      SidebarTreeKeyCommand.isTypeSelectText(characters),
+                      characters != " " || typeSelect.continues(at: event.timestamp) {
+                command = .typeSelect(characters)
+            } else {
+                command = nil
+            }
         }
         guard let command else { return false }
-        guard !event.isARepeat else { return true }
-        guard !store.isBusy,
-              let selectionID = sidebarSelectionID,
-              let item = store.rootNode?.node(withID: selectionID)
-        else {
+        guard !event.isARepeat || command.repeats else { return true }
+        // Moving the selection goes on while a file operation runs; changing files waits for it.
+        guard !store.isBusy || !command.changesFiles else {
             NSSound.beep()
             return true
         }
 
         switch command {
         case .rename:
+            guard store.sidebarSelectionIDs.count == 1,
+                  let selectionID = sidebarSelectionID,
+                  shownSelectionURLs() != nil,
+                  let item = store.rootNode?.node(withID: selectionID)
+            else {
+                NSSound.beep()
+                return true
+            }
             beginRename(item)
         case .duplicate:
-            store.duplicateItem(at: item.url)
+            guard let urls = shownSelectionURLs() else {
+                NSSound.beep()
+                return true
+            }
+            store.duplicateItems(at: urls)
         case .moveToTrash:
-            moveToTrash(item)
+            guard let urls = shownSelectionURLs() else {
+                NSSound.beep()
+                return true
+            }
+            store.deleteItems(at: urls)
+        case .move(let offset, let extending):
+            moveSelection(by: offset, extending: extending)
+        case .selectParent:
+            selectParentRow()
+        case .open:
+            openSelection()
+        case .collapse(let recursively):
+            collapseLeadRow(recursively: recursively)
+        case .expand(let recursively):
+            expandLeadRow(recursively: recursively)
+        case .collapseAll:
+            collapseAllFolders()
+        case .selectAll:
+            selectAllRows()
+        case .typeSelect(let characters):
+            let nodes = displayedVisibleNodes
+            if let itemID = typeSelect.type(
+                characters,
+                at: event.timestamp,
+                rows: nodes.map(\.dropTargetNode.id),
+                names: nodes.map(\.displayName),
+                leadID: rowSelection(nodes).leadID
+            ) {
+                store.selectSidebarItems(SidebarSelection(single: itemID))
+            }
         }
         return true
     }
 
     /// A click on a folder row selects the folder (the deepest of a compact row) and opens or
-    /// closes it.
+    /// closes it; with ⌘ or ⇧ it only picks the folder (`pickRow`).
     private func clickFolder(_ visibleNode: VisibleSidebarNode) {
+        guard !pickRow(visibleNode) else { return }
         store.selectFolder(id: visibleNode.dropTargetNode.id)
         let folderIDs = Set(visibleNode.folderNodeIDs)
         if folderIDs.allSatisfy(expandedFolderIDs.contains) {
@@ -496,6 +635,268 @@ struct SidebarView: View {
             expandedFolderIDs.formUnion(folderIDs)
         }
         refreshVisibleNodes()
+    }
+
+    /// A click on a file row opens the file; with ⌘ or ⇧ it only picks the file (`pickRow`).
+    private func clickFile(_ documentID: String) {
+        if let row = displayedVisibleNodes.first(where: { $0.node.kind == .file && $0.node.id == documentID }),
+           pickRow(row) {
+            return
+        }
+        openDocument(documentID)
+    }
+
+    /// ⌘-click adds the row's item to the selection or takes it out; ⇧-click selects the rows from
+    /// the anchor (the item last clicked) to it. Neither opens anything. True when the click held
+    /// either key.
+    private func pickRow(_ row: VisibleSidebarNode) -> Bool {
+        let modifiers = clickModifiers
+        guard modifiers.contains(.command) || modifiers.contains(.shift) else { return false }
+        guard !store.isBusy else {
+            NSSound.beep()
+            return true
+        }
+        let nodes = displayedVisibleNodes
+        let itemID = row.dropTargetNode.id
+        if modifiers.contains(.shift) {
+            // The rows from the anchor's row: every one of them is shown.
+            store.selectSidebarItems(rowSelection(nodes).extending(to: itemID, rows: nodes.map(\.dropTargetNode.id)))
+            return true
+        }
+        // ⌘ adds or takes out the item itself; the items already picked stay exactly as they are.
+        let current = store.sidebarItemSelection.isEmpty ? shownOpenDocumentSelection(nodes) : store.sidebarItemSelection
+        let shownByRow = current.itemIDs.filter { row.shows($0) }
+        store.selectSidebarItems(shownByRow.isEmpty ? current.toggling(itemID) : current.filtered { !shownByRow.contains($0) })
+        return true
+    }
+
+    /// The open document as a selection while the sidebar selects it and a row shows it.
+    private func shownOpenDocumentSelection(_ nodes: [VisibleSidebarNode]) -> SidebarSelection {
+        guard let documentID = store.sidebarSelectionID,
+              nodes.contains(where: { $0.node.kind == .file && $0.node.id == documentID })
+        else { return SidebarSelection() }
+        return SidebarSelection(single: documentID)
+    }
+
+    /// The paths of every item a row of the tree shows, a compact row's folders included.
+    private func shownItemIDs(in nodes: [VisibleSidebarNode]) -> Set<String> {
+        var shownIDs = Set<String>()
+        for node in nodes {
+            shownIDs.insert(node.node.id)
+            shownIDs.formUnion(node.folderNodeIDs)
+        }
+        return shownIDs
+    }
+
+    /// What Return, ⌘D and ⌘⌫ act on: the selected items, or nil unless a row shows every one of
+    /// them, so a key never changes an item the tree does not show as selected.
+    private func shownSelectionURLs() -> [URL]? {
+        let selectedIDs = store.sidebarSelectionIDs
+        let shownIDs = shownItemIDs(in: displayedVisibleNodes)
+        guard !selectedIDs.isEmpty, selectedIDs.allSatisfy(shownIDs.contains) else { return nil }
+        return store.sidebarSelectionURLs
+    }
+
+    /// Selected items a collapse hid leave the selection, so nothing acts on an item the tree no
+    /// longer shows. When none stays shown, the row that now holds the lead is selected instead;
+    /// that includes the open document the sidebar selects while nothing else is picked.
+    private func dropHiddenSelectedItems() {
+        let selection = store.sidebarItemSelection.isEmpty
+            ? (store.sidebarSelectionID.map(SidebarSelection.init(single:)) ?? SidebarSelection())
+            : store.sidebarItemSelection
+        guard !selection.isEmpty else { return }
+        let nodes = displayedVisibleNodes
+        let shownIDs = shownItemIDs(in: nodes)
+        let shown = selection.filtered { shownIDs.contains($0) }
+        guard shown != selection else { return }
+        // The nearest folder row holding the lead: the deepest of the open folders above it.
+        if shown.isEmpty, let leadID = selection.leadID,
+           let row = nodes
+            .filter({ WorkspaceDocumentSupport.isPath(leadID, containedIn: $0.node.id) })
+            .max(by: { $0.dropTargetNode.id.count < $1.dropTargetNode.id.count }) {
+            store.selectSidebarItems(SidebarSelection(single: row.dropTargetNode.id))
+        } else {
+            store.selectSidebarItems(shown)
+        }
+    }
+
+    /// The keys held for the click being handled: those of the tree's latest mouse event, never a
+    /// key press's (a button pressed from the keyboard is a plain click).
+    private var clickModifiers: NSEvent.ModifierFlags {
+        if let event = NSApp.currentEvent, event.type == .keyDown || event.type == .keyUp {
+            return []
+        }
+        return treeMouse.modifierFlags.intersection([.command, .shift])
+    }
+
+    /// The rows that show a selected item, by row.
+    private func selectedRowIDs(in nodes: [VisibleSidebarNode]) -> Set<String> {
+        let selectedIDs = Set(store.sidebarSelectionIDs)
+        guard !selectedIDs.isEmpty else { return [] }
+        return Set(nodes.lazy.filter { node in
+            node.node.kind == .folder
+                ? node.folderNodeIDs.contains(where: selectedIDs.contains)
+                : selectedIDs.contains(node.node.id)
+        }.map(\.id))
+    }
+
+    /// The sidebar's selection in terms of rows: each item as the item of the row that shows it, or
+    /// of the nearest folder above it the tree shows; the open document stands in when the sidebar
+    /// picked nothing.
+    private func rowSelection(_ nodes: [VisibleSidebarNode]) -> SidebarSelection {
+        var rowItemIDs: [String: String] = [:]
+        for node in nodes {
+            let itemID = node.dropTargetNode.id
+            rowItemIDs[node.node.id] = itemID
+            for folderID in node.folderNodeIDs {
+                rowItemIDs[folderID] = itemID
+            }
+        }
+        let rootPath = store.rootNode?.id ?? ""
+        let selection = store.sidebarItemSelection.isEmpty
+            ? (store.sidebarSelectionID.map(SidebarSelection.init(single:)) ?? SidebarSelection())
+            : store.sidebarItemSelection
+        return selection.mapped { itemID in
+            var path = itemID
+            while path.count > rootPath.count {
+                if let rowItemID = rowItemIDs[path] {
+                    return rowItemID
+                }
+                path = (path as NSString).deletingLastPathComponent
+            }
+            return itemID
+        }
+    }
+
+    private func leadRow(_ nodes: [VisibleSidebarNode]) -> VisibleSidebarNode? {
+        guard let leadID = rowSelection(nodes).leadID else { return nil }
+        return nodes.first { $0.dropTargetNode.id == leadID }
+    }
+
+    private func moveSelection(by offset: Int, extending: Bool) {
+        let nodes = displayedVisibleNodes
+        guard let next = rowSelection(nodes).moving(by: offset, rows: nodes.map(\.dropTargetNode.id), extending: extending) else {
+            NSSound.beep()
+            return
+        }
+        store.selectSidebarItems(next)
+    }
+
+    /// Edit › Select All in the tree: every row it shows.
+    private func selectAllRows() {
+        let nodes = displayedVisibleNodes
+        guard !nodes.isEmpty, !store.isBusy else { return }
+        store.selectSidebarItems(.all(nodes.map(\.dropTargetNode.id), leadID: rowSelection(nodes).leadID))
+    }
+
+    /// Selects the row of the folder holding the lead item; nothing at the top level.
+    private func selectParentRow() {
+        let nodes = displayedVisibleNodes
+        guard let row = leadRow(nodes),
+              let parent = nodes.first(where: { $0.shows((row.node.id as NSString).deletingLastPathComponent) })
+        else {
+            NSSound.beep()
+            return
+        }
+        store.selectSidebarItems(SidebarSelection(single: parent.dropTargetNode.id))
+    }
+
+    /// ←: closes the lead folder, or else selects the folder holding the item. With ⌥ the folder
+    /// and every folder inside it close.
+    private func collapseLeadRow(recursively: Bool) {
+        let nodes = displayedVisibleNodes
+        guard let row = leadRow(nodes) else {
+            NSSound.beep()
+            return
+        }
+        if row.node.kind == .folder, row.isExpanded(in: expandedFolderIDs) || recursively {
+            let rowPath = row.node.id
+            let closing = recursively
+                ? expandedFolderIDs.filter { WorkspaceDocumentSupport.isPath($0, containedIn: rowPath) }
+                : Set(row.folderNodeIDs)
+            expandedFolderIDs.subtract(closing)
+            refreshVisibleNodes()
+            dropHiddenSelectedItems()
+            return
+        }
+        selectParentRow()
+    }
+
+    /// →: opens the lead folder, or else selects the first item inside it. With ⌥ the folder and
+    /// every folder inside it open.
+    private func expandLeadRow(recursively: Bool) {
+        let nodes = displayedVisibleNodes
+        guard let row = leadRow(nodes), row.node.kind == .folder else {
+            NSSound.beep()
+            return
+        }
+        if recursively {
+            expandFolders(Set(row.folderNodeIDs).union(Self.folderIDs(inside: row.dropTargetNode)))
+            return
+        }
+        guard row.isExpanded(in: expandedFolderIDs) else {
+            expandFolders(Set(row.folderNodeIDs))
+            return
+        }
+        guard let index = nodes.firstIndex(where: { $0.id == row.id }),
+              index + 1 < nodes.count,
+              nodes[index + 1].depth > row.depth
+        else { return }
+        store.selectSidebarItems(SidebarSelection(single: nodes[index + 1].dropTargetNode.id))
+    }
+
+    private static func folderIDs(inside node: SidebarNode) -> Set<String> {
+        var found: Set<String> = []
+        for child in node.children ?? [] where child.kind == .folder {
+            found.insert(child.id)
+            found.formUnion(folderIDs(inside: child))
+        }
+        return found
+    }
+
+    /// Closes every folder. Selected items inside leave the selection; when none is left shown, the
+    /// top-level row holding the lead is selected, so the keyboard goes on from there.
+    private func collapseAllFolders() {
+        guard !expandedFolderIDs.isEmpty else { return }
+        expandedFolderIDs = []
+        refreshVisibleNodes()
+        dropHiddenSelectedItems()
+    }
+
+    /// ⌘↓: opens the selected files, the lead last so its tab shows, and opens the selected
+    /// folders in the tree.
+    private func openSelection() {
+        let nodes = displayedVisibleNodes
+        let selection = rowSelection(nodes)
+        guard !selection.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        let ordered = selection.itemIDs.filter { $0 != selection.leadID } + [selection.leadID].compactMap { $0 }
+        var folderIDs: Set<String> = []
+        var documentIDs: [String] = []
+        for itemID in ordered {
+            if store.document(id: itemID) != nil {
+                documentIDs.append(itemID)
+            } else if let row = nodes.first(where: { $0.dropTargetNode.id == itemID }), row.node.kind == .folder {
+                folderIDs.formUnion(row.folderNodeIDs)
+            }
+        }
+        expandFolders(folderIDs)
+        documentIDs.forEach(openDocument)
+    }
+
+    /// The items a row's menu acts on: every selected item when the row is one of several selected,
+    /// otherwise the row's own.
+    /// A row inside another selected folder acts on itself alone, as its drag image shows, so a
+    /// menu, a drag and an Option-drag of that row never reach the folder around it.
+    private func menuTargets(for url: URL) -> [URL] {
+        let path = url.standardizedFileURL.path
+        let selectedIDs = store.sidebarSelectionIDs
+        guard selectedIDs.count > 1, selectedIDs.contains(path) else { return [url] }
+        let targets = store.sidebarSelectionURLs
+        guard targets.contains(where: { $0.standardizedFileURL.path == path }) else { return [url] }
+        return targets
     }
 
     private func refreshRecentDocuments() {
@@ -539,17 +940,24 @@ struct SidebarView: View {
     private var rowActions: SidebarRowActions {
         SidebarRowActions(
             clickFolder: clickFolder(_:),
-            openDocument: openDocument,
+            openDocument: clickFile(_:),
             createFile: beginCreateFile(in:),
             createFolder: beginCreateFolder(in:),
             rename: beginRename(_:),
-            location: locationActions,
+            location: rowLocationActions,
             exportPDF: exportPDF,
-            copy: { store.putItemOnPasteboard(at: $0, cutting: false, pasteboard: pasteboard) },
-            cut: { store.putItemOnPasteboard(at: $0, cutting: true, pasteboard: pasteboard) },
+            copy: { store.putItemsOnPasteboard(at: menuTargets(for: $0), cutting: false, pasteboard: pasteboard) },
+            cut: { store.putItemsOnPasteboard(at: menuTargets(for: $0), cutting: true, pasteboard: pasteboard) },
             paste: paste(into:),
-            duplicate: store.duplicateItem(at:),
-            moveToTrash: moveToTrash(_:),
+            duplicate: { store.duplicateItems(at: menuTargets(for: $0)) },
+            moveToTrash: { item in
+                let targets = menuTargets(for: item.url)
+                if targets.count > 1 {
+                    store.deleteItems(at: targets)
+                } else {
+                    moveToTrash(item)
+                }
+            },
             dragChanged: handleSidebarNodeDragChanged(id:location:),
             dragEnded: handleSidebarNodeDragEnded(id:location:),
             dropFileURLs: { urls, directoryURL, copying in
@@ -560,11 +968,21 @@ struct SidebarView: View {
         )
     }
 
+    /// The location items of the root's menu and of Recents, which act on that one item.
     private var locationActions: SidebarLocationActions {
         SidebarLocationActions(
-            copyPath: copyPath,
-            copyRelativePath: copyRelativePath,
-            revealInFinder: revealInFinder(_:)
+            copyPath: { copyPath([$0]) },
+            copyRelativePath: { copyRelativePath([$0]) },
+            revealInFinder: { revealInFinder([$0]) }
+        )
+    }
+
+    /// A row's location items, which act on every selected item when the row is one of several.
+    private var rowLocationActions: SidebarLocationActions {
+        SidebarLocationActions(
+            copyPath: { copyPath(menuTargets(for: $0)) },
+            copyRelativePath: { copyRelativePath(menuTargets(for: $0)) },
+            revealInFinder: { revealInFinder(menuTargets(for: $0)) }
         )
     }
 
@@ -588,6 +1006,15 @@ struct SidebarView: View {
             Divider()
 
             locationActions.menuItems(for: workspaceURL, includesRelativePath: false)
+        }
+
+        if store.rootNode != nil {
+            Divider()
+
+            MonknotMenuCommandButton(.collapseAllFolders) {
+                collapseAllFolders()
+            }
+            .disabled(expandedFolderIDs.isEmpty)
         }
     }
 
@@ -632,64 +1059,299 @@ struct SidebarView: View {
         }
     }
 
+    // MARK: Moving files (design.md §10.4)
+
     private func handleSidebarNodeDragChanged(id: String, location: CGPoint) {
-        guard store.workspaceURL != nil, !store.isBusy else { return }
-        draggedSidebarNodeID = id
-        guard sidebarNodeFrames[id] != nil else { return }
+        guard store.workspaceURL != nil, !store.isBusy, cancelledDragRowID != id else { return }
+        if dragSession.item == nil, draggedSidebarNodeID == nil {
+            guard let row = displayedVisibleNodes.first(where: { $0.id == id }) else { return }
+            beginDrag(row)
+        }
+        guard dragSession.isActive(for: id) else { return }
+        dragSession.pointerMoved(toTreePoint: location)
+        updateDragTarget()
+    }
+
+    /// Starts dragging a row: its item, or every selected item when the row is one of several
+    /// selected, as one copy that names how many there are.
+    private func beginDrag(_ row: VisibleSidebarNode) {
+        let item = row.dropTargetNode
+        let urls = menuTargets(for: item.url)
+        let systemImage = urls.count > 1
+            ? MonknotWorkspaceIcons.dragItems
+            : item.kind == .folder
+                ? MonknotWorkspaceIcons.openFolder
+                : (item.document?.fileGlyph ?? .other).systemImage
+        let copies = treeMouse.modifierFlags.contains(.option)
+        dragSession.treeView = treeMouse.treeView
+        treeMouse.dragSession = dragSession
+        draggedSidebarNodeID = row.id
+        draggedItemPaths = urls.count > 1 ? Set(urls.map(\.standardizedFileURL.path)) : []
+        dragCopies = copies
+        dragSession.begin(
+            item: SidebarDragSession.Item(
+                rowID: row.id,
+                url: item.url,
+                urls: urls,
+                title: urls.count > 1 ? "\(urls.count) Items" : row.displayName,
+                systemImage: systemImage
+            ),
+            copies: copies,
+            theme: theme,
+            zoomScale: zoomScale,
+            handlers: SidebarDragSession.Handlers(
+                pointerMoved: { updateDragTarget() },
+                copiesChanged: { copies in
+                    dragCopies = copies
+                    updateDragTarget()
+                },
+                springOpen: { folderID in expandFolders([folderID]) },
+                cancelled: {
+                    cancelledDragRowID = row.id
+                    setMoveTarget(nil)
+                    closeSpringOpenedFolders(keeping: [])
+                },
+                handedOff: {
+                    // The file drag shows its own targets from here, through the rows' drop handling.
+                    setMoveTarget(nil)
+                },
+                handOffEnded: {
+                    endDrag()
+                },
+                returned: {
+                    endDrag()
+                }
+            )
+        )
+    }
+
+    /// Resolves the target under the pointer, lifts the copy once the row's frame is known, and
+    /// springs open the closed folder the pointer rests on.
+    private func updateDragTarget() {
+        guard let id = draggedSidebarNodeID, dragSession.isActive(for: id), let location = dragSession.treePoint else { return }
+        guard let rowFrame = sidebarNodeFrames[id] else { return }
+        if let row = displayedVisibleNodes.first(where: { $0.id == id }) {
+            dragSession.liftCopy(rowFrame: rowFrame, depth: row.depth)
+        }
         let target = moveDropTarget(forRow: id, at: location)
-        moveDropTargetFolderID = target?.folderID
-        isMoveDropTargetingRoot = target == .root
+        setMoveTarget(target)
+        dragSession.springLoad(folderID: springLoadableFolderID(at: location, target: target))
+    }
+
+    /// The closed folder row under `location` that `target` would drop into, which spring-loading
+    /// opens; nil anywhere else.
+    private func springLoadableFolderID(at location: CGPoint, target: SidebarMoveDropTarget?) -> String? {
+        guard let target, case .folder = target,
+              let row = displayedVisibleNodes.first(where: { sidebarNodeFrames[$0.id]?.contains(location) == true }),
+              row.node.kind == .folder,
+              !row.isExpanded(in: expandedFolderIDs),
+              row.dropTargetFolderID == target.folderID
+        else { return nil }
+        return row.dropTargetFolderID
+    }
+
+    /// A new target cross-fades with the last one; a frame that moves with the rows does not animate.
+    private func setMoveTarget(_ target: SidebarMoveDropTarget?) {
+        guard target != moveTarget else { return }
+        withAnimation(.easeOut(duration: MonknotMotion.hoverDuration)) {
+            moveTarget = target
+        }
     }
 
     private func handleSidebarNodeDragEnded(id: String, location: CGPoint) {
-        defer {
-            draggedSidebarNodeID = nil
-            moveDropTargetFolderID = nil
-            isMoveDropTargetingRoot = false
-            sidebarNodeFrames = [:]
+        if cancelledDragRowID == id {
+            cancelledDragRowID = nil
+            return
         }
-
+        guard dragSession.isActive(for: id) else { return }
+        // The keys held as the button came up: the gesture ends before the tree's own mouse-up
+        // handler runs, so the drag's live state is the one that is current.
+        let copies = dragSession.copies
+        let point = dragSession.treePoint ?? location
         guard !store.isBusy,
               sidebarNodeFrames[id] != nil,
-              let row = displayedVisibleNodes.first(where: { $0.id == id }),
-              let target = moveDropTarget(forRow: id, at: location)
-        else { return }
+              let dragged = dragSession.item,
+              let target = moveDropTarget(forRow: id, at: point, copies: copies)
+        else {
+            // Nowhere to land: the copy glides back, and nothing changes on disk.
+            setMoveTarget(nil)
+            closeSpringOpenedFolders(keeping: [])
+            dragSession.finishWithoutTarget()
+            return
+        }
 
         let folderURL: URL? = switch target {
         case .root: nil
         case .folder(let folderURL): folderURL
         }
-        // As in Finder, holding Option when the drag ends copies the item instead of moving it.
-        if treeMouse.modifierFlags.contains(.option) {
-            store.duplicateItem(at: row.dropTargetNode.url, into: folderURL)
+        let urls = dragged.urls
+        let destinationPath = (folderURL ?? store.workspaceURL)?.standardizedFileURL.path ?? ""
+        let landedID = (destinationPath as NSString).appendingPathComponent(dragged.url.lastPathComponent)
+        closeSpringOpenedFolders(keeping: ancestorFolderIDs(of: landedID))
+        dragSession.finishDropped()
+        endDrag()
+        // As in Finder, holding Option when the drag ends copies the items instead of moving them.
+        if copies {
+            pendingLanding = SidebarPendingLanding(itemID: nil, deadline: Date().addingTimeInterval(10))
+            store.duplicateItems(at: urls, into: folderURL)
+        } else if urls.count > 1 {
+            // The dragged row lands; the rest move one after another, as a drop of them does.
+            pendingLanding = SidebarPendingLanding(itemID: landedID, deadline: Date().addingTimeInterval(10))
+            store.dropFileURLs(urls, into: folderURL)
         } else {
-            store.moveItem(id: row.dropTargetNode.id, toDirectory: folderURL)
+            pendingLanding = SidebarPendingLanding(itemID: landedID, deadline: Date().addingTimeInterval(10))
+            store.moveItem(id: dragged.url.standardizedFileURL.path, toDirectory: folderURL)
+        }
+        resolvePendingLanding()
+    }
+
+    private func endDrag() {
+        draggedSidebarNodeID = nil
+        draggedItemPaths = []
+        dragCopies = false
+        setMoveTarget(nil)
+        dragSession.clearSpringOpenedFolders()
+        if pendingLanding == nil, landing == nil, externalDropRowID == nil {
+            sidebarNodeFrames = [:]
         }
     }
 
-    private func moveDropTarget(forRow rowID: String, at location: CGPoint) -> SidebarMoveDropTarget? {
+    /// Spring-opened folders close again, except those the drop landed in.
+    private func closeSpringOpenedFolders(keeping keptIDs: Set<String>) {
+        let closing = dragSession.springOpenedFolderIDs.subtracting(keptIDs)
+        dragSession.clearSpringOpenedFolders()
+        guard !closing.isEmpty else { return }
+        expandedFolderIDs.subtract(closing)
+        refreshVisibleNodes()
+        dropHiddenSelectedItems()
+    }
+
+    /// Once a moved or copied item shows in the tree: its folders open, it scrolls into view and its
+    /// row holds the drop tint, letting it go over 900 ms (design.md §10.4).
+    private func resolvePendingLanding() {
+        guard let pending = pendingLanding else { return }
+        guard pending.deadline > Date() else {
+            pendingLanding = nil
+            return
+        }
+        // A copy is selected where it lands; a move keeps the selection, so it is found by its path.
+        let itemID = pending.itemID ?? (store.isBusy ? nil : sidebarSelectionID)
+        guard let itemID, !store.isBusy else { return }
+        expandFolders(ancestorFolderIDs(of: itemID))
+        guard displayedVisibleNodes.contains(where: { $0.dropTargetFolderID == itemID || $0.id == itemID }) else { return }
+        pendingLanding = nil
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            landing = SidebarLanding(itemID: itemID, opacity: 0)
+            return
+        }
+        let serial = (landing?.serial ?? 0) + 1
+        landing = SidebarLanding(itemID: itemID, opacity: 1, serial: serial)
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: SidebarLanding.duration)) {
+                landing?.opacity = 0
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + SidebarLanding.duration + 0.1) {
+            if landing?.serial == serial {
+                landing = nil
+                if draggedSidebarNodeID == nil, externalDropRowID == nil {
+                    sidebarNodeFrames = [:]
+                }
+            }
+        }
+    }
+
+    /// The drop target's region behind the rows, `accsoft` on the row radius inside the list inset:
+    /// a folder's row with its open contents, or the whole tree for the root; and a landed row's tint.
+    @ViewBuilder
+    private func dropTargetLayer(nodes: [VisibleSidebarNode]) -> some View {
+        let radius = theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
+        ZStack(alignment: .topLeading) {
+            if let target = effectiveMoveTarget, let frame = dropRegionFrame(for: target, nodes: nodes) {
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(theme.accentSoftFillColor)
+                    .frame(width: frame.width, height: frame.height)
+                    .offset(x: frame.minX, y: frame.minY)
+                    .id(target)
+                    .transition(.opacity)
+            }
+            if let landing,
+               let row = nodes.first(where: { $0.dropTargetFolderID == landing.itemID || $0.id == landing.itemID }),
+               let frame = sidebarNodeFrames[row.id] {
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(theme.accentSoftFillColor)
+                    .frame(width: frame.width, height: frame.height)
+                    .offset(x: frame.minX, y: frame.minY)
+                    .opacity(landing.opacity)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    /// The region `target` covers, in the rows' coordinates (the background's own origin is the
+    /// list's, inside its inset).
+    private func dropRegionFrame(for target: SidebarMoveDropTarget, nodes: [VisibleSidebarNode]) -> CGRect? {
+        let gutter = scaled(MonknotMetrics.listGutterBase)
+        let top = scaled(MonknotMetrics.listTopInsetBase)
+        func local(_ frame: CGRect) -> CGRect {
+            frame.offsetBy(dx: -gutter, dy: -top)
+        }
+        switch target {
+        case .root:
+            let frames = nodes.compactMap { sidebarNodeFrames[$0.id] }
+            guard let first = frames.first else { return nil }
+            let union = frames.reduce(first) { $0.union($1) }
+            // The root is the whole tree, its empty space below the rows included.
+            let bottom = max(union.maxY, sidebarTreeSize.height - top)
+            return local(CGRect(x: union.minX, y: union.minY, width: union.width, height: bottom - union.minY))
+        case .folder(let url):
+            let folderPath = url.standardizedFileURL.path
+            let rows = nodes.filter { row in
+                row.dropTargetFolderID == folderPath || row.node.url.standardizedFileURL.path.hasPrefix(folderPath + "/")
+            }
+            let frames = rows.compactMap { sidebarNodeFrames[$0.id] }
+            guard let first = frames.first else { return nil }
+            return local(frames.reduce(first) { $0.union($1) })
+        }
+    }
+
+    private func moveDropTarget(forRow rowID: String, at location: CGPoint, copies: Bool? = nil) -> SidebarMoveDropTarget? {
         guard let workspaceURL = store.workspaceURL else { return nil }
         return SidebarMoveDropTarget.resolve(
             draggedRowID: rowID,
+            draggedItemURLs: dragSession.item?.urls ?? [],
             location: location,
             rows: displayedVisibleNodes,
             rowFrames: sidebarNodeFrames,
             treeSize: sidebarTreeSize,
-            workspaceURL: workspaceURL
+            workspaceURL: workspaceURL,
+            copies: copies ?? dragCopies
         )
     }
 
-    /// Highlights the folder a Finder drag over a row would land in (the root for a root file).
+    /// Tints the folder a file drag over a row would land in (the root for a root file), and springs
+    /// a closed folder open as the tree's own drag does. A drop that would change nothing tints
+    /// nothing (`SidebarFileDrop.changesNothing`).
     private func handleExternalDropTargeting(rowID: String, directoryURL: URL, isTargeted: Bool) {
         if isTargeted {
             externalDropRowID = rowID
             let isRoot = directoryURL.standardizedFileURL == store.workspaceURL?.standardizedFileURL
-            moveDropTargetFolderID = isRoot ? nil : directoryURL.standardizedFileURL.path
-            isMoveDropTargetingRoot = isRoot
+            let urls = NSPasteboard(name: .drag).fileURLs
+            let changesNothing = SidebarFileDrop.changesNothing(urls, destinationURL: directoryURL)
+            setMoveTarget(changesNothing ? nil : (isRoot ? .root : .folder(directoryURL.standardizedFileURL)))
+            let row = displayedVisibleNodes.first { $0.id == rowID }
+            let springFolderID = row.flatMap { row -> String? in
+                guard !changesNothing, row.node.kind == .folder, !row.isExpanded(in: expandedFolderIDs) else { return nil }
+                return row.dropTargetFolderID
+            }
+            dragSession.externalTargeting(folderID: springFolderID) { folderID in
+                expandFolders([folderID])
+            }
         } else if externalDropRowID == rowID {
             externalDropRowID = nil
-            moveDropTargetFolderID = nil
-            isMoveDropTargetingRoot = false
+            setMoveTarget(nil)
+            dragSession.externalTargeting(folderID: nil) { _ in }
         }
     }
 
@@ -699,7 +1361,7 @@ struct SidebarView: View {
             operation: .createFile(directoryURL),
             title: "New File",
             message: "Create a file in \(directoryName).",
-            placeholder: "example.txt",
+            placeholder: "Untitled.md",
             confirmTitle: "Create",
             name: store.suggestedNewFileName(in: directoryURL)
         )
@@ -717,8 +1379,8 @@ struct SidebarView: View {
         )
     }
 
-    private func revealInFinder(_ url: URL) {
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+    private func revealInFinder(_ urls: [URL]) {
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
     }
 
     private func validationMessage(for prompt: SidebarNamePrompt, name: String) -> String? {
@@ -864,8 +1526,24 @@ enum SidebarTreePresentation {
     }
 }
 
+/// An item a drop is moving (found by the path it will have) or copying (found as the selection the
+/// copy takes), until it shows in the tree or the deadline passes.
+struct SidebarPendingLanding: Equatable {
+    let itemID: String?
+    let deadline: Date
+}
+
+/// A row that just landed: it holds the drop tint and lets it go.
+struct SidebarLanding: Equatable {
+    static let duration: Double = 0.9
+
+    let itemID: String
+    var opacity: Double
+    var serial = 0
+}
+
 /// Where a dragged sidebar row moves its item.
-enum SidebarMoveDropTarget: Equatable {
+enum SidebarMoveDropTarget: Hashable {
     case folder(URL)
     case root
 
@@ -876,22 +1554,25 @@ enum SidebarMoveDropTarget: Equatable {
 
     /// The target under `location`, in the tree's coordinate space: a folder row is that folder (the
     /// deepest of a compact row), a file row is the file's folder, and empty tree space below the
-    /// rows is the root. Nil where the item already is, on the item itself or anything inside it,
-    /// and anywhere else.
+    /// rows is the root. Nil where every dragged item already is (unless `copies`, which duplicates
+    /// them there, as Finder does), on a dragged item itself or anything inside one, and anywhere
+    /// else. `draggedItemURLs` are the items dragged with the row when it is one of several selected.
     static func resolve(
         draggedRowID: String,
+        draggedItemURLs: [URL] = [],
         location: CGPoint,
         rows: [VisibleSidebarNode],
         rowFrames: [String: CGRect],
         treeSize: CGSize,
-        workspaceURL: URL
+        workspaceURL: URL,
+        copies: Bool = false
     ) -> SidebarMoveDropTarget? {
         guard let draggedRow = rows.first(where: { $0.id == draggedRowID }) else { return nil }
-        let itemPath = draggedRow.dropTargetNode.url.standardizedFileURL.path
+        let itemPaths = Set([draggedRow.dropTargetNode.url.standardizedFileURL.path] + draggedItemURLs.map(\.standardizedFileURL.path))
 
         let destinationURL: URL
         if let row = rows.first(where: { rowFrames[$0.id]?.contains(location) == true }) {
-            guard row.id != draggedRowID else { return nil }
+            guard row.id != draggedRowID, !itemPaths.contains(row.dropTargetNode.url.standardizedFileURL.path) else { return nil }
             destinationURL = row.destinationURL
         } else {
             let rowsBottom = rowFrames.values.map(\.maxY).max() ?? 0
@@ -904,9 +1585,8 @@ enum SidebarMoveDropTarget: Equatable {
         }
 
         let destinationPath = destinationURL.standardizedFileURL.path
-        guard destinationPath != (itemPath as NSString).deletingLastPathComponent,
-              destinationPath != itemPath,
-              !destinationPath.hasPrefix(itemPath + "/")
+        guard copies || itemPaths.contains(where: { destinationPath != ($0 as NSString).deletingLastPathComponent }),
+              !itemPaths.contains(where: { destinationPath == $0 || destinationPath.hasPrefix($0 + "/") })
         else { return nil }
         return destinationPath == workspaceURL.standardizedFileURL.path
             ? .root
@@ -955,15 +1635,11 @@ private struct SidebarProjectHeader: View {
     let manageWorkspaces: () -> Void
     let createMarkdown: () -> Void
     let showWorkspaceSearch: () -> Void
-    @State private var isWorkspaceTitleHovered = false
+    var switcherRequest = 0
     @State private var isSwitcherPresented = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private func textScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
     }
 
     private var activeWorkspace: SavedWorkspaceEntry? {
@@ -975,100 +1651,89 @@ private struct SidebarProjectHeader: View {
         activeWorkspace?.displayName ?? workspaceURL?.lastPathComponent ?? "No Workspace"
     }
 
-    private var showsChevron: Bool {
-        workspaces.count > 1 || isWorkspaceTitleHovered || isSwitcherPresented
+    private var switcher: WorkspaceSwitcherPopover {
+        WorkspaceSwitcherPopover(
+            workspaces: workspaces,
+            activeWorkspacePath: workspaceURL?.standardizedFileURL.path,
+            isBusy: isBusy,
+            theme: theme,
+            zoomScale: zoomScale,
+            switchWorkspace: { workspace in
+                isSwitcherPresented = false
+                switchWorkspace(workspace)
+            },
+            addWorkspace: {
+                isSwitcherPresented = false
+                addWorkspace()
+            },
+            removeWorkspace: removeWorkspace,
+            manageWorkspaces: {
+                isSwitcherPresented = false
+                manageWorkspaces()
+            }
+        )
     }
 
+    /// A bar in the list inset (design.md §10.4): the monogram in the rows' glyph column, the name on
+    /// their text edge, and the last action ending on the list's edge.
     var body: some View {
-        HStack(spacing: scaled(6)) {
+        MonknotBar(theme: theme, zoomScale: zoomScale, inset: .list) {
             if workspaceURL != nil {
                 Button {
                     isSwitcherPresented.toggle()
                 } label: {
-                    HStack(spacing: scaled(6)) {
-                        // Disabled while a workspace loads: `ink4`, and no hover ink (design.md §5.1).
-                        Text(workspaceName)
-                            .font(.system(size: textScaled(13), weight: .semibold))
-                            .foregroundStyle(
-                                isBusy
-                                    ? theme.disabledForegroundColor
-                                    : theme.sidebarColor(theme.foregroundColor, opacity: 0.92)
-                            )
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                    HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
+                        // The monogram sits in the rows' glyph column and the name on their text edge.
+                        SidebarWorkspaceMonogram(name: workspaceName, isDisabled: isBusy, theme: theme, zoomScale: zoomScale)
 
-                        // Beside the name, like a pop-up button (design.md §10.4 "name + chevron").
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: textScaled(10), weight: .regular))
-                            .symbolRenderingMode(.monochrome)
-                            .foregroundStyle(
-                                isBusy
-                                    ? theme.disabledForegroundColor
-                                    : (isWorkspaceTitleHovered || isSwitcherPresented
-                                        ? theme.foregroundColor
-                                        : theme.tertiaryForegroundColor)
-                            )
-                            .opacity(showsChevron ? 1 : 0)
-                            .frame(width: scaled(11))
-                            .animation(MonknotMotion.hoverAnimation, value: showsChevron)
+                        HStack(spacing: scaled(5)) {
+                            // Disabled while a workspace loads: `ink4`, and no hover ink (design.md §5.1).
+                            Text(workspaceName)
+                                .font(MonknotTypography.panelTitle(theme: theme, zoomScale: zoomScale))
+                                .foregroundStyle(
+                                    isBusy
+                                        ? theme.disabledForegroundColor
+                                        : theme.sidebarColor(theme.foregroundColor)
+                                )
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+
+                            // Beside the name, like a pop-up button (design.md §10.4 "name + chevron").
+                            SidebarWorkspaceChevron(theme: theme, zoomScale: zoomScale)
+                        }
+                        .layoutPriority(1)
 
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, scaled(10))
+                    .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
                     .frame(maxWidth: .infinity)
-                    .frame(height: scaled(30))
+                    .frame(height: scaled(MonknotMetrics.rowHeightBase))
                 }
-                .buttonStyle(MonknotRowButtonStyle(
-                    theme: theme,
-                    isSelected: false,
-                    isActive: isSwitcherPresented,
-                    cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
-                ))
+                .buttonStyle(MonknotListRowButtonStyle(theme: theme, zoomScale: zoomScale, isOpen: isSwitcherPresented))
                 .disabled(isBusy)
-                .onHover { isWorkspaceTitleHovered = $0 }
-                .popover(isPresented: $isSwitcherPresented, arrowEdge: .top) {
-                    WorkspaceSwitcherPopover(
-                        workspaces: workspaces,
-                        activeWorkspacePath: workspaceURL?.standardizedFileURL.path,
-                        isBusy: isBusy,
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        switchWorkspace: { workspace in
-                            isSwitcherPresented = false
-                            switchWorkspace(workspace)
-                        },
-                        addWorkspace: {
-                            isSwitcherPresented = false
-                            addWorkspace()
-                        },
-                        removeWorkspace: removeWorkspace,
-                        manageWorkspaces: {
-                            isSwitcherPresented = false
-                            manageWorkspaces()
-                        }
-                    )
+                .monknotPopover(
+                    isPresented: $isSwitcherPresented,
+                    label: "Workspaces",
+                    contentKind: .list,
+                    listRows: switcher.listRows,
+                    theme: theme,
+                    zoomScale: zoomScale
+                ) {
+                    switcher
                 }
                 .help(workspaceURL?.path ?? "No workspace open")
                 .layoutPriority(1)
             } else {
+                // On the same edge as a workspace's name, which sits inside a row's padding.
                 Text(workspaceName)
-                    .font(.system(size: textScaled(13), weight: .semibold))
+                    .font(MonknotTypography.panelTitle(theme: theme, zoomScale: zoomScale))
                     .foregroundStyle(theme.tertiaryForegroundColor)
                     .lineLimit(1)
-                    .padding(.horizontal, scaled(2))
+                    .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: scaled(MonknotMetrics.rowHeightBase))
+                    .layoutPriority(1)
             }
-
-            Spacer(minLength: scaled(4))
-
-            MonknotIconButton(
-                systemImage: "plus",
-                label: "New Markdown",
-                theme: theme,
-                zoomScale: zoomScale,
-                isDisabled: !canCreateMarkdown,
-                size: .sidebarHeader,
-                action: createMarkdown
-            )
 
             MonknotIconButton(
                 systemImage: MonknotWorkspaceIcons.searchWorkspace,
@@ -1076,17 +1741,83 @@ private struct SidebarProjectHeader: View {
                 theme: theme,
                 zoomScale: zoomScale,
                 isDisabled: !canSearch,
-                size: .sidebarHeader,
                 action: showWorkspaceSearch
             )
+
+            MonknotIconButton(
+                systemImage: MonknotWorkspaceIcons.newMarkdown,
+                label: "New Markdown",
+                theme: theme,
+                zoomScale: zoomScale,
+                isDisabled: !canCreateMarkdown,
+                action: createMarkdown
+            )
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, scaled(10))
-        .frame(height: scaled(40))
+        .onChange(of: switcherRequest) { _, _ in
+            if workspaceURL != nil, !isBusy {
+                isSwitcherPresented = true
+            }
+        }
     }
 }
 
+/// The switcher's chevron beside the workspace name: `ink3` at rest, `ink2` while its row is hovered,
+/// held or open, `ink4` while a workspace loads.
+private struct SidebarWorkspaceChevron: View {
+    let theme: AppTheme
+    let zoomScale: Double
+    @Environment(\.monknotRowIsHighlighted) private var isHighlighted
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        MonknotSecondaryGlyph(systemImage: "chevron.down", theme: theme, zoomScale: zoomScale)
+            .monknotStateStyle(
+                !isEnabled
+                    ? theme.disabledForegroundColor
+                    // A value control's chevron rests at `ink3` and goes to `ink` with its control
+                    // (design.md §5.3), as the label beside it does.
+                    : (isHighlighted ? theme.foregroundColor : theme.tertiaryForegroundColor)
+            )
+    }
+}
+
+/// The workspace's initial on an accent tile (design.md §10.4): it gives the header an anchor and
+/// tells windows on different folders apart at a glance.
+private struct SidebarWorkspaceMonogram: View {
+    let name: String
+    let isDisabled: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+
+    static func initial(of name: String) -> String {
+        guard let first = name.first(where: { $0.isLetter || $0.isNumber }) else { return "•" }
+        return String(first).uppercased()
+    }
+
+    var body: some View {
+        let side = MonknotMetrics.interfaceGlyph(18, theme: theme, zoomScale: zoomScale)
+        Text(Self.initial(of: name))
+            .font(.system(size: MonknotMetrics.interfaceText(10.5, theme: theme, zoomScale: zoomScale), weight: .semibold))
+            .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.onAccentForegroundColor)
+            .frame(width: side, height: side)
+            .background(
+                isDisabled ? theme.controlTrackFillColor : theme.accentColor,
+                in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale), style: .continuous)
+            )
+            .accessibilityHidden(true)
+    }
+}
+
+/// The workspace switcher (design.md §10.4): a list popover of the editor's menu rows, 340 wide, on
+/// Monknot's popover surface (§5.9). The open workspace is the current row with the `accent` folder;
+/// each row shows its path and its ⌃⌘ shortcut, which Remove replaces on the highlighted row and under
+/// the pointer. The keys, the pointer and keyboard focus move one highlight (`MonknotPopoverListModel`).
 private struct WorkspaceSwitcherPopover: View {
+    static let widthBase: CGFloat = 340
+    static let visibleRowLimit = 7
+    static let addRowID = "add-workspace"
+    static let manageRowID = "manage-workspaces"
+
     let workspaces: [SavedWorkspaceEntry]
     let activeWorkspacePath: String?
     let isBusy: Bool
@@ -1096,236 +1827,271 @@ private struct WorkspaceSwitcherPopover: View {
     let addWorkspace: () -> Void
     let removeWorkspace: (SavedWorkspaceEntry) -> Void
     let manageWorkspaces: () -> Void
+    @EnvironmentObject private var list: MonknotPopoverListModel
+    @FocusState private var focusedRow: String?
+    /// The workspace row whose Remove has keyboard focus.
+    @State private var focusedRemove: String?
+
+    static func rowID(_ workspace: SavedWorkspaceEntry) -> String {
+        workspace.id.uuidString
+    }
+
+    /// The rows the keys move over, in the order they show. The open workspace, and every workspace
+    /// while one loads, cannot be chosen.
+    var listRows: [MonknotPopoverListRow] {
+        workspaces.map { workspace in
+            MonknotPopoverListRow(
+                id: Self.rowID(workspace),
+                title: workspace.displayName,
+                isEnabled: !isBusy && workspace.path != activeWorkspacePath,
+                choose: { switchWorkspace(workspace) },
+                remove: { removeWorkspace(workspace) }
+            )
+        } + [
+            MonknotPopoverListRow(id: Self.addRowID, title: "Add Workspace…", choose: addWorkspace),
+            MonknotPopoverListRow(id: Self.manageRowID, title: "Manage Workspaces…", choose: manageWorkspaces),
+        ]
+    }
+
+    private var keyboardFocus: MonknotPopoverListModel.Focus? {
+        if let focusedRow {
+            return .row(focusedRow)
+        }
+        return focusedRemove == nil ? nil : .control
+    }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
-    private func textScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    /// Up to seven 34 rows (design.md §5.7 overlay row), 2 apart, inside the list padding.
+    /// Up to seven menu rows, 1 apart as in the editor's menus.
     private var workspaceListHeight: CGFloat {
-        let visibleCount = CGFloat(min(workspaces.count, 7))
-        return scaled(visibleCount * 34 + max(0, visibleCount - 1) * 2 + 12)
+        let visibleCount = CGFloat(min(workspaces.count, Self.visibleRowLimit))
+        return scaled(visibleCount * MonknotMetrics.menuRowHeightBase + max(0, visibleCount - 1))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Workspaces")
-                .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))
-                .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: zoomScale))
-                .textCase(.uppercase)
-                .foregroundStyle(theme.tertiaryForegroundColor)
-                .padding(.horizontal, scaled(14))
-                .frame(height: scaled(28), alignment: .bottomLeading)
+            MonknotMenuGroupHeader(title: "Workspaces", theme: theme, zoomScale: zoomScale)
 
             if workspaces.isEmpty {
                 Text("No saved workspaces")
-                    .font(.system(size: textScaled(12), weight: .regular))
+                    .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
                     .foregroundStyle(theme.tertiaryForegroundColor)
-                    .padding(.horizontal, scaled(14))
-                    .frame(height: scaled(42), alignment: .leading)
+                    .padding(.horizontal, scaled(10))
+                    .frame(height: scaled(MonknotMetrics.menuRowHeightBase), alignment: .leading)
             } else {
-                MonknotScrollView(theme: theme) {
-                    LazyVStack(spacing: scaled(2)) {
-                        ForEach(Array(workspaces.enumerated()), id: \.element.id) { index, workspace in
-                            WorkspaceSwitcherRow(
-                                workspace: workspace,
-                                shortcutIndex: index < 9 ? index + 1 : nil,
-                                isActive: workspace.path == activeWorkspacePath,
-                                isBusy: isBusy,
-                                theme: theme,
-                                zoomScale: zoomScale,
-                                open: { switchWorkspace(workspace) },
-                                remove: { removeWorkspace(workspace) }
-                            )
+                ScrollViewReader { proxy in
+                    MonknotScrollView(theme: theme) {
+                        LazyVStack(spacing: 1) {
+                            ForEach(Array(workspaces.enumerated()), id: \.element.id) { index, workspace in
+                                let rowID = Self.rowID(workspace)
+                                WorkspaceSwitcherRow(
+                                    workspace: workspace,
+                                    rowID: rowID,
+                                    shortcutIndex: index < 9 ? index + 1 : nil,
+                                    isActive: workspace.path == activeWorkspacePath,
+                                    isBusy: isBusy,
+                                    isHighlighted: list.highlighted == rowID,
+                                    isUnderPointer: list.pointerRow == rowID,
+                                    theme: theme,
+                                    zoomScale: zoomScale,
+                                    list: list,
+                                    focus: $focusedRow,
+                                    removeFocusChanged: { isFocused in
+                                        if isFocused {
+                                            focusedRemove = rowID
+                                        } else if focusedRemove == rowID {
+                                            focusedRemove = nil
+                                        }
+                                    },
+                                    open: { switchWorkspace(workspace) },
+                                    remove: { removeWorkspace(workspace) }
+                                )
+                                .id(rowID)
+                            }
                         }
                     }
-                    .padding(.horizontal, scaled(6))
-                    .padding(.vertical, scaled(6))
+                    .frame(height: workspaceListHeight)
+                    // Past seven rows the list scrolls: the keys keep their row in view.
+                    .onChange(of: list.keyboardMoves) { _, _ in
+                        if let id = list.highlighted {
+                            proxy.scrollTo(id)
+                        }
+                    }
                 }
-                .frame(height: workspaceListHeight)
             }
 
-            Rectangle()
-                .fill(theme.separatorColor)
-                .frame(height: 1)
-                .padding(.horizontal, scaled(14))
-                .padding(.vertical, scaled(6))
+            MonknotMenuSeparator(theme: theme, zoomScale: zoomScale)
 
-            WorkspaceSwitcherActionRow(
-                title: "Add Workspace…",
-                systemImage: "folder.badge.plus",
-                theme: theme,
-                zoomScale: zoomScale,
-                action: addWorkspace
-            )
+            VStack(spacing: 1) {
+                WorkspaceSwitcherActionRow(
+                    rowID: Self.addRowID,
+                    title: "Add Workspace…",
+                    systemImage: "folder.badge.plus",
+                    isHighlighted: list.highlighted == Self.addRowID,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    list: list,
+                    focus: $focusedRow,
+                    action: addWorkspace
+                )
 
-            WorkspaceSwitcherActionRow(
-                title: "Manage Workspaces…",
-                systemImage: "gearshape",
-                theme: theme,
-                zoomScale: zoomScale,
-                action: manageWorkspaces
-            )
+                WorkspaceSwitcherActionRow(
+                    rowID: Self.manageRowID,
+                    title: "Manage Workspaces…",
+                    systemImage: "gearshape",
+                    isHighlighted: list.highlighted == Self.manageRowID,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    list: list,
+                    focus: $focusedRow,
+                    action: manageWorkspaces
+                )
+            }
         }
-        .padding(.bottom, scaled(6))
-        .frame(width: scaled(380))
-        .background(theme.elevatedSurfaceColor)
+        .padding(scaled(MonknotMetrics.menuListInsetBase))
+        .frame(width: scaled(Self.widthBase))
+        .onChange(of: focusedRow) { _, _ in
+            list.focusMoved(to: keyboardFocus)
+        }
+        .onChange(of: focusedRemove) { _, _ in
+            list.focusMoved(to: keyboardFocus)
+        }
+        .onChange(of: list.keyboardMoves) { _, _ in
+            // With Full Keyboard Access, focus follows the keys, so Tab goes on from the highlighted row.
+            if keyboardFocus != nil, let id = list.highlighted, focusedRow != id {
+                focusedRow = id
+            }
+        }
     }
 }
 
 private struct WorkspaceSwitcherRow: View {
     let workspace: SavedWorkspaceEntry
+    let rowID: String
     let shortcutIndex: Int?
     let isActive: Bool
     let isBusy: Bool
+    /// The list's one highlight is on this row (design.md §5.9).
+    let isHighlighted: Bool
+    /// The pointer last moved onto this row, which may be the open workspace's.
+    let isUnderPointer: Bool
     let theme: AppTheme
     let zoomScale: Double
+    let list: MonknotPopoverListModel
+    let focus: FocusState<String?>.Binding
+    let removeFocusChanged: (Bool) -> Void
     let open: () -> Void
     let remove: () -> Void
-    @State private var isHovered = false
+    @State private var isRemoveFocused = false
 
     /// Another workspace is loading, so this one cannot open yet: `ink4` and no hover ink (design.md
-    /// §5.1). The active workspace keeps its selected look.
+    /// §5.1). The active workspace keeps its current look.
     private var isUnavailable: Bool {
         isBusy && !isActive
     }
 
-    private var isHighlighted: Bool {
-        isHovered && !isUnavailable
-    }
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private func textScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
+    /// Remove shows on the highlighted row, so ⌫ reads as removing it, under the pointer, and while it
+    /// has keyboard focus, so Tab reaches it (design.md §5.9).
+    private var showsRemove: Bool {
+        isHighlighted || isUnderPointer || isRemoveFocused
     }
 
     var body: some View {
         ZStack(alignment: .trailing) {
             Button(action: open) {
-                HStack(spacing: scaled(8)) {
-                    MonknotSystemGlyph(
-                        systemImage: isActive ? "folder.fill" : "folder",
-                        nominalPointSizeBase: 15,
-                        theme: theme,
-                        zoomScale: zoomScale
-                    )
-                    .foregroundStyle(
-                        isActive
-                            ? theme.accentColor
-                            : (isUnavailable
-                                ? theme.disabledForegroundColor
-                                : (isHighlighted ? theme.foregroundColor : theme.tertiaryForegroundColor))
-                    )
-                    .animation(MonknotMotion.hoverAnimation, value: isHovered)
-                    .frame(width: scaled(18))
-
-                    Text(workspace.displayName)
-                        .font(.system(size: textScaled(13), weight: .regular))
-                        .foregroundStyle(
-                            isActive || isHighlighted
-                                ? theme.foregroundColor
-                                : (isUnavailable ? theme.disabledForegroundColor : theme.mutedForegroundColor)
-                        )
-                        .animation(MonknotMotion.hoverAnimation, value: isHovered)
-                        .lineLimit(1)
-                        .layoutPriority(1)
-
-                    Text((workspace.path as NSString).abbreviatingWithTildeInPath)
-                        .font(.system(size: textScaled(12), weight: .regular))
-                        .foregroundStyle(isUnavailable ? theme.disabledForegroundColor : theme.tertiaryForegroundColor)
-                        .lineLimit(1)
-                        .truncationMode(.head)
-
-                    Spacer(minLength: scaled(8))
-
-                    // The trailing slot keeps one width: the shortcut fades out under the remove
-                    // button instead of leaving the layout, so the path never re-truncates on hover.
+                MonknotMenuRowLabel(
+                    leading: .glyph(isActive ? "folder.fill" : "folder"),
+                    title: workspace.displayName,
+                    detail: (workspace.path as NSString).abbreviatingWithTildeInPath,
+                    isCurrent: isActive,
+                    isDisabled: isUnavailable,
+                    theme: theme,
+                    zoomScale: zoomScale
+                ) {
+                    // One width for the trailing slot: the shortcut fades out under Remove instead of
+                    // leaving the layout, so the path never re-truncates on hover.
                     ZStack(alignment: .trailing) {
-                        Color.clear.frame(width: scaled(22), height: scaled(22))
+                        Color.clear.frame(
+                            width: MonknotIconButton.IconButtonSize.small.dimension(theme: theme, zoomScale: zoomScale),
+                            height: 1
+                        )
                         if let shortcutIndex {
                             MonknotShortcutLabel(
                                 shortcut: "⌃⌘\(shortcutIndex)",
                                 theme: theme,
                                 zoomScale: zoomScale
                             )
-                            .opacity(isHovered ? 0 : 1)
+                            .monknotStateOpacity(showsRemove ? 0 : 1)
                         }
                     }
                 }
-                .padding(.horizontal, scaled(10))
-                .frame(height: scaled(34))
-                .contentShape(Rectangle())
             }
-            .buttonStyle(MonknotRowButtonStyle(
-                theme: theme,
-                isSelected: isActive,
-                cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
-            ))
+            // The current workspace is marked by its accent `folder.fill` alone (design.md §1.3), so
+            // the one highlight is the list's.
+            .buttonStyle(MonknotMenuRowButtonStyle(theme: theme, zoomScale: zoomScale, isHighlighted: isHighlighted))
+            .focused(focus, equals: rowID)
+            .focusEffectDisabled()
             .disabled(isBusy || isActive)
-
-            if isHovered {
-                MonknotIconButton(
-                    systemImage: "xmark",
-                    label: "Remove \(workspace.displayName)",
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    isDisabled: isBusy,
-                    size: .smallAction,
-                    focusRingPlacement: .contained,
-                    action: remove
-                )
-                .padding(.trailing, scaled(10))
+            .accessibilityAction(named: "Remove") {
+                if !isBusy {
+                    remove()
+                }
             }
+
+            // Crossfades with the shortcut, as a tab's close button does with its glyph.
+            MonknotIconButton(
+                systemImage: "xmark",
+                label: "Remove \(workspace.displayName)",
+                theme: theme,
+                zoomScale: zoomScale,
+                isDisabled: isBusy || !showsRemove,
+                size: .small,
+                focusRingPlacement: .contained,
+                onFocusChange: { isFocused in
+                    isRemoveFocused = isFocused
+                    removeFocusChanged(isFocused)
+                },
+                action: remove
+            )
+            // On the row's trailing padding minus the small button's own inset, so its glyph
+            // sits where the shortcut's last character was.
+            .padding(.trailing, MonknotMetrics.interfaceDensity(MonknotMetrics.menuRowPaddingBase - 4, theme: theme, zoomScale: zoomScale))
+            .monknotStateOpacity(showsRemove ? 1 : 0)
+            .allowsHitTesting(showsRemove)
+            // VoiceOver reaches Remove through the row's action.
+            .accessibilityHidden(true)
         }
-        .onHover { isHovered = $0 }
+        .monknotPopoverListHover(rowID, in: list)
         .accessibilityElement(children: .contain)
     }
 }
 
 private struct WorkspaceSwitcherActionRow: View {
+    let rowID: String
     let title: String
     let systemImage: String
+    let isHighlighted: Bool
     let theme: AppTheme
     let zoomScale: Double
+    let list: MonknotPopoverListModel
+    let focus: FocusState<String?>.Binding
     let action: () -> Void
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
-    }
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: scaled(8)) {
-                MonknotSystemGlyph(
-                    systemImage: systemImage,
-                    nominalPointSizeBase: 15,
-                    theme: theme,
-                    zoomScale: zoomScale
-                )
-                .frame(width: scaled(18))
-
-                Text(title)
-                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
-
-                Spacer()
-            }
-            .padding(.horizontal, scaled(10))
-            .frame(height: scaled(30))
-            .contentShape(Rectangle())
+            MonknotMenuRowLabel(
+                leading: .glyph(systemImage),
+                title: title,
+                theme: theme,
+                zoomScale: zoomScale
+            )
         }
-        .buttonStyle(MonknotRowButtonStyle(
-            theme: theme,
-            isSelected: false,
-            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
-        ))
-        .padding(.horizontal, scaled(8))
+        .buttonStyle(MonknotMenuRowButtonStyle(theme: theme, zoomScale: zoomScale, isHighlighted: isHighlighted))
+        .focused(focus, equals: rowID)
+        .focusEffectDisabled()
+        .monknotPopoverListHover(rowID, in: list)
     }
 }
 
@@ -1339,24 +2105,18 @@ private struct SidebarLocationActions {
 
     @ViewBuilder
     func menuItems(for url: URL, includesRelativePath: Bool = true) -> some View {
-        Button {
+        MonknotMenuCommandButton(.copyPath) {
             copyPath(url)
-        } label: {
-            Label("Copy Path", systemImage: MonknotWorkspaceIcons.copyPath)
         }
 
         if includesRelativePath {
-            Button {
+            MonknotMenuCommandButton(.copyRelativePath) {
                 copyRelativePath(url)
-            } label: {
-                Label("Copy Relative Path", systemImage: "doc.on.doc")
             }
         }
 
-        Button {
+        MonknotMenuCommandButton(.revealInFinder) {
             revealInFinder(url)
-        } label: {
-            Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
         }
     }
 }
@@ -1369,25 +2129,19 @@ private enum SidebarMenuItems {
         createFile: @escaping () -> Void,
         createFolder: @escaping () -> Void
     ) -> some View {
-        Button(action: createFile) {
-            Label("New File", systemImage: MonknotWorkspaceIcons.newFile)
-        }
-        .disabled(isDisabled)
+        MonknotMenuCommandButton(.newFile, action: createFile)
+            .disabled(isDisabled)
 
-        Button(action: createFolder) {
-            Label("New Folder", systemImage: MonknotWorkspaceIcons.newFolder)
-        }
-        .disabled(isDisabled)
+        MonknotMenuCommandButton(.newFolder, action: createFolder)
+            .disabled(isDisabled)
     }
 
     /// The menu's host disables Paste as the menu opens when the clipboard holds nothing to paste.
-    static let pasteTitle = "Paste"
+    static let pasteTitle = MonknotMenuCommand.paste.title
 
     static func paste(isDisabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(pasteTitle, systemImage: "doc.on.clipboard")
-        }
-        .disabled(isDisabled)
+        MonknotMenuCommandButton(.paste, action: action)
+            .disabled(isDisabled)
     }
 }
 
@@ -1426,13 +2180,14 @@ extension SidebarNodeRow: Equatable {
             lhs.visibleNode.node.kind == rhs.visibleNode.node.kind &&
             lhs.visibleNode.node.document == rhs.visibleNode.node.document &&
             lhs.isSelected == rhs.isSelected &&
+            lhs.joinsSelectionAbove == rhs.joinsSelectionAbove &&
+            lhs.joinsSelectionBelow == rhs.joinsSelectionBelow &&
             lhs.saveState == rhs.saveState &&
             lhs.gitStatus == rhs.gitStatus &&
             lhs.isExpanded == rhs.isExpanded &&
             lhs.tracksMoveFrame == rhs.tracksMoveFrame &&
             lhs.isBusy == rhs.isBusy &&
             lhs.isMoveSource == rhs.isMoveSource &&
-            lhs.isMoveTarget == rhs.isMoveTarget &&
             lhs.zoomScale == rhs.zoomScale &&
             lhs.theme == rhs.theme
     }
@@ -1441,13 +2196,16 @@ extension SidebarNodeRow: Equatable {
 private struct SidebarNodeRow: View {
     let visibleNode: VisibleSidebarNode
     let isSelected: Bool
+    /// The rows above and below are selected too, so the selection fills join (design.md §10.4).
+    let joinsSelectionAbove: Bool
+    let joinsSelectionBelow: Bool
     let saveState: DocumentSaveState
     let gitStatus: WorkspaceGitFileStatus?
     let isExpanded: Bool
     let tracksMoveFrame: Bool
     let isBusy: Bool
+    /// Being dragged to move: the row stays where it is at 35 % until the move lands.
     let isMoveSource: Bool
-    let isMoveTarget: Bool
     let theme: AppTheme
     let zoomScale: Double
     let actions: SidebarRowActions
@@ -1465,9 +2223,6 @@ private struct SidebarNodeRow: View {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
-    private func glyphScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
-    }
 
     var body: some View {
         if node.kind == .folder {
@@ -1515,15 +2270,6 @@ private struct SidebarNodeRow: View {
             if let gitStatus {
                 GitStatusBadge(status: gitStatus, theme: theme, zoomScale: zoomScale)
             }
-
-            if !saveState.isClean {
-                SaveStateIndicator(
-                    state: saveState,
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    size: glyphScaled(12)
-                )
-            }
         }
         .monknotHelp(isSelected ? nil : (node.relativePath.isEmpty ? node.name : node.relativePath))
         .accessibilityLabel(fileAccessibilityLabel)
@@ -1535,38 +2281,40 @@ private struct SidebarNodeRow: View {
         }
     }
 
-    /// The row's button with what folder and file rows share: the move drag, the move-target
-    /// outline, its frame while a move is tracked, and Finder drops.
+    /// The row's button with what folder and file rows share: the move drag, its frame while a move
+    /// is tracked, and file drops.
     private func rowButton<Trailing: View>(
-        leading: SidebarRowGlyph,
+        leading: MonknotListRowGlyph,
         title: String,
         action: @escaping () -> Void,
         @ViewBuilder trailing: @escaping () -> Trailing
     ) -> some View {
         Button(action: action) {
-            SidebarRowLabel(
+            MonknotListRowLabel(
                 leading: leading,
                 title: title,
                 depth: visibleNode.depth,
                 isSelected: isSelected,
+                status: node.kind == .folder ? .clean : MonknotDocumentStatus(saveState),
                 theme: theme,
                 zoomScale: zoomScale,
                 trailing: trailing
             )
         }
-        .buttonStyle(SidebarRowButtonStyle(theme: theme, zoomScale: zoomScale, isSelected: isSelected))
+        .buttonStyle(MonknotListRowButtonStyle(
+            theme: theme,
+            zoomScale: zoomScale,
+            isSelected: isSelected,
+            hasContextMenu: true,
+            joinsSelectionAbove: joinsSelectionAbove,
+            joinsSelectionBelow: joinsSelectionBelow
+        ))
         .background {
             if tracksMoveFrame {
                 SidebarNodeFrameReader(id: node.id)
             }
         }
-        .overlay {
-            if isMoveTarget {
-                RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                    .stroke(theme.accentColor.opacity(0.85), lineWidth: 1)
-            }
-        }
-        .opacity(isMoveSource ? 0.45 : 1)
+        .monknotStateOpacity(isMoveSource ? 0.35 : 1)
         .highPriorityGesture(sidebarMoveGesture)
         .onDrop(of: [.fileURL], delegate: fileDropDelegate)
     }
@@ -1586,7 +2334,7 @@ private struct SidebarNodeRow: View {
     }
 
     private var documentIconName: String {
-        node.document?.kind.resolvedSystemImage ?? WorkspaceDocumentKind.unsupported.resolvedSystemImage
+        (node.document?.fileGlyph ?? .other).systemImage
     }
 
     /// New File and New Folder (in the folder, or beside the file), Rename and the location items,
@@ -1601,20 +2349,16 @@ private struct SidebarNodeRow: View {
 
         Divider()
 
-        Button {
+        MonknotMenuCommandButton(.rename) {
             actions.rename(item)
-        } label: {
-            Label("Rename", systemImage: "pencil")
         }
         .disabled(isBusy)
 
         actions.location.menuItems(for: item.url)
 
         if let document = node.document, document.capabilities.canExportPDF {
-            Button {
+            MonknotMenuCommandButton(.exportPDF) {
                 actions.exportPDF(document)
-            } label: {
-                Label("Export PDF…", systemImage: MonknotWorkspaceIcons.exportPDF)
             }
         }
 
@@ -1624,10 +2368,8 @@ private struct SidebarNodeRow: View {
 
         Divider()
 
-        Button(role: .destructive) {
+        MonknotMenuCommandButton(.moveToTrash) {
             actions.moveToTrash(item)
-        } label: {
-            Label("Move to Trash", systemImage: "trash")
         }
         .disabled(isBusy)
     }
@@ -1635,17 +2377,13 @@ private struct SidebarNodeRow: View {
     /// Copy, Cut, Paste and Duplicate, the same for files and folders.
     @ViewBuilder
     private var clipboardButtons: some View {
-        Button {
+        MonknotMenuCommandButton(.copy) {
             actions.copy(item.url)
-        } label: {
-            Label("Copy", systemImage: "doc.on.doc")
         }
         .disabled(isBusy)
 
-        Button {
+        MonknotMenuCommandButton(.cut) {
             actions.cut(item.url)
-        } label: {
-            Label("Cut", systemImage: "scissors")
         }
         .disabled(isBusy)
 
@@ -1653,10 +2391,8 @@ private struct SidebarNodeRow: View {
             actions.paste(visibleNode.destinationURL)
         }
 
-        Button {
+        MonknotMenuCommandButton(.duplicate) {
             actions.duplicate(item.url)
-        } label: {
-            Label("Duplicate", systemImage: "plus.square.on.square")
         }
         .disabled(isBusy)
     }
@@ -1676,6 +2412,7 @@ private struct SidebarNodeRow: View {
     private var fileDropDelegate: SidebarFileDropDelegate {
         SidebarFileDropDelegate(
             workspaceURL: actions.workspaceURL(),
+            destinationURL: visibleNode.destinationURL,
             drop: { urls, copying in actions.dropFileURLs(urls, visibleNode.destinationURL, copying) },
             targetingChanged: { isTargeted in
                 actions.dropTargetingChanged(node.id, visibleNode.destinationURL, isTargeted)
@@ -1696,6 +2433,19 @@ enum SidebarFileDrop {
         }
     }
 
+    /// A drop of `urls` into `destinationURL` would change nothing, or cannot happen: an item into
+    /// the folder it is already in, onto itself, or a folder into a folder inside it.
+    static func changesNothing(_ urls: [URL], destinationURL: URL) -> Bool {
+        guard !urls.isEmpty else { return false }
+        let destination = destinationURL.standardizedFileURL.path
+        return urls.allSatisfy { url in
+            let path = url.standardizedFileURL.path
+            return destination == (path as NSString).deletingLastPathComponent
+                || destination == path
+                || destination.hasPrefix(path + "/")
+        }
+    }
+
     static func operation(for urls: [URL], workspaceURL: URL?) -> NSDragOperation {
         guard !urls.isEmpty else { return [] }
         let isOptionPressed = NSEvent.modifierFlags.contains(.option)
@@ -1706,6 +2456,7 @@ enum SidebarFileDrop {
 /// A Finder drop on a sidebar row, proposing the operation `SidebarFileDrop` performs.
 private struct SidebarFileDropDelegate: DropDelegate {
     let workspaceURL: URL?
+    let destinationURL: URL
     let drop: ([URL], Bool) -> Void
     let targetingChanged: (Bool) -> Void
 
@@ -1727,7 +2478,13 @@ private struct SidebarFileDropDelegate: DropDelegate {
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        let operation = SidebarFileDrop.operation(for: draggedFileURLs, workspaceURL: workspaceURL)
+        let urls = draggedFileURLs
+        // Where it already is, or into itself: no badge, and a release slides the drag back.
+        if SidebarFileDrop.changesNothing(urls, destinationURL: destinationURL),
+           SidebarFileDrop.operation(for: urls, workspaceURL: workspaceURL) == .move {
+            return DropProposal(operation: .forbidden)
+        }
+        let operation = SidebarFileDrop.operation(for: urls, workspaceURL: workspaceURL)
         return DropProposal(operation: operation == .move ? .move : .copy)
     }
 
@@ -1735,6 +2492,10 @@ private struct SidebarFileDropDelegate: DropDelegate {
         targetingChanged(false)
         let urls = draggedFileURLs
         guard !urls.isEmpty else { return false }
+        if SidebarFileDrop.changesNothing(urls, destinationURL: destinationURL),
+           SidebarFileDrop.operation(for: urls, workspaceURL: workspaceURL) == .move {
+            return false
+        }
         drop(urls, SidebarFileDrop.operation(for: urls, workspaceURL: workspaceURL) == .copy)
         return true
     }
@@ -1788,6 +2549,7 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
         ])
 
         context.coordinator.hostingView = hostingView
+        mouse.treeView = hostingView
         return scrollView
     }
 
@@ -1797,6 +2559,7 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
         hostingView.keyDownHandler = keyDown
         hostingView.canPaste = canPaste
         hostingView.mouse = mouse
+        mouse.treeView = hostingView
         scrollView.thumbColor = thumbColor
 
         // A new selection scrolls into view once, after the rows that show it are laid out.
@@ -1820,6 +2583,10 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
 /// held as the mouse went up rather than whenever its handler runs.
 private final class SidebarTreeMouse {
     var modifierFlags: NSEvent.ModifierFlags = []
+    /// The tree's hosting view, in whose coordinates the rows lie.
+    weak var treeView: NSView?
+    /// The drag under way, which the hosting view hands to a file drag when it leaves the sidebar.
+    weak var dragSession: SidebarDragSession?
 }
 
 /// The selected row and its frame in the tree, which scrolls it into view.
@@ -1899,6 +2666,14 @@ private final class SidebarHostingView<Content: View>: SidebarMenuHostingView<Co
 
     override func mouseDragged(with event: NSEvent) {
         mouse?.modifierFlags = event.modifierFlags
+        if let session = mouse?.dragSession, session.isActive {
+            session.setCopies(event.modifierFlags.contains(.option))
+            // Out of the sidebar the item becomes a file drag, for the terminal, an editor or Finder.
+            if session.leavesSidebar(at: event.locationInWindow) {
+                session.handOff(event, from: self)
+                return
+            }
+        }
         super.mouseDragged(with: event)
     }
 
@@ -1919,10 +2694,50 @@ private enum SidebarTreeKeyCommand {
     case rename
     case duplicate
     case moveToTrash
+    /// ↑ ↓ (−1, 1), Home and End (past either end), with ⇧ `extending` the selection.
+    case move(Int, extending: Bool)
+    case selectParent
+    case open
+    case collapse(recursively: Bool)
+    case expand(recursively: Bool)
+    case collapseAll
+    case selectAll
+    case typeSelect(String)
 
     static let returnKeyCode: UInt16 = 36
     static let enterKeyCode: UInt16 = 76
     static let deleteKeyCode: UInt16 = 51
+    static let leftArrowKeyCode: UInt16 = 123
+    static let rightArrowKeyCode: UInt16 = 124
+    static let downArrowKeyCode: UInt16 = 125
+    static let upArrowKeyCode: UInt16 = 126
+    static let homeKeyCode: UInt16 = 115
+    static let endKeyCode: UInt16 = 119
+
+    /// Moving the selection and typing go on while a key is held; the commands that change files
+    /// act once per press.
+    var repeats: Bool {
+        switch self {
+        case .move, .collapse, .expand, .typeSelect: true
+        case .rename, .duplicate, .moveToTrash, .selectParent, .open, .collapseAll, .selectAll: false
+        }
+    }
+
+    /// Renaming, duplicating, trashing and opening, which wait while a file operation runs.
+    var changesFiles: Bool {
+        switch self {
+        case .rename, .duplicate, .moveToTrash, .open: true
+        case .move, .selectParent, .collapse, .expand, .collapseAll, .selectAll, .typeSelect: false
+        }
+    }
+
+    /// Text a name can start with: no control characters and none of the function keys' private
+    /// characters (arrows, Home, F1…).
+    static func isTypeSelectText(_ characters: String) -> Bool {
+        !characters.isEmpty && characters.unicodeScalars.allSatisfy { scalar in
+            !CharacterSet.controlCharacters.contains(scalar) && !(0xF700...0xF8FF).contains(scalar.value)
+        }
+    }
 }
 
 /// A New File or New Folder command for the sidebar's target folder.
@@ -1974,204 +2789,6 @@ private final class SidebarNativeScrollView<Content: View>: NSScrollView {
     }
 }
 
-private extension EnvironmentValues {
-    /// True while the pointer is over a sidebar row or the row is held down; its label and glyph
-    /// then take one step up the ink ladder (design.md §1.4).
-    @Entry var sidebarRowIsHighlighted = false
-}
-
-/// Fills a sidebar row: `sel` when selected, `press` while held, `hover` under the pointer.
-private struct SidebarRowButtonStyle: ButtonStyle {
-    let theme: AppTheme
-    let zoomScale: Double
-    var isSelected = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        RowBody(
-            configuration: configuration,
-            theme: theme,
-            isSelected: isSelected,
-            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
-        )
-    }
-
-    private struct RowBody: View {
-        let configuration: Configuration
-        let theme: AppTheme
-        let isSelected: Bool
-        let cornerRadius: CGFloat
-        @Environment(\.isEnabled) private var isEnabled
-        @State private var isHovered = false
-
-        var body: some View {
-            // Fill and ink changes animate colour only, here and in SidebarRowLabel, never a frame.
-            configuration.label
-                .environment(\.sidebarRowIsHighlighted, isHovered || configuration.isPressed)
-                .background {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(fill) }
-                }
-                .onHover { isHovered = $0 }
-                .monknotPointerCursor(enabled: isEnabled)
-        }
-
-        private var fill: Color {
-            MonknotRowButtonStyle.fill(
-                theme: theme,
-                isSelected: isSelected,
-                isActive: false,
-                isHovered: isHovered,
-                isPressed: configuration.isPressed,
-                isEnabled: isEnabled
-            )
-        }
-    }
-}
-
-/// A folder or group's disclosure chevron in the 18pt glyph column, nudged per design.md §8.6: the
-/// right chevron's ink sits left of centre in its box.
-struct SidebarDisclosureChevron: View {
-    let isExpanded: Bool
-    let theme: AppTheme
-    let zoomScale: Double
-
-    private func glyphScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    var body: some View {
-        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-            .font(.system(size: glyphScaled(10), weight: .regular))
-            .offset(x: isExpanded ? 0 : glyphScaled(0.5))
-            .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
-            .accessibilityHidden(true)
-    }
-}
-
-/// What a sidebar row shows in its glyph column.
-private enum SidebarRowGlyph {
-    case disclosure(isExpanded: Bool)
-    case kind(systemImage: String)
-}
-
-/// The sidebar's row primitive, design.md §0 and §10.4: 10 padding · 16 per depth · glyph in the 18
-/// column · 8 gap · 13 label · 10 padding. A folder's disclosure chevron takes the glyph column, so
-/// every row has one glyph, names at one depth share an edge, and a child steps right by one indent.
-private struct SidebarRowLabel<Trailing: View>: View {
-    let leading: SidebarRowGlyph
-    let title: String
-    let depth: Int
-    let isSelected: Bool
-    let theme: AppTheme
-    let zoomScale: Double
-    @ViewBuilder let trailing: () -> Trailing
-    @Environment(\.sidebarRowIsHighlighted) private var isHighlighted
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    var body: some View {
-        HStack(spacing: scaled(8)) {
-            leadingGlyph
-                .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(glyphColor) }
-                .accessibilityHidden(true)
-
-            Text(title)
-                .font(.system(size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale), weight: .regular))
-                .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(labelColor) }
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            trailing()
-        }
-        .padding(.leading, scaled(10) + CGFloat(depth) * scaled(16))
-        .padding(.trailing, scaled(10))
-        .frame(height: scaled(30))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-    }
-
-    @ViewBuilder
-    private var leadingGlyph: some View {
-        switch leading {
-        case .disclosure(let isExpanded):
-            SidebarDisclosureChevron(isExpanded: isExpanded, theme: theme, zoomScale: zoomScale)
-        case .kind(let systemImage):
-            MonknotFileKindGlyph(systemImage: systemImage, theme: theme, zoomScale: zoomScale)
-        }
-    }
-
-    // design.md §1.4: label `ink2` and glyph `ink3` at rest, both `ink` when hovered or held. The
-    // selected row's label is `ink` and its glyph `accent` (§1.3). Quiet Sidebar subdues all of it.
-    private var labelColor: Color {
-        theme.sidebarColor(
-            theme.foregroundColor,
-            opacity: isSelected || isHighlighted ? 1 : AppTheme.mutedInkOpacity
-        )
-    }
-
-    private var glyphColor: Color {
-        if isSelected {
-            return theme.sidebarColor(theme.accentColor)
-        }
-        return theme.sidebarColor(
-            theme.foregroundColor,
-            opacity: isHighlighted ? 1 : AppTheme.tertiaryInkOpacity
-        )
-    }
-}
-
-extension SidebarRowLabel where Trailing == EmptyView {
-    init(
-        leading: SidebarRowGlyph,
-        title: String,
-        depth: Int,
-        isSelected: Bool = false,
-        theme: AppTheme,
-        zoomScale: Double
-    ) {
-        self.init(
-            leading: leading,
-            title: title,
-            depth: depth,
-            isSelected: isSelected,
-            theme: theme,
-            zoomScale: zoomScale,
-            trailing: { EmptyView() }
-        )
-    }
-}
-
-private struct SaveStateIndicator: View {
-    let state: DocumentSaveState
-    let theme: AppTheme
-    let zoomScale: Double
-    let size: CGFloat
-
-    var body: some View {
-        Group {
-            switch state {
-            case .clean:
-                Color.clear
-            case .edited:
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(width: max(5, size * 0.48), height: max(5, size * 0.48))
-            case .saving:
-                MonknotProgressIndicator(size: size * 0.82, theme: theme)
-            case .failed:
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: max(9, size * 0.82), weight: .regular))
-                    .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
-            }
-        }
-        .frame(width: size, height: size)
-        .accessibilityLabel(state.accessibilityDescription)
-    }
-}
-
 // MARK: - Settings Button
 
 private struct SidebarSettingsButton: View {
@@ -2187,7 +2804,7 @@ private struct SidebarSettingsButton: View {
         Button {
             openSettings()
         } label: {
-            SidebarRowLabel(
+            MonknotListRowLabel(
                 leading: .kind(systemImage: MonknotWorkspaceIcons.settings),
                 title: "Settings",
                 depth: 0,
@@ -2202,9 +2819,9 @@ private struct SidebarSettingsButton: View {
                 )
             }
         }
-        .buttonStyle(SidebarRowButtonStyle(theme: theme, zoomScale: zoomScale))
-        .padding(.horizontal, scaled(6))
-        .padding(.vertical, scaled(5))
+        .buttonStyle(MonknotListRowButtonStyle(theme: theme, zoomScale: zoomScale))
+        .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
+        .padding(.vertical, scaled(6))
         .help("Open Settings (⌘,)")
     }
 }
@@ -2295,11 +2912,11 @@ private struct SidebarRecentDocumentsSection: View {
     }
 
     private var rowHeight: CGFloat {
-        scaled(30)
+        scaled(MonknotMetrics.rowHeightBase)
     }
 
     private var rowSpacing: CGFloat {
-        scaled(2)
+        scaled(MonknotMetrics.rowGapBase)
     }
 
     private var viewportHeight: CGFloat {
@@ -2324,8 +2941,8 @@ private struct SidebarRecentDocumentsSection: View {
                     zoomScale: zoomScale
                 )
             }
-            .buttonStyle(SidebarRowButtonStyle(theme: theme, zoomScale: zoomScale))
-            .padding(.horizontal, scaled(6))
+            .buttonStyle(MonknotListRowButtonStyle(theme: theme, zoomScale: zoomScale))
+            .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
             .help(isExpanded ? "Hide recent documents" : "Show recent documents")
             .accessibilityLabel("Recent documents")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
@@ -2337,7 +2954,7 @@ private struct SidebarRecentDocumentsSection: View {
                             Button {
                                 openDocument(entry.documentID)
                             } label: {
-                                SidebarRowLabel(
+                                MonknotListRowLabel(
                                     leading: .kind(systemImage: kindGlyph(entry)),
                                     title: entry.displayName,
                                     depth: 1,
@@ -2345,14 +2962,14 @@ private struct SidebarRecentDocumentsSection: View {
                                     zoomScale: zoomScale
                                 )
                             }
-                            .buttonStyle(SidebarRowButtonStyle(theme: theme, zoomScale: zoomScale))
+                            .buttonStyle(MonknotListRowButtonStyle(theme: theme, zoomScale: zoomScale, hasContextMenu: true))
                             .help(entry.relativePath)
                             .contextMenu {
                                 recentDocumentContextMenu(for: entry)
                             }
                         }
                     }
-                    .padding(.horizontal, scaled(6))
+                    .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
                 }
                 .frame(height: viewportHeight)
                 .padding(.bottom, scaled(6))
@@ -2362,10 +2979,8 @@ private struct SidebarRecentDocumentsSection: View {
 
     @ViewBuilder
     private func recentDocumentContextMenu(for entry: RecentDocumentEntry) -> some View {
-        Button {
+        MonknotMenuCommandButton(.open) {
             openDocument(entry.documentID)
-        } label: {
-            Label("Open", systemImage: "doc")
         }
 
         Divider()
@@ -2374,42 +2989,41 @@ private struct SidebarRecentDocumentsSection: View {
     }
 }
 
-/// A collapsible group header in the sidebar: the disclosure chevron in the glyph column, an eyebrow
-/// title (design.md §4.3) and a trailing count, on the row primitive's geometry.
+/// A collapsible group header in the sidebar: the disclosure chevron in the glyph column, a group
+/// header title (design.md §4.3) and a trailing count, on the row primitive's geometry.
 private struct SidebarGroupHeaderLabel: View {
     let title: String
     let count: Int
     let isExpanded: Bool
     let theme: AppTheme
     let zoomScale: Double
-    @Environment(\.sidebarRowIsHighlighted) private var isHighlighted
+    @Environment(\.monknotRowIsHighlighted) private var isHighlighted
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
+        // A group header rests at `ink3` and rises to `ink` under the pointer, as a row does.
         let ink = theme.sidebarColor(
             theme.foregroundColor,
-            opacity: isHighlighted ? 1 : AppTheme.tertiaryInkOpacity
+            opacity: isHighlighted ? 1 : theme.glyphInkOpacity
         )
-        HStack(spacing: scaled(8)) {
-            SidebarDisclosureChevron(isExpanded: isExpanded, theme: theme, zoomScale: zoomScale)
+        HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
+            MonknotDisclosureChevron(isExpanded: isExpanded, theme: theme, zoomScale: zoomScale)
 
             Text(title)
-                .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))
-                .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: zoomScale))
-                .textCase(.uppercase)
+                .font(MonknotTypography.groupHeader(theme: theme, zoomScale: zoomScale))
 
             Spacer(minLength: 0)
 
             Text("\(count)")
-                .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale), weight: .regular))
+                .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
                 .monospacedDigit()
         }
-        .foregroundStyle(ink)
-        .padding(.horizontal, scaled(10))
-        .frame(height: scaled(30))
+        .monknotStateStyle(ink)
+        .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
+        .frame(height: scaled(MonknotMetrics.rowHeightBase))
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
@@ -2440,8 +3054,8 @@ private extension WorkspaceGitFileStatus {
         switch self {
         case .modified: return Color(hex: theme.semanticColors.skill)
         case .added: return Color(hex: theme.semanticColors.diffAdded)
-        case .deleted: return Color(hex: theme.semanticColors.diffRemoved)
-        case .untracked: return theme.sidebarMutedColor()
+        case .deleted: return theme.dangerColor
+        case .untracked: return theme.sidebarColor(theme.foregroundColor, opacity: theme.glyphInkOpacity)
         case .renamed: return Color(hex: theme.semanticColors.skill)
         }
     }
@@ -2469,28 +3083,26 @@ private struct EmptySidebarView: View {
     /// like every other, or a quiet line while one opens.
     var body: some View {
         MonknotScrollView(theme: theme) {
-            VStack(alignment: .leading, spacing: scaled(2)) {
+            VStack(alignment: .leading, spacing: scaled(MonknotMetrics.rowGapBase)) {
                 if isLoadingWorkspace {
                     Text("Opening workspace…")
-                        .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale)))
+                        .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
                         .foregroundStyle(theme.tertiaryForegroundColor)
-                        .padding(.horizontal, scaled(10))
-                        .frame(height: scaled(30))
+                        .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
+                        .frame(height: scaled(MonknotMetrics.rowHeightBase))
                 } else if !availableWorkspaces.isEmpty {
                     Text("Workspaces")
-                        .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))
-                        .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: zoomScale))
-                        .textCase(.uppercase)
+                        .font(MonknotTypography.groupHeader(theme: theme, zoomScale: zoomScale))
                         .foregroundStyle(theme.tertiaryForegroundColor)
-                        .padding(.horizontal, scaled(10))
-                        .frame(height: scaled(30))
+                        .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
+                        .frame(height: scaled(MonknotMetrics.rowHeightBase))
                         .accessibilityAddTraits(.isHeader)
 
                     ForEach(availableWorkspaces.prefix(5)) { entry in
                         Button {
                             switchWorkspace(entry)
                         } label: {
-                            SidebarRowLabel(
+                            MonknotListRowLabel(
                                 leading: .kind(systemImage: "folder"),
                                 title: entry.displayName,
                                 depth: 0,
@@ -2498,14 +3110,14 @@ private struct EmptySidebarView: View {
                                 zoomScale: zoomScale
                             )
                         }
-                        .buttonStyle(SidebarRowButtonStyle(theme: theme, zoomScale: zoomScale))
+                        .buttonStyle(MonknotListRowButtonStyle(theme: theme, zoomScale: zoomScale))
                         .help((entry.path as NSString).abbreviatingWithTildeInPath)
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, scaled(6))
-            .padding(.vertical, scaled(6))
+            .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
+            .padding(.vertical, scaled(4))
         }
         .scrollContentBackground(.hidden)
     }
@@ -2543,7 +3155,7 @@ private struct MarkdownLinkMoveReviewSheet: View {
             VStack(alignment: .leading, spacing: scaled(12)) {
                 HStack(spacing: scaled(8)) {
                     Text(review.plan.sourceURL.lastPathComponent)
-                    Image(systemName: "arrow.right")
+                    MonknotSystemGlyph(systemImage: "arrow.right", nominalPointSizeBase: 13, theme: theme, zoomScale: zoomScale)
                         .foregroundStyle(theme.tertiaryForegroundColor)
                         .accessibilityHidden(true)
                     Text(review.plan.destinationURL.lastPathComponent)
@@ -2564,10 +3176,7 @@ private struct MarkdownLinkMoveReviewSheet: View {
                                     HStack(alignment: .firstTextBaseline, spacing: scaled(6)) {
                                         Text(rewrite.oldDestination)
                                             .foregroundStyle(theme.tertiaryForegroundColor)
-                                        Image(systemName: "arrow.right")
-                                            .font(.system(
-                                                size: MonknotMetrics.interfaceGlyph(10, theme: theme, zoomScale: zoomScale)
-                                            ))
+                                        MonknotSystemGlyph(systemImage: "arrow.right", nominalPointSizeBase: 12, theme: theme, zoomScale: zoomScale)
                                             .foregroundStyle(theme.tertiaryForegroundColor)
                                             .accessibilityHidden(true)
                                         Text(rewrite.newDestination)
@@ -2677,24 +3286,15 @@ private struct SidebarNameInputSheet: View {
                     .foregroundStyle(theme.foregroundColor)
                     .focused($isNameFocused)
                     .onSubmit(submit)
-                    .padding(.horizontal, scaled(10))
-                    .frame(height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
-                    .background(
-                        RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                            .fill(theme.insetFillColor)
-                    )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                            .strokeBorder(isNameFocused ? theme.accentColor : theme.borderColor, lineWidth: 1)
-                    }
+                    .monknotField(isFocused: isNameFocused, isInvalid: validationMessage != nil, theme: theme, zoomScale: zoomScale)
                     .onChange(of: name) { _, _ in
                         validationMessage = nil
                     }
 
                 if let validationMessage {
                     Text(validationMessage)
-                        .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale)))
-                        .foregroundStyle(Color(nsColor: .systemRed))
+                        .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+                        .foregroundStyle(theme.dangerColor)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

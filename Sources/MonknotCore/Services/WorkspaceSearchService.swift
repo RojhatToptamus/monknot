@@ -137,6 +137,10 @@ public struct WorkspaceSearchService: Sendable {
                     break
                 }
 
+                // A file already found not to be text costs nothing, not even the index's budget.
+                if textCache.unreadableError(for: document.url) != nil {
+                    continue
+                }
                 let isIndexed = textIndex.hasIndexedDocument(document.id)
                 let fileSize = Self.fileSize(for: document.url)
                 let canAutoIndex = !isIndexed
@@ -171,7 +175,7 @@ public struct WorkspaceSearchService: Sendable {
                     limit: collector.perFileQueryLimit,
                     pdfData: dirtyPDFDataByDocumentID[document.id]
                 )
-            case .image, .media, .nativePreview, .unsupported:
+            case .image, .media, .unsupported:
                 continue
             }
 

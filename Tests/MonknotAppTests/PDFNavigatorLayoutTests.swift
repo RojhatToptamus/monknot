@@ -63,8 +63,8 @@ final class PDFNavigatorLayoutTests: PDFNavigatorTestCase {
         XCTAssertTrue(container.pdfView.document === document)
         XCTAssertEqual(container.navigatorView.thumbnailView.thumbnailSize, NSSize(width: 184, height: 260))
         XCTAssertEqual(container.navigatorView.thumbnailView.maximumNumberOfColumns, 1)
-        XCTAssertEqual(container.navigatorView.outlineView.rowHeight, 30)
-        XCTAssertEqual(container.navigatorView.annotationTableView.rowHeight, 30)
+        XCTAssertEqual(container.navigatorView.outlineView.rowHeight, 28)
+        XCTAssertEqual(container.navigatorView.annotationTableView.rowHeight, 28)
         XCTAssertEqual(container.navigatorView.frame.width, 248, accuracy: 1)
         container.navigatorView.selectSection(.outline)
         XCTAssertNil(container.navigatorView.thumbnailView.pdfView)
@@ -123,19 +123,21 @@ final class PDFNavigatorLayoutTests: PDFNavigatorTestCase {
                 item.maximum,
                 "base width must clamp before scaling at zoom \(item.zoom)"
             )
+            // The bar over chrome rows: 40, 28 rows and 14 per level, the selection inside the 10 list
+            // inset, as the header's, with the text a row's 8 inside it.
             XCTAssertEqual(metrics.headerHeight, density(40))
-            XCTAssertEqual(metrics.headerInset, density(8))
+            XCTAssertEqual(metrics.headerInset, density(10))
             XCTAssertEqual(metrics.segmentedHeight, density(28))
-            XCTAssertEqual(metrics.contentInset, density(8))
+            XCTAssertEqual(metrics.contentInset, density(10))
             XCTAssertEqual(metrics.thumbnailLabelFontSize, text(12))
-            XCTAssertEqual(metrics.outlineRowHeight, density(30))
-            XCTAssertEqual(metrics.outlineIndentation, density(16))
+            XCTAssertEqual(metrics.outlineRowHeight, density(28))
+            XCTAssertEqual(metrics.outlineIndentation, density(14))
             XCTAssertEqual(metrics.outlineFontSize, text(13))
-            XCTAssertEqual(metrics.annotationRowHeight, density(30))
+            XCTAssertEqual(metrics.annotationRowHeight, density(28))
             XCTAssertEqual(metrics.annotationFontSize, text(13))
-            XCTAssertEqual(metrics.cellInset, density(10))
-            XCTAssertEqual(metrics.selectionHorizontalInset, density(4))
-            XCTAssertEqual(metrics.selectionVerticalInset, density(2))
+            XCTAssertEqual(metrics.cellInset, density(18))
+            XCTAssertEqual(metrics.selectionHorizontalInset, density(10))
+            XCTAssertEqual(metrics.selectionHorizontalInset, metrics.headerInset, "On the header's edge")
             XCTAssertEqual(metrics.selectionCornerRadius, density(8))
             XCTAssertEqual(metrics.emptyFontSize, text(12))
             XCTAssertEqual(metrics.emptyInset, density(16))
@@ -220,7 +222,7 @@ final class PDFNavigatorLayoutTests: PDFNavigatorTestCase {
             )
             XCTAssertEqual(
                 formattingHost.fittingSize.height,
-                MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale),
+                MonknotMetrics.interfaceControl(MonknotSegmentButton.cellHeightBase, theme: theme, zoomScale: zoomScale),
                 accuracy: 0.5
             )
 
@@ -253,15 +255,21 @@ final class PDFNavigatorLayoutTests: PDFNavigatorTestCase {
         XCTAssertEqual(navigator.metrics, metrics)
         XCTAssertEqual(navigator.thumbnailView.thumbnailSize, firstThumbnailSize)
         XCTAssertEqual(firstThumbnailSize, NSSize(width: 229, height: 324))
-        XCTAssertEqual(navigator.outlineView.rowHeight, 38)
-        XCTAssertEqual(navigator.outlineView.indentationPerLevel, 20)
-        XCTAssertEqual(navigator.annotationTableView.rowHeight, 38)
+        XCTAssertEqual(navigator.outlineView.rowHeight, 35)
+        XCTAssertEqual(navigator.outlineView.indentationPerLevel, 18)
+        XCTAssertEqual(navigator.annotationTableView.rowHeight, 35)
         XCTAssertEqual(navigator.metrics.thumbnailLabelFontSize, 15)
         XCTAssertTrue(navigator.foregroundColor.isEqual(NSColor(hex: theme.foreground)))
-        XCTAssertTrue(navigator.selectionColor.isEqual(NSColor(hex: theme.selectionBackground)))
+        // Selection is the neutral `selected` fill, never the text selection colour (design.md §1.4).
+        let selection = try XCTUnwrap(navigator.selectionColor.usingColorSpace(.sRGB))
+        let ink = try XCTUnwrap(NSColor(hex: theme.foreground).usingColorSpace(.sRGB))
+        XCTAssertEqual(selection.redComponent, ink.redComponent, accuracy: 0.002)
+        XCTAssertEqual(selection.greenComponent, ink.greenComponent, accuracy: 0.002)
+        XCTAssertEqual(selection.blueComponent, ink.blueComponent, accuracy: 0.002)
+        XCTAssertEqual(selection.alphaComponent, 0.10, accuracy: 0.002)
         XCTAssertTrue(
             NSColor(cgColor: try XCTUnwrap(navigator.layer?.backgroundColor))?
-                .isEqual(NSColor(hex: theme.sidebarSurfaceHex)) == true
+                .isEqual(NSColor(hex: theme.background)) == true
         )
         navigator.prepareForDismantle()
         pdfView.prepareForDismantle()
@@ -466,27 +474,13 @@ final class PDFNavigatorLayoutTests: PDFNavigatorTestCase {
         container.prepareForDismantle()
     }
 
-    func testNavigatorSelectedRowsUseScaledInsetsAndNativeInactiveColor() {
+    func testNavigatorSelectedRowsUseScaledInsetsInTheListGutter() {
         let metrics = PDFNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1.5)
         let row = PDFNavigatorTableRowView(frame: NSRect(x: 0, y: 0, width: 300, height: 45))
-        row.themedSelectionColor = .systemBlue
         row.selectionHorizontalInset = metrics.selectionHorizontalInset
-        row.selectionVerticalInset = metrics.selectionVerticalInset
         row.selectionCornerRadius = metrics.selectionCornerRadius
-        row.isEmphasized = true
 
-        XCTAssertEqual(row.selectionDrawingRect, NSRect(x: 6, y: 3, width: 288, height: 39))
+        XCTAssertEqual(row.selectionDrawingRect, NSRect(x: 15, y: 0, width: 270, height: 45))
         XCTAssertEqual(row.selectionCornerRadius, 12)
-        XCTAssertTrue(row.resolvedSelectionColor(isKeyWindow: true).isEqual(NSColor.systemBlue))
-        XCTAssertTrue(
-            row.resolvedSelectionColor(isKeyWindow: false)
-                .isEqual(NSColor.unemphasizedSelectedContentBackgroundColor)
-        )
-
-        row.isEmphasized = false
-        XCTAssertTrue(
-            row.resolvedSelectionColor(isKeyWindow: true)
-                .isEqual(NSColor.unemphasizedSelectedContentBackgroundColor)
-        )
     }
 }

@@ -44,6 +44,7 @@ final class SparkleUpdateSettings: ObservableObject {
 
 struct GeneralSettingsView: View {
     let uiTheme: AppTheme
+    let zoomScale: Double
     @StateObject private var updateSettings: SparkleUpdateSettings
     @AppStorage("Monknot.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Monknot.reopenLastWorkspace") private var reopenLastWorkspace = true
@@ -53,26 +54,23 @@ struct GeneralSettingsView: View {
     @AppStorage(ContentWidthPreference.key) private var contentWidthPercent = ContentWidthPreference.initialValue()
     @AppStorage(TerminalWorkingDirectoryPreference.key)
     private var terminalWorkingDirectory = TerminalWorkingDirectoryPreference.defaultValue.rawValue
-    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
     @MainActor
-    init(uiTheme: AppTheme, updater: SPUUpdater) {
+    init(uiTheme: AppTheme, zoomScale: Double, updater: SPUUpdater) {
         self.uiTheme = uiTheme
+        self.zoomScale = zoomScale
         _updateSettings = StateObject(
             wrappedValue: SparkleUpdateSettings(updater: updater)
         )
     }
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: uiTheme, zoomScale: settingsZoomScale)
-    }
-
     var body: some View {
-        SettingsPage(theme: uiTheme) {
-            SettingsSectionHeader(theme: uiTheme, title: "Behavior")
-            SettingsGroupCard(theme: uiTheme) {
+        SettingsPage(theme: uiTheme, zoomScale: zoomScale) {
+            SettingsSectionHeader(theme: uiTheme, zoomScale: zoomScale, title: "Behavior", isFirst: true)
+            SettingsGroupCard(theme: uiTheme, zoomScale: zoomScale) {
                 SettingsToggleRow(
                     theme: uiTheme,
+                    zoomScale: zoomScale,
                     title: "Pointer cursor on controls",
                     detail: "Non-standard on macOS; off by default",
                     isOn: $usePointerCursors
@@ -80,19 +78,22 @@ struct GeneralSettingsView: View {
 
                 SettingsToggleRow(
                     theme: uiTheme,
+                    zoomScale: zoomScale,
                     title: "Reopen last workspace on launch",
                     isOn: $reopenLastWorkspace
                 )
 
                 SettingsToggleRow(
                     theme: uiTheme,
-                    title: "Visual External Change Review",
+                    zoomScale: zoomScale,
+                    title: "Visual external change review",
                     detail: "Show a readable diff before reconciling text changed on disk",
                     isOn: $visualExternalChangeReviewEnabled
                 )
 
                 SettingsToggleRow(
                     theme: uiTheme,
+                    zoomScale: zoomScale,
                     title: "Font smoothing",
                     detail: "Use native macOS anti-aliasing",
                     showsDivider: false,
@@ -100,11 +101,11 @@ struct GeneralSettingsView: View {
                 )
             }
 
-            SettingsSectionHeader(theme: uiTheme, title: "Updates")
-                .padding(.top, scaled(22))
-            SettingsGroupCard(theme: uiTheme) {
+            SettingsSectionHeader(theme: uiTheme, zoomScale: zoomScale, title: "Updates")
+            SettingsGroupCard(theme: uiTheme, zoomScale: zoomScale) {
                 SettingsToggleRow(
                     theme: uiTheme,
+                    zoomScale: zoomScale,
                     title: "Automatically check for updates",
                     isOn: Binding(
                         get: { updateSettings.automaticallyChecksForUpdates },
@@ -114,6 +115,7 @@ struct GeneralSettingsView: View {
 
                 SettingsToggleRow(
                     theme: uiTheme,
+                    zoomScale: zoomScale,
                     title: "Automatically download updates",
                     showsDivider: false,
                     isDisabled: !updateSettings.canChangeAutomaticallyDownloadsUpdates,
@@ -124,13 +126,13 @@ struct GeneralSettingsView: View {
                 )
             }
 
-            SettingsSectionHeader(theme: uiTheme, title: "Reading")
-                .padding(.top, scaled(22))
-            SettingsGroupCard(theme: uiTheme) {
+            SettingsSectionHeader(theme: uiTheme, zoomScale: zoomScale, title: "Reading")
+            SettingsGroupCard(theme: uiTheme, zoomScale: zoomScale) {
                 SettingsSliderRow(
                     theme: uiTheme,
-                    title: "Content Width",
-                    detail: "Share of the document pane",
+                    zoomScale: zoomScale,
+                    title: "Content width",
+                    detail: "Share of the pane, up to a comfortable line length; 100% fills it",
                     value: $contentWidthPercent,
                     range: ContentWidthPreference.allowedRange,
                     suffix: "%"
@@ -138,19 +140,20 @@ struct GeneralSettingsView: View {
 
                 SettingsRow(
                     theme: uiTheme,
+                    zoomScale: zoomScale,
                     title: "Terminal working directory",
                     detail: "Used when a new terminal is created",
                     showsDivider: false
                 ) {
-                    MonknotSettingsMenuPicker(
-                        title: "Terminal working directory",
+                    MonknotPopUpButton(
+                        label: "Terminal working directory",
                         selection: $terminalWorkingDirectory,
-                        options: TerminalWorkingDirectoryPreference.allCases.map {
-                            ($0.rawValue, $0.title)
+                        items: TerminalWorkingDirectoryPreference.allCases.map {
+                            MonknotPopUpItem(id: $0.rawValue, title: $0.title)
                         },
-                        theme: uiTheme
+                        theme: uiTheme,
+                        zoomScale: zoomScale
                     )
-                    .frame(minWidth: scaled(172))
                 }
             }
         }

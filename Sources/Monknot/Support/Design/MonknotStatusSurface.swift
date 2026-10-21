@@ -56,13 +56,13 @@ struct MonknotEmptyState<Actions: View>: View {
 
             VStack(spacing: scaled(4)) {
                 Text(title)
-                    .font(MonknotTypography.emptyStateTitle(theme: theme, zoomScale: zoomScale))
+                    .font(MonknotTypography.panelTitle(theme: theme, zoomScale: zoomScale))
                     .foregroundStyle(theme.foregroundColor)
                     .multilineTextAlignment(.center)
 
                 if let detail {
                     Text(detail)
-                        .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
+                        .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
                         .foregroundStyle(theme.tertiaryForegroundColor)
                         .multilineTextAlignment(.center)
                         .lineLimit(3)

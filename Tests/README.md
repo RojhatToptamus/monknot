@@ -30,6 +30,10 @@ repeating the isolation audit and full-suite stress runs.
 - Workspace store, watcher, and file-operation tests coordinate asynchronous filesystem state.
 - AppKit focus/window tests, general pasteboard tests, PDFKit tests, and WebKit tests use
   platform-global or lifecycle-sensitive resources.
+- Menu and popover suites (`MonknotContextMenuTests`, `MonknotPopUpMenuTests`,
+  `MonknotPopoverTests`, the sidebar suites) share `MonknotContextMenuController.shared`,
+  `MonknotPopoverController.shared`, their event monitors and the app's activation; each closes
+  both controllers before it starts.
 - Terminal tests create PTYs, processes, dispatch sources, and file descriptors.
 - All other `MonknotAppTests` stay serial until they have both an isolation audit and a measured
   end-to-end benefit.

@@ -22,17 +22,39 @@ final class SidebarMenuHarness {
     var copiedRelativePaths: [URL] = []
     var exportedPDFs: [String] = []
     var openedDocumentIDs: [String] = []
+    private let defaultsSuiteName = "Monknot.SidebarTests.\(UUID().uuidString)"
+    /// The saved workspaces the header's switcher lists.
+    let library: WorkspaceLibraryStore
+    /// What the switcher's rows did: the workspaces chosen and removed, Add Workspace… and Manage
+    /// Workspaces….
+    var switchedWorkspaces: [SavedWorkspaceEntry] = []
+    var removedWorkspaces: [SavedWorkspaceEntry] = []
+    var addWorkspaceCount = 0
+    var manageWorkspacesCount = 0
 
-    init(store: WorkspaceStore, root: URL, theme: AppTheme = .defaultDark) {
+    private enum SwitcherAction {
+        case switched(SavedWorkspaceEntry)
+        case removed(SavedWorkspaceEntry)
+        case add
+        case manage
+    }
+
+    /// `savedWorkspaces` go into the library in order; a removed one leaves it, as in the app.
+    init(store: WorkspaceStore, root: URL, theme: AppTheme = .defaultDark, savedWorkspaces: [URL] = []) {
         self.store = store
         self.root = root
-        let defaults = UserDefaults(suiteName: "Monknot.SidebarTests.\(UUID().uuidString)")!
+        let defaults = UserDefaults(suiteName: defaultsSuiteName)!
         let library = WorkspaceLibraryStore(userDefaults: defaults)
+        for url in savedWorkspaces {
+            library.add(url)
+        }
+        self.library = library
         let search = WorkspaceSearchState()
         var copiedPathsSink: (URL) -> Void = { _ in }
         var copiedRelativeSink: (URL) -> Void = { _ in }
         var exportSink: (WorkspaceDocument) -> Void = { _ in }
         var openSink: (String) -> Void = { _ in }
+        var switcherSink: (SwitcherAction) -> Void = { _ in }
         let view = SidebarView(
             store: store,
             workspaceLibrary: library,
@@ -40,10 +62,10 @@ final class SidebarMenuHarness {
             searchOptions: .constant(MonknotSearchOptions()),
             theme: theme,
             zoomScale: 1,
-            openFolder: {},
-            switchWorkspace: { _ in },
-            removeWorkspace: { _ in },
-            manageWorkspaces: {},
+            openFolder: { switcherSink(.add) },
+            switchWorkspace: { switcherSink(.switched($0)) },
+            removeWorkspace: { switcherSink(.removed($0)) },
+            manageWorkspaces: { switcherSink(.manage) },
             newMarkdown: {},
             exportPDF: { exportSink($0) },
             openDocument: { id in openSink(id) },
@@ -51,8 +73,8 @@ final class SidebarMenuHarness {
             showWorkspaceSearch: {},
             dismissWorkspaceSearch: {},
             workspaceSearchFocusChanged: { _ in },
-            copyPath: { copiedPathsSink($0) },
-            copyRelativePath: { copiedRelativeSink($0) },
+            copyPath: { $0.forEach(copiedPathsSink) },
+            copyRelativePath: { $0.forEach(copiedRelativeSink) },
             newItemRequest: .constant(nil),
             pasteboard: pasteboard
         )
@@ -79,8 +101,24 @@ final class SidebarMenuHarness {
             self?.openedDocumentIDs.append(id)
             _ = store.selectDocument(id: id)
         }
+        switcherSink = { [weak self] action in
+            guard let self else { return }
+            switch action {
+            case .switched(let entry):
+                self.switchedWorkspaces.append(entry)
+            case .removed(let entry):
+                self.removedWorkspaces.append(entry)
+                _ = library.remove(id: entry.id)
+            case .add:
+                self.addWorkspaceCount += 1
+            case .manage:
+                self.manageWorkspacesCount += 1
+            }
+        }
     }
 
+    /// Closes the window and removes what the sidebar saved: its library's defaults and the
+    /// folders it kept open for this workspace.
     func close() {
         if let sheet = window.attachedSheet {
             window.endSheet(sheet)
@@ -88,6 +126,28 @@ final class SidebarMenuHarness {
         window.orderOut(nil)
         window.contentView = nil
         pasteboard.releaseGlobally()
+        UserDefaults().removePersistentDomain(forName: defaultsSuiteName)
+        UserDefaults.standard.removeObject(forKey: WorkspaceTreeExpansionPersistence().key(for: root))
+    }
+
+    /// Waits until the tree shows its rows and its height holds still for a moment: the sidebar
+    /// opens its saved folders and reports row frames after it first appears. False when it never
+    /// settled.
+    @discardableResult
+    func waitUntilLaidOut(timeout: TimeInterval = 3) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastHeight: CGFloat = -1
+        var stableChecks = 0
+        while Date() < deadline {
+            let height = treeDocumentView?.bounds.height ?? 0
+            if height > 0, rowCenter(0).flatMap(contextMenu(at:)) != nil {
+                stableChecks = height == lastHeight ? stableChecks + 1 : 0
+                if stableChecks >= 3 { return true }
+            }
+            lastHeight = height
+            try? await Task.sleep(nanoseconds: 30_000_000)
+        }
+        return false
     }
 
     // MARK: Geometry
@@ -110,9 +170,9 @@ final class SidebarMenuHarness {
     func rowRect(_ index: Int) -> NSRect? {
         guard let documentView = treeDocumentView else { return nil }
         let theme = AppTheme.defaultDark
-        let rowHeight = MonknotMetrics.scale(30, theme: theme, zoomScale: 1)
-        let spacing = MonknotMetrics.scale(2, theme: theme, zoomScale: 1)
-        let top = MonknotMetrics.scale(6, theme: theme, zoomScale: 1)
+        let rowHeight = MonknotMetrics.scale(MonknotMetrics.rowHeightBase, theme: theme, zoomScale: 1)
+        let spacing = MonknotMetrics.scale(MonknotMetrics.rowGapBase, theme: theme, zoomScale: 1)
+        let top = MonknotMetrics.scale(MonknotMetrics.listTopInsetBase, theme: theme, zoomScale: 1)
         let y = top + CGFloat(index) * (rowHeight + spacing)
         let local = NSRect(x: 20, y: y, width: documentView.bounds.width - 40, height: rowHeight)
         let flipped = documentView.isFlipped
@@ -428,7 +488,8 @@ class FileOperationsTestCase: WorkspaceStoreTestCase {
 
     func harness(_ store: WorkspaceStore, _ root: URL) async -> SidebarMenuHarness {
         let harness = SidebarMenuHarness(store: store, root: root)
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        let laidOut = await harness.waitUntilLaidOut()
+        XCTAssertTrue(laidOut, "The sidebar never showed its rows")
         return harness
     }
 }

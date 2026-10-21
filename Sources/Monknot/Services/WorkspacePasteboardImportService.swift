@@ -248,7 +248,7 @@ enum WorkspacePasteboardImportService {
                     isDirectory: false,
                     in: directoryURL
                 )
-                try data.write(to: destinationURL, options: .atomic)
+                try data.write(to: destinationURL, options: .withoutOverwriting)
                 importedURLs.append(destinationURL)
             case .capturedMarkdown(let markdown, let suggestedName):
                 let inboxURL = directoryURL.appendingPathComponent("inbox", isDirectory: true)
@@ -258,7 +258,7 @@ enum WorkspacePasteboardImportService {
                     isDirectory: false,
                     in: inboxURL
                 )
-                try markdown.write(to: destinationURL, atomically: true, encoding: .utf8)
+                try Data(markdown.utf8).write(to: destinationURL, options: .withoutOverwriting)
                 importedURLs.append(destinationURL)
             }
         }
@@ -599,7 +599,7 @@ enum MarkdownImageAssetService {
             let isExternal = !isContained(resolvedURL, in: root)
             let isImage = values.contentType?.conforms(to: .image) == true ||
                 UTType(filenameExtension: sourceURL.pathExtension)?.conforms(to: .image) == true
-            guard !isExternal || isImage || WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(sourceURL) else {
+            guard !isExternal || isImage || !sourceURL.lastPathComponent.hasPrefix(".") else {
                 throw MarkdownImageAssetError.unsupportedDroppedFile(sourceURL.lastPathComponent)
             }
             if isExternal, (values.fileSize ?? 0) > maximumExternalFileBytes {
@@ -683,7 +683,7 @@ enum MarkdownImageAssetService {
         }
     }
 
-    fileprivate static func escapeMarkdownLabel(_ value: String) -> String {
+    static func escapeMarkdownLabel(_ value: String) -> String {
         var escaped = value.replacingOccurrences(of: "\\", with: "\\\\")
         for character in ["[", "]", "(", ")"] {
             escaped = escaped.replacingOccurrences(of: character, with: "\\\(character)")
@@ -691,7 +691,7 @@ enum MarkdownImageAssetService {
         return escaped
     }
 
-    fileprivate static func percentEncodedMarkdownPath(_ path: String) -> String {
+    static func percentEncodedMarkdownPath(_ path: String) -> String {
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
         return path.precomposedStringWithCanonicalMapping
             .split(separator: "/", omittingEmptySubsequences: false)
@@ -850,7 +850,7 @@ private enum MarkdownImageAssetError: LocalizedError {
         case .noDroppedFiles:
             return "There are no new files to insert."
         case .unsupportedDroppedFile(let name):
-            return "\(name) is not a supported file. Folders, aliases, and binary files cannot be inserted."
+            return "\(name) can't be inserted. Folders, aliases and hidden files can't be added to a note."
         case .droppedFileTooLarge(let name):
             return "\(name) is too large to import."
         case .droppedFilesChanged:
@@ -886,24 +886,31 @@ extension WorkspaceStore {
     /// and the next Paste in Monknot copies or moves it. A file goes on it as it is now, unsaved
     /// changes included.
     func putItemOnPasteboard(at url: URL, cutting: Bool, pasteboard: NSPasteboard = .general) {
-        guard !isBusy else { return }
+        putItemsOnPasteboard(at: [url], cutting: cutting, pasteboard: pasteboard)
+    }
+
+    /// Copy and Cut for several workspace files and folders at once, as for one. An item inside
+    /// another one given goes with it.
+    func putItemsOnPasteboard(at urls: [URL], cutting: Bool, pasteboard: NSPasteboard = .general) {
+        let urls = Self.outermostItems(urls)
+        guard !isBusy, !urls.isEmpty else { return }
         let stamp: WorkspacePasteboardTransferStamp
         do {
-            stamp = try WorkspacePasteboardExportService.copyFile(
-                at: url,
-                unsavedText: dirtyTextByDocumentID[url.standardizedFileURL.path],
+            stamp = try WorkspacePasteboardExportService.copyFiles(
+                urls.map { WorkspacePasteboardCopiedItem(url: $0, unsavedText: dirtyTextByDocumentID[$0.path]) },
                 to: pasteboard
             )
         } catch {
-            // The pasteboard may no longer hold the item of an earlier Copy or Cut.
+            // The pasteboard may no longer hold the items of an earlier Copy or Cut.
             discardPendingTransfer()
-            errorMessage = "Could not copy \(url.lastPathComponent): \(error.localizedDescription)"
+            let name = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) items"
+            errorMessage = "Could not copy \(name): \(error.localizedDescription)"
             return
         }
         if cutting {
-            cutItem(at: url, pasteboardStamp: stamp)
+            cutItems(at: urls, pasteboardStamp: stamp)
         } else {
-            copyItem(at: url, pasteboardStamp: stamp)
+            copyItems(at: urls, pasteboardStamp: stamp)
         }
     }
 

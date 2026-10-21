@@ -28,29 +28,23 @@ struct TerminalDrawerView: View {
     var body: some View {
         VStack(spacing: 0) {
             if showsChrome {
-                MonknotChromePanel(
+                TerminalDrawerChromeRow(
+                    sessions: sessions,
+                    workingDirectory: workingDirectory,
+                    workspaceRoot: workspaceRoot,
                     theme: theme,
-                    showsBottomBorder: false,
-                    surface: theme.terminalSurfaceColor
-                ) {
-                    TerminalDrawerChromeRow(
-                        sessions: sessions,
-                        workingDirectory: workingDirectory,
-                        workspaceRoot: workspaceRoot,
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        isFullscreen: isFullscreen,
-                        toggleFullscreen: toggleFullscreen,
-                        close: close
-                    )
-                }
+                    zoomScale: zoomScale,
+                    isFullscreen: isFullscreen,
+                    toggleFullscreen: toggleFullscreen,
+                    close: close
+                )
             }
 
             terminalSurface
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.terminalSurfaceColor)
+        .background(theme.surfaceColor)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Terminal panel")
         .onAppear {
@@ -81,6 +75,8 @@ struct TerminalDrawerView: View {
     }
 }
 
+/// The terminal card's bar (design.md §10.6): the session scroller, then Expand, New Terminal and
+/// Hide Terminal Panel, 2 apart, outside the scroller so adding a session never moves them.
 struct TerminalDrawerChromeRow: View {
     @ObservedObject var sessions: TerminalSessionCollectionStore
     let workingDirectory: URL?
@@ -91,50 +87,61 @@ struct TerminalDrawerChromeRow: View {
     var toggleFullscreen: () -> Void = {}
     let close: () -> Void
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
-    }
-
     var body: some View {
-        HStack(spacing: scaled(6)) {
+        MonknotBar(theme: theme, zoomScale: zoomScale) {
             TerminalDrawerTabGroup(
                 sessions: sessions,
                 workingDirectory: workingDirectory,
                 workspaceRoot: workspaceRoot,
                 theme: theme,
-                zoomScale: zoomScale,
-                isFullscreen: isFullscreen,
-                toggleFullscreen: toggleFullscreen
+                zoomScale: zoomScale
             )
-            .frame(minWidth: scaled(60), maxWidth: .infinity)
+            .frame(maxWidth: .infinity)
             .layoutPriority(1)
+
+            MonknotBarGroupGap(theme: theme, zoomScale: zoomScale)
+
+            MonknotIconButton(
+                systemImage: isFullscreen
+                    ? "arrow.down.right.and.arrow.up.left"
+                    : "arrow.up.left.and.arrow.down.right",
+                label: isFullscreen ? "Restore Terminal Panel" : "Expand Terminal Panel",
+                theme: theme,
+                zoomScale: zoomScale,
+                // Its arrows say which way it goes; like the panel toggles, it never lights up.
+                action: toggleFullscreen
+            )
+            .accessibilityValue(isFullscreen ? "Fullscreen" : "Docked")
+
+            MonknotIconButton(
+                systemImage: "plus",
+                label: "New Terminal",
+                theme: theme,
+                zoomScale: zoomScale,
+                action: {
+                    sessions.createTerminal(in: workingDirectory, workspaceRoot: workspaceRoot)
+                }
+            )
 
             MonknotIconButton(
                 systemImage: "xmark",
                 label: "Hide Terminal Panel",
                 theme: theme,
                 zoomScale: zoomScale,
-                size: .compact,
                 action: close
             )
         }
-        .padding(.horizontal, scaled(8))
-        .frame(height: MonknotMetrics.interfaceControl(36, theme: theme, zoomScale: zoomScale))
-        .frame(maxWidth: .infinity)
     }
 }
 
-/// Stable terminal tab controls used in both drawer presentations. Every tab
-/// stays in one horizontal scroll lane; New Terminal remains fixed at its
-/// trailing edge and edge fades appear only when content is offscreen.
+/// The session tabs: every tab in one horizontal scroll lane, with edge fades only while tabs are
+/// offscreen.
 private struct TerminalDrawerTabGroup: View {
     @ObservedObject var sessions: TerminalSessionCollectionStore
     let workingDirectory: URL?
     var workspaceRoot: URL? = nil
     let theme: AppTheme
     let zoomScale: Double
-    let isFullscreen: Bool
-    let toggleFullscreen: () -> Void
 
     @State private var viewportTabFrames: [String: CGRect] = [:]
     @State private var revealRequest = HorizontalTabRevealRequest()
@@ -145,42 +152,33 @@ private struct TerminalDrawerTabGroup: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let viewportWidth = max(0, geometry.size.width - fixedControlsWidth)
+            let viewportWidth = max(0, geometry.size.width)
             let overflow = HorizontalTabOverflowState(
                 frames: viewportTabFrames,
                 viewportWidth: viewportWidth
             )
 
-            HStack(spacing: scaled(6)) {
-                ZStack {
-                    tabLane(viewportWidth: viewportWidth)
+            ZStack {
+                tabLane(viewportWidth: viewportWidth)
 
-                    HorizontalTabEdgeShadows(
-                        showsLeading: overflow.hasLeadingOverflow,
-                        showsTrailing: overflow.hasTrailingOverflow,
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        surface: theme.terminalSurfaceColor
-                    )
-                }
-                .frame(width: viewportWidth)
-
-                Rectangle()
-                    .fill(theme.separatorColor)
-                    .frame(width: 1, height: scaled(13))
-
-                fullscreenButton
-                newTerminalButton
+                HorizontalTabEdgeShadows(
+                    showsLeading: overflow.hasLeadingOverflow,
+                    showsTrailing: overflow.hasTrailingOverflow,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    surface: theme.surfaceColor
+                )
             }
+            .frame(width: viewportWidth)
         }
-        .frame(height: MonknotMetrics.interfaceControl(36, theme: theme, zoomScale: zoomScale))
+        .frame(height: MonknotMetrics.barHeight(theme: theme, zoomScale: zoomScale))
     }
 
     /// Every tab in one horizontal scroll lane, followed by window drag space.
     private func tabLane(viewportWidth: CGFloat) -> some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: scaled(3)) {
+                HStack(spacing: scaled(MonknotTab.spacingBase)) {
                     ForEach(Array(sessions.tabs.enumerated()), id: \.element.id) { offset, tab in
                         if let session = sessions.session(for: tab.id) {
                             TerminalTabChip(
@@ -237,40 +235,6 @@ private struct TerminalDrawerTabGroup: View {
         }
     }
 
-    private var fullscreenButton: some View {
-        MonknotIconButton(
-            systemImage: isFullscreen
-                ? "arrow.down.right.and.arrow.up.left"
-                : "arrow.up.left.and.arrow.down.right",
-            label: isFullscreen ? "Restore Terminal Panel" : "Expand Terminal Panel",
-            theme: theme,
-            zoomScale: zoomScale,
-            isActive: isFullscreen,
-            size: .compact,
-            action: toggleFullscreen
-        )
-        .accessibilityValue(isFullscreen ? "Fullscreen" : "Docked")
-    }
-
-    private var newTerminalButton: some View {
-        MonknotIconButton(
-            systemImage: "plus",
-            label: "New Terminal",
-            theme: theme,
-            zoomScale: zoomScale,
-            size: .compact,
-            action: {
-                sessions.createTerminal(in: workingDirectory, workspaceRoot: workspaceRoot)
-            }
-        )
-    }
-
-    private var fixedControlsWidth: CGFloat {
-        MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale) * 2
-            + scaled(6) * 3
-            + 1
-    }
-
     private func performPendingReveal(
         using proxy: ScrollViewProxy,
         viewportWidth: CGFloat
@@ -288,6 +252,8 @@ private struct TerminalDrawerTabGroup: View {
     }
 }
 
+/// A session tab: the shared tab inside the card, its glyph tinted by the run state (design.md §10.6)
+/// and its label the session's number, which is what tells sessions apart.
 private struct TerminalTabChip: View {
     let tab: TerminalTabItem
     @ObservedObject var session: TerminalSessionStore
@@ -299,125 +265,44 @@ private struct TerminalTabChip: View {
     let restart: () -> Void
     let kill: () -> Void
 
-    @State private var isHovered = false
-    @State private var isPressed = false
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private func textScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private func glyphScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    /// One width for every pill: the number keeps a two-digit slot and the close button its slot,
-    /// so hovering or selecting a session never moves the pills after it (design.md §10.6).
-    static let numberWidthTemplate = MonknotStableWidth.digits(2)
-
     var body: some View {
-        HStack(spacing: scaled(6)) {
-            Button(action: select) {
-                HStack(spacing: scaled(6)) {
-                    Image(systemName: "terminal")
-                        .font(.system(
-                            size: glyphScaled(14),
-                            weight: .regular
-                        ))
-                        .foregroundStyle(statusColor)
-                        .accessibilityHidden(true)
-
-                    Text("\(index)")
-                        .monknotReservingWidth(of: Self.numberWidthTemplate, alignment: .leading)
-                        .font(.system(size: textScaled(12), weight: .regular, design: .monospaced))
-                        .foregroundStyle(isSelected ? theme.foregroundColor : theme.mutedForegroundColor)
-                        .monospacedDigit()
-                }
-                .padding(.leading, scaled(8))
-                .frame(height: MonknotMetrics.interfaceControl(24, theme: theme, zoomScale: zoomScale))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
-            .accessibilityLabel(accessibilityLabel)
-            .accessibilityAddTraits(isSelected ? .isSelected : [])
-
-            MonknotTabCloseButton(
-                label: "Kill terminal \(index)",
-                theme: theme,
-                zoomScale: zoomScale,
-                isVisible: showsCloseButton,
-                action: kill
-            )
-            .padding(.trailing, scaled(8))
-        }
-        .frame(height: scaled(24), alignment: .leading)
-        .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
-        .overlay {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .strokeBorder(borderColor, lineWidth: 1)
-        }
-        .help(tab.title)
-        .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .animation(.easeOut(duration: 0.12), value: isSelected)
+        MonknotTab(
+            title: "\(index)",
+            systemImage: MonknotWorkspaceIcons.terminal,
+            isSelected: isSelected,
+            placement: .card,
+            glyphTint: statusTint,
+            hoverButton: MonknotTab.HoverButton(label: "Kill Terminal \(index)", action: kill),
+            theme: theme,
+            zoomScale: zoomScale,
+            select: select
+        )
         .contextMenu {
-            Button {
-                restart()
-            } label: {
-                Label("Restart Terminal", systemImage: "arrow.clockwise")
-            }
+            MonknotMenuCommandButton(.restartTerminal, action: restart)
 
-            Button(role: .destructive) {
-                kill()
-            } label: {
-                Label("Kill Terminal", systemImage: "trash")
-            }
+            Divider()
+
+            MonknotMenuCommandButton(.killTerminal, action: kill)
         }
-        .help(helpText)
+        .help(session.workingDirectory.path)
+        .accessibilityLabel(accessibilityLabel)
     }
 
-    private var background: Color {
-        if isSelected {
-            return theme.elevatedSurfaceColor
-        }
-        if isPressed {
-            return theme.pressedFillColor
-        }
-        if isHovered {
-            return theme.hoverFillColor
-        }
-        return .clear
-    }
-
-    private var showsCloseButton: Bool {
-        isSelected || isHovered
-    }
-
-    private var borderColor: Color {
-        isSelected ? theme.borderColor : .clear
-    }
-
-    private var statusColor: Color {
+    /// `ok` running, `danger` failed or exited non-zero; otherwise the tab's own ink.
+    private var statusTint: Color? {
         switch session.status {
         case .running:
             return Color(hex: theme.semanticColors.diffAdded)
         case .failed:
-            return Color(hex: theme.semanticColors.diffRemoved)
+            return theme.dangerColor
         case let .exited(status):
             if let status, status != 0 {
-                return Color(hex: theme.semanticColors.diffRemoved)
+                return theme.dangerColor
             }
-            return theme.tertiaryForegroundColor
+            return nil
         case .idle:
-            return theme.tertiaryForegroundColor
+            return nil
         }
-    }
-
-    private var helpText: String {
-        session.workingDirectory.path
     }
 
     private var accessibilityLabel: String {
@@ -448,7 +333,7 @@ private struct TerminalEmptySurface: View {
 
     var body: some View {
         MonknotEmptyState(
-            systemImage: "terminal",
+            systemImage: MonknotWorkspaceIcons.terminal,
             title: "No terminal session",
             detail: "Start a shell in this workspace.",
             theme: theme,
@@ -463,6 +348,6 @@ private struct TerminalEmptySurface: View {
                 action: createTerminal
             )
         }
-        .background(theme.terminalSurfaceColor)
+        .background(theme.surfaceColor)
     }
 }

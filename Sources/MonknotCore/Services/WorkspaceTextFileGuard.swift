@@ -48,18 +48,46 @@ public enum WorkspaceTextFileGuard {
         if let cache, let cached = cache.text(for: url) {
             return cached
         }
-
-        let data = try Data(contentsOf: url)
-        guard let text = decodeUTF8(data) else {
-            throw Error.unreadableEncoding(path: url.lastPathComponent)
-        }
-        // A NUL byte is valid UTF-8 but never appears in text; the editor would show it as garbage.
-        guard !containsNULByte(data) else {
-            throw Error.binaryContent(path: url.lastPathComponent)
+        if let known = cache?.unreadableError(for: url) {
+            throw known
         }
 
-        cache?.store(text: text, for: url)
-        return text
+        do {
+            // A large file whose first bytes are not text is refused before the rest is read: a
+            // build product or a database under an unknown extension can be many megabytes.
+            if try fileSize(at: url) > sniffedPrefixBytes, let error = try prefixError(of: url) {
+                throw error
+            }
+            let data = try Data(contentsOf: url)
+            guard let text = decodeUTF8(data) else {
+                throw Error.unreadableEncoding(path: url.lastPathComponent)
+            }
+            // A NUL byte is valid UTF-8 but never appears in text; the editor would show it as garbage.
+            guard !containsNULByte(data) else {
+                throw Error.binaryContent(path: url.lastPathComponent)
+            }
+            cache?.store(text: text, for: url)
+            return text
+        } catch let error as Error {
+            if case .fileTooLarge = error {} else {
+                cache?.markUnreadable(url, error: error)
+            }
+            throw error
+        }
+    }
+
+    /// How much of a large file is read first to tell text from binary data.
+    static let sniffedPrefixBytes = 8 * 1024
+
+    /// Why the first `sniffedPrefixBytes` of `url` are not text, or nil when they are. The prefix
+    /// may end inside a multi-byte character, which is not counted against it.
+    private static func prefixError(of url: URL) throws -> Error? {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let prefix = try handle.read(upToCount: sniffedPrefixBytes) ?? Data()
+        let decodes = (0...3).contains { decodeUTF8(prefix.dropLast($0)) != nil }
+        guard decodes else { return .unreadableEncoding(path: url.lastPathComponent) }
+        return containsNULByte(prefix) ? .binaryContent(path: url.lastPathComponent) : nil
     }
 
     private static let byteOrderMark = Data([0xEF, 0xBB, 0xBF])

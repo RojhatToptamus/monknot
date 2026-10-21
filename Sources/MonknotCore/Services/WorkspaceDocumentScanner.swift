@@ -24,16 +24,14 @@ public struct WorkspaceDocumentScanner: WorkspaceDocumentScanning {
         self.ignoredDirectoryNames = ignoredDirectoryNames
     }
 
-    /// Whether a default scan leaves out an item with this name: hidden names, ignored folders,
-    /// packages, and files that are not workspace documents.
+    /// Whether a default scan leaves out an item with this name: hidden names, ignored folders and
+    /// packages. Every other file is listed, whatever its type.
     public static func hidesItem(named name: String, isDirectory: Bool) -> Bool {
         if name.hasPrefix(".") {
             return true
         }
-        if isDirectory {
-            return defaultIgnoredDirectoryNames.contains(name) || WorkspaceDocumentSupport.isPackageName(name)
-        }
-        return !WorkspaceDocumentSupport.isWorkspaceDocumentName(name)
+        return isDirectory
+            && (defaultIgnoredDirectoryNames.contains(name) || WorkspaceDocumentSupport.isPackageName(name))
     }
 
     public func scan(rootURL: URL) throws -> WorkspaceDocumentScanResult {
@@ -86,11 +84,11 @@ public struct WorkspaceDocumentScanner: WorkspaceDocumentScanning {
                     children: children
                 ))
             } else if resourceValues.isRegularFile == true, resourceValues.isSymbolicLink != true {
-                guard let classification = WorkspaceDocumentSupport.workspaceClassification(for: url) else {
-                    continue
-                }
-
-                let document = WorkspaceDocument(url: url, rootURL: rootURL, classification: classification)
+                let document = WorkspaceDocument(
+                    url: url,
+                    rootURL: rootURL,
+                    classification: WorkspaceDocumentSupport.classification(for: url)
+                )
                 documents.append(document)
                 nodes.append(SidebarNode(
                     id: document.id,

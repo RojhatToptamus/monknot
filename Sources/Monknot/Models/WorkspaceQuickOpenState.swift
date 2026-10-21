@@ -19,6 +19,12 @@ final class WorkspaceQuickOpenState: ObservableObject {
         selectedIndex = min(max(0, selectedIndex + offset), matches.count - 1)
     }
 
+    /// The pointer moved onto a row: it takes the one highlight the keys move too.
+    func select(index: Int) {
+        guard matches.indices.contains(index), index != selectedIndex else { return }
+        selectedIndex = index
+    }
+
     func present(documents: [WorkspaceDocument]) {
         isPresented = true
         query = ""

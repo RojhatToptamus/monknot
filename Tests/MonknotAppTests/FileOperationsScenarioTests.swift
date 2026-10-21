@@ -187,6 +187,7 @@ final class FileOperationsScenarioTests: FileOperationsTestCase {
         XCTAssertEqual(names("Sub", in: root), ["a.txt"])
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("Sub/a.txt"), encoding: .utf8), "x\n")
         XCTAssertNil(store.errorMessage)
+        XCTAssertFalse(store.hasPendingCut, "The Cut ends")
     }
 
     func testCutThenCopyAnotherThenPastePastesTheCopyAndLeavesTheCutAlone() async throws {
@@ -249,8 +250,9 @@ final class FileOperationsScenarioTests: FileOperationsTestCase {
         XCTAssertEqual(store.documentText, "# N\n[a](a.md)\n")
     }
 
-    /// A moved note's own relative links change with it, unsaved ones too.
-    func testMovingANoteWhoseUnsavedTextHasARelativeLinkIsRefused() async throws {
+    /// A move that would leave a relative link in a note's unsaved text pointing nowhere waits
+    /// for a save; the same note with no such link moves, its unsaved text with it.
+    func testMovingANoteIsRefusedOnlyWhileItsUnsavedTextHasALinkTheMoveChanges() async throws {
         let root = try makeRoot()
         try write("# N\n", "Notes/n.md", in: root)
         try write("# Top\n", "top.md", in: root)
@@ -451,11 +453,13 @@ final class FileOperationsScenarioTests: FileOperationsTestCase {
         let store = try await openStore(root)
         let before = names("", in: root)
 
-        for name in ["", "   ", ".", "..", "a/b.md", "a:b.md", ".hidden.md", "notes.md", "NOTES.MD", "folder"] {
+        for name in ["", "   ", ".", "..", "a/b.md", "a:b.md", ".hidden.md", "notes.md", "NOTES.MD", "notes"] {
             XCTAssertNotNil(store.validationMessage(forNewItemNamed: name, in: nil, isDirectory: false), "File \(name)")
-            XCTAssertNotNil(store.validationMessage(forNewItemNamed: name, in: nil, isDirectory: true), "Folder \(name)")
             store.createFile(named: name)
             await idle(store)
+        }
+        for name in ["", "   ", ".", "..", "a/b.md", "a:b.md", ".hidden.md", "notes.md", "NOTES.MD", "folder"] {
+            XCTAssertNotNil(store.validationMessage(forNewItemNamed: name, in: nil, isDirectory: true), "Folder \(name)")
             store.createFolder(named: name)
             await idle(store)
         }
@@ -496,7 +500,8 @@ final class FileOperationsScenarioTests: FileOperationsTestCase {
         store.duplicateItem(at: root.appendingPathComponent("a.txt"))
         XCTAssertTrue(store.isBusy)
         store.duplicateItem(at: root.appendingPathComponent("a.txt"))
-        XCTAssertNotNil(store.errorMessage)
+        store.duplicateItem(at: root.appendingPathComponent("a.txt"))
+        XCTAssertEqual(store.errorMessage, "Wait for the current file operation to finish, then try again.")
         scanner.release()
         await idle(store)
         XCTAssertEqual(names("", in: root), ["a.txt", "a copy.txt"])
@@ -823,20 +828,20 @@ final class FileOperationsScenarioTests: FileOperationsTestCase {
     }
 
     /// A drop that moves a workspace item and copies in an outside item the sidebar does not
-    /// list still says the copy will not show.
+    /// list (a hidden file) still says the copy will not show.
     func testMixedDropStillSaysAnUnlistedCopyWillNotShow() async throws {
         let root = try makeRoot()
         let outside = try makeRoot()
         try write("a\n", "a.txt", in: root)
-        try write("zip", "archive.zip", in: outside)
+        try write("SECRET=1\n", ".env", in: outside)
         try mkdir("Sub", in: root)
         let store = try await openStore(root)
 
-        store.dropFileURLs([root.appendingPathComponent("a.txt"), outside.appendingPathComponent("archive.zip")], into: root.appendingPathComponent("Sub"))
+        store.dropFileURLs([root.appendingPathComponent("a.txt"), outside.appendingPathComponent(".env")], into: root.appendingPathComponent("Sub"))
         _ = await wait { self.names("Sub", in: root).count == 2 && !store.isBusy }
         await idle(store)
-        XCTAssertEqual(names("Sub", in: root), ["a.txt", "archive.zip"])
-        XCTAssertEqual(store.errorMessage, "Pasted archive.zip, but Monknot does not show this kind of item.")
+        XCTAssertEqual(names("Sub", in: root), ["a.txt", ".env"])
+        XCTAssertEqual(store.errorMessage, "Pasted .env, but Monknot does not show this kind of item.")
     }
 
     func testFinderDropWhileBusyIsReported() async throws {
@@ -855,13 +860,15 @@ final class FileOperationsScenarioTests: FileOperationsTestCase {
         await idle(store)
     }
 
-    /// Paste (and Finder drop) of items the sidebar does not list copies them in and says they
-    /// will not show, as New File does.
+    /// Paste (and Finder drop) copies in every item. Files of any type are listed; hidden files and
+    /// folders the sidebar hides are copied in too, and the message says they will not show, as
+    /// New File does.
     func testPastingFinderItemsTheSidebarDoesNotListIsNotSilent() async throws {
         let root = try makeRoot()
         let outside = try makeRoot()
         try write("zip", "archive.zip", in: outside)
         try write("doc", "report.docx", in: outside)
+        try write("SECRET=1\n", ".env", in: outside)
         try write("# x\n", "dist/inner.md", in: outside)
         try write("# shown\n", "shown.md", in: outside)
         let store = try await openStore(root)
@@ -869,20 +876,23 @@ final class FileOperationsScenarioTests: FileOperationsTestCase {
         defer { pasteboard.releaseGlobally() }
 
         pasteboard.clearContents()
-        pasteboard.writeObjects(["archive.zip", "report.docx", "dist", "shown.md"].map { outside.appendingPathComponent($0) as NSURL })
+        pasteboard.writeObjects(["archive.zip", "report.docx", ".env", "dist", "shown.md"].map { outside.appendingPathComponent($0) as NSURL })
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: nil))
         await idle(store)
-        XCTAssertEqual(names("", in: root), ["archive.zip", "report.docx", "dist", "shown.md"], "Not copied in")
-        XCTAssertEqual(store.rootNode?.children?.map(\.name) ?? [], ["shown.md"])
+        XCTAssertEqual(names("", in: root), ["archive.zip", "report.docx", ".env", "dist", "shown.md"], "Every item is copied in")
+        XCTAssertEqual(store.rootNode?.children?.map(\.name) ?? [], ["archive.zip", "report.docx", "shown.md"])
+        XCTAssertEqual(doc(store, "report.docx")?.kind, .unsupported)
         let message = try XCTUnwrap(store.errorMessage)
-        for name in ["archive.zip", "report.docx", "dist", "does not show these kinds of items"] {
+        for name in [".env", "dist", "does not show these kinds of items"] {
             XCTAssertTrue(message.contains(name), message)
         }
-        XCTAssertFalse(message.contains("shown.md"), message)
+        for name in ["archive.zip", "report.docx", "shown.md"] {
+            XCTAssertFalse(message.contains(name), message)
+        }
 
-        store.dropFileURLs([outside.appendingPathComponent("archive.zip")], into: nil)
+        store.dropFileURLs([outside.appendingPathComponent(".env")], into: nil)
         await idle(store)
-        XCTAssertEqual(store.errorMessage, "Pasted archive copy.zip, but Monknot does not show this kind of item.")
+        XCTAssertEqual(store.errorMessage, "Pasted .env copy, but Monknot does not show this kind of item.")
     }
 
     /// An unsaved note does not stop renaming or moving items it does not link to.
@@ -1034,19 +1044,6 @@ final class FileOperationsScenarioTests: FileOperationsTestCase {
             Set(store.documents.map(\.relativePath)) == ["a.txt", "a copy.txt"]
         }
         XCTAssertTrue(converged, "\(store.documents.map(\.relativePath))")
-    }
-
-    func testRapidRepeatedDuplicateRunsOnceAndReportsTheRest() async throws {
-        let root = try makeRoot()
-        try write("x\n", "a.txt", in: root)
-        let store = try await openStore(root)
-        for _ in 0..<3 {
-            store.duplicateItem(at: root.appendingPathComponent("a.txt"))
-        }
-        let message = store.errorMessage
-        await idle(store)
-        XCTAssertEqual(names("", in: root), ["a.txt", "a copy.txt"])
-        XCTAssertEqual(message, "Wait for the current file operation to finish, then try again.")
     }
 
     func testNewFileInAFolderDeletedBehindMonknotsBackReportsAnError() async throws {

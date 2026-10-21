@@ -110,12 +110,42 @@ final class WorkspaceReplaceServiceTests: XCTestCase {
         let document = WorkspaceDocument(url: note, rootURL: root)
 
         let batch = try WorkspaceReplaceService(textCache: WorkspaceTextContentCache()).restoreAndWrite(
-            previousTextsByDocumentID: [document.id: "original"],
+            WorkspaceReplaceUndoSnapshot(
+                previousTextsByDocumentID: [document.id: "original"],
+                replacedTextsByDocumentID: [document.id: "changed"]
+            ),
             documents: [document]
         )
 
         XCTAssertEqual(batch.fileResults.count, 1)
+        XCTAssertEqual(batch.skippedChangedCount, 0)
         XCTAssertEqual(try String(contentsOf: note, encoding: .utf8), "original")
+    }
+
+    /// Undo puts the old text back only where the replace's text still is: a file edited since (in
+    /// the terminal, by git, by a sync client) keeps its edit.
+    func testRestoreLeavesAFileChangedSinceTheReplaceAlone() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let edited = root.appendingPathComponent("edited.md")
+        let untouched = root.appendingPathComponent("untouched.md")
+        let gone = root.appendingPathComponent("gone.md")
+        try "replaced, then edited elsewhere".write(to: edited, atomically: true, encoding: .utf8)
+        try "replaced".write(to: untouched, atomically: true, encoding: .utf8)
+        let documents = [edited, untouched, gone].map { WorkspaceDocument(url: $0, rootURL: root) }
+        let snapshot = WorkspaceReplaceUndoSnapshot(
+            previousTextsByDocumentID: Dictionary(uniqueKeysWithValues: documents.map { ($0.id, "original") }),
+            replacedTextsByDocumentID: Dictionary(uniqueKeysWithValues: documents.map { ($0.id, "replaced") })
+        )
+
+        let batch = try WorkspaceReplaceService(textCache: WorkspaceTextContentCache()).restoreAndWrite(snapshot, documents: documents)
+
+        XCTAssertEqual(batch.fileResults.map(\.displayName), ["untouched.md"])
+        XCTAssertEqual(batch.skippedChangedCount, 2)
+        XCTAssertEqual(try String(contentsOf: edited, encoding: .utf8), "replaced, then edited elsewhere")
+        XCTAssertEqual(try String(contentsOf: untouched, encoding: .utf8), "original")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: gone.path), "Undo never recreates a file removed since")
     }
 
     func testPreviewMatchesReplaceWithoutWriting() throws {
@@ -187,7 +217,9 @@ final class WorkspaceReplaceServiceTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: note, encoding: .utf8), "keep me")
     }
 
-    func testWriteFailureStopsAtFailingDocumentInInputOrder() throws {
+    /// A file that cannot be written is left as it is, and every other file is still replaced: the
+    /// batch holds exactly the files written, so undoing it puts each of them back.
+    func testAFileThatCannotBeWrittenIsSkippedAndTheBatchHoldsWhatWasWritten() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -222,18 +254,21 @@ final class WorkspaceReplaceServiceTests: XCTestCase {
             )
         }
 
-        XCTAssertThrowsError(try WorkspaceReplaceService(
-            textCache: WorkspaceTextContentCache()
-        ).replaceAndWrite(
+        let batch = try WorkspaceReplaceService(textCache: WorkspaceTextContentCache()).replaceAndWrite(
             find: "replace",
             replacement: "updated",
             documents: documents
-        ))
+        )
         XCTAssertEqual(try String(contentsOf: first, encoding: .utf8), "updated first")
         XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "updated second")
         XCTAssertEqual(try String(contentsOf: failing, encoding: .utf8), "replace failing")
-        XCTAssertEqual(try String(contentsOf: fourth, encoding: .utf8), "replace fourth")
-        XCTAssertEqual(try String(contentsOf: fifth, encoding: .utf8), "replace fifth")
+        XCTAssertEqual(try String(contentsOf: fourth, encoding: .utf8), "updated fourth")
+        XCTAssertEqual(try String(contentsOf: fifth, encoding: .utf8), "updated fifth")
+        XCTAssertEqual(batch.fileResults.map(\.displayName), ["first.md", "second.md", "fourth.md", "fifth.md"])
+        XCTAssertEqual(batch.totalReplacements, 4)
+        XCTAssertEqual(batch.skippedChangedCount, 1)
+        XCTAssertNil(batch.previousTextsByDocumentID[documents[2].id], "Undo never writes the file it did not change")
+        XCTAssertEqual(batch.previousTextsByDocumentID[documents[3].id], "replace fourth")
     }
 
     private func makeTemporaryDirectory() throws -> URL {

@@ -137,15 +137,22 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ContentWidthPreference.editorHorizontalInset(
                 viewportWidth: textView.bounds.width,
                 contentWidthPercent: 80,
-                zoomScale: 1
+                zoomScale: 1,
+                fontSize: 14
             ),
             accuracy: 0.5
         )
         XCTAssertEqual(
-            textView.bounds.width - 2 * textView.textContainerInset.width,
-            textView.bounds.width * 0.8,
+            textView.bounds.width - 2 * (textView.textContainerInset.width + (textView.textContainer?.lineFragmentPadding ?? 0)),
+            ContentWidthPreference.textColumnWidth(viewportWidth: textView.bounds.width, contentWidthPercent: 80, fontSize: 14),
             accuracy: 0.5,
-            "The setting must describe the editable content column, not its margin"
+            "The setting must describe the editable text column, not its margin"
+        )
+        XCTAssertEqual(
+            ContentWidthPreference.textColumnWidth(viewportWidth: textView.bounds.width, contentWidthPercent: 80, fontSize: 14),
+            640 * 14 / 13 * 80 / 88,
+            accuracy: 0.5,
+            "A wide pane stops at the comfortable measure, which follows the font size and the setting"
         )
         let wideInset = textView.textContainerInset.width
 
@@ -159,7 +166,8 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ContentWidthPreference.editorHorizontalInset(
                 viewportWidth: textView.bounds.width,
                 contentWidthPercent: 80,
-                zoomScale: 1
+                zoomScale: 1,
+                fontSize: 14
             ),
             accuracy: 0.5
         )
@@ -192,7 +200,8 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ContentWidthPreference.editorHorizontalInset(
                 viewportWidth: textView.bounds.width,
                 contentWidthPercent: 60,
-                zoomScale: 1
+                zoomScale: 1,
+                fontSize: 14
             ),
             accuracy: 0.5
         )
@@ -247,13 +256,14 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ContentWidthPreference.editorHorizontalInset(
                 viewportWidth: textView.bounds.width,
                 contentWidthPercent: 100,
-                zoomScale: WorkspaceZoomPolicy.minimum
+                zoomScale: WorkspaceZoomPolicy.minimum,
+                fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum)
             ),
             accuracy: 0.5
         )
         XCTAssertEqual(
             textView.textContainerInset.height,
-            ContentWidthPreference.editorVerticalInset(zoomScale: WorkspaceZoomPolicy.minimum),
+            ContentWidthPreference.editorVerticalInset(fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum)),
             accuracy: 0.5
         )
         XCTAssertEqual(
@@ -277,13 +287,14 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ContentWidthPreference.editorHorizontalInset(
                 viewportWidth: textView.bounds.width,
                 contentWidthPercent: 100,
-                zoomScale: WorkspaceZoomPolicy.maximum
+                zoomScale: WorkspaceZoomPolicy.maximum,
+                fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum)
             ),
             accuracy: 0.5
         )
         XCTAssertEqual(
             textView.textContainerInset.height,
-            ContentWidthPreference.editorVerticalInset(zoomScale: WorkspaceZoomPolicy.maximum),
+            ContentWidthPreference.editorVerticalInset(fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum)),
             accuracy: 0.5
         )
         XCTAssertEqual(
@@ -295,36 +306,113 @@ final class ContentWidthPreferenceTests: XCTestCase {
         XCTAssertGreaterThan(textView.textContainerInset.height, compactInsets.height)
     }
 
+    /// A side pane's transition changes the editor's width on every frame and ends a live resize,
+    /// after which AppKit scrolls to keep the insertion point in view. The line at the top of the
+    /// window stays put instead (design.md §11), at the top of the document and partway down.
+    func testAWidthChangeKeepsTheLineAtTheTopOfTheWindow() throws {
+        var text = (1...240).map { "Line \($0): a sentence long enough to wrap once the column narrows." }
+            .joined(separator: "\n")
+        var sourceLocation: MarkdownSourceLocation?
+        var searchState = DocumentSearchState()
+        let host = NSHostingView(rootView: MarkdownTextEditor(
+            documentID: "/anchor.md",
+            text: Binding(get: { text }, set: { text = $0 }),
+            theme: .defaultLight,
+            fontSize: 13,
+            zoomScale: 1,
+            contentWidthPercent: 100,
+            fontSmoothing: true,
+            scrollPosition: nil,
+            sourceLocation: Binding(get: { sourceLocation }, set: { sourceLocation = $0 }),
+            searchState: Binding(get: { searchState }, set: { searchState = $0 }),
+            onScrollPositionChange: { _ in }
+        ))
+        host.frame = NSRect(x: 0, y: 0, width: 900, height: 400)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.contentView = nil }
+        window.layoutIfNeeded()
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendantsForContentWidthTesting().compactMap { $0 as? NSTextView }.first)
+        let clip = try XCTUnwrap(textView.enclosingScrollView?.contentView)
+        let layoutManager = try XCTUnwrap(textView.layoutManager)
+        let textContainer = try XCTUnwrap(textView.textContainer)
+        window.makeFirstResponder(textView)
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+
+        func resize(to width: CGFloat) {
+            textView.viewWillStartLiveResize()
+            for step in 1...6 {
+                host.frame.size.width = 900 + (width - 900) * CGFloat(step) / 6
+                window.layoutIfNeeded()
+                host.layoutSubtreeIfNeeded()
+            }
+            textView.viewDidEndLiveResize()
+        }
+
+        func lineAtTop() -> Int {
+            let point = NSPoint(x: 0, y: clip.bounds.minY - textView.textContainerOrigin.y + 1)
+            let glyph = layoutManager.glyphIndex(for: point, in: textContainer)
+            let index = layoutManager.characterIndexForGlyph(at: glyph)
+            return (textView.string as NSString).lineRange(for: NSRange(location: index, length: 0)).location
+        }
+
+        resize(to: 420)
+        XCTAssertEqual(clip.bounds.minY, 0, accuracy: 0.5, "At the top it stays at the top")
+        resize(to: 900)
+        XCTAssertEqual(clip.bounds.minY, 0, accuracy: 0.5)
+
+        let line = (textView.string as NSString).range(of: "Line 120:")
+        let glyph = layoutManager.glyphIndexForCharacter(at: line.location)
+        layoutManager.ensureLayout(forGlyphRange: NSRange(location: 0, length: glyph + 1))
+        let rect = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        clip.scroll(to: NSPoint(x: 0, y: rect.minY + textView.textContainerOrigin.y))
+        textView.enclosingScrollView?.reflectScrolledClipView(clip)
+        let top = lineAtTop()
+        XCTAssertEqual(top, line.location)
+
+        resize(to: 420)
+        XCTAssertEqual(lineAtTop(), top, "Partway down, the same line stays at the top as the text rewraps")
+        resize(to: 900)
+        XCTAssertEqual(lineAtTop(), top)
+    }
+
     func testEditorPlaceholderGeometryUsesTheSameZoomExtremes() {
         let viewportWidth: CGFloat = 120
 
+        // The text sits Preview's gutter (48 at 1×) from the pane's edge, the padding inside the inset.
         XCTAssertEqual(
             ContentWidthPreference.editorPlaceholderLeadingInset(
                 viewportWidth: viewportWidth,
                 contentWidthPercent: 100,
-                zoomScale: 1
+                zoomScale: 1,
+                fontSize: 13
             ),
-            28,
-            "The established 100% placeholder alignment must not move"
+            48 - 5 + 12
         )
-        XCTAssertEqual(ContentWidthPreference.editorVerticalInset(zoomScale: 1), 18)
+        // The margin above the first line is 2.5 × the text size, Preview's too (DocumentMeasure).
+        XCTAssertEqual(ContentWidthPreference.editorVerticalInset(fontSize: 13), 33)
+        XCTAssertEqual(ContentWidthPreference.editorVerticalInset(fontSize: 17 * 1.75), 74)
         XCTAssertEqual(ContentWidthPreference.editorLineFragmentPadding(zoomScale: 1), 5)
-        XCTAssertEqual(ContentWidthPreference.editorPlaceholderTopInset(zoomScale: 1), 26)
+        XCTAssertEqual(ContentWidthPreference.editorPlaceholderTopInset(fontSize: 13, zoomScale: 1), 41)
         XCTAssertEqual(ContentWidthPreference.editorPlaceholderMinimumFontSize(zoomScale: 1), 13)
 
         XCTAssertEqual(
             ContentWidthPreference.editorPlaceholderLeadingInset(
                 viewportWidth: viewportWidth,
                 contentWidthPercent: 100,
-                zoomScale: WorkspaceZoomPolicy.minimum
+                zoomScale: WorkspaceZoomPolicy.minimum,
+                fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum)
             ),
-            23
+            38 - 4 + 10
         )
         XCTAssertEqual(
             ContentWidthPreference.editorPlaceholderTopInset(
+                fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum),
                 zoomScale: WorkspaceZoomPolicy.minimum
             ),
-            21
+            CGFloat(DocumentMeasure.verticalMargin(fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum)))
+                + (8 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum)).rounded()
         )
         XCTAssertEqual(
             ContentWidthPreference.editorPlaceholderMinimumFontSize(
@@ -336,15 +424,18 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ContentWidthPreference.editorPlaceholderLeadingInset(
                 viewportWidth: viewportWidth,
                 contentWidthPercent: 100,
-                zoomScale: WorkspaceZoomPolicy.maximum
+                zoomScale: WorkspaceZoomPolicy.maximum,
+                fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum)
             ),
-            56
+            96 - 10 + 24
         )
         XCTAssertEqual(
             ContentWidthPreference.editorPlaceholderTopInset(
+                fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum),
                 zoomScale: WorkspaceZoomPolicy.maximum
             ),
-            52
+            CGFloat(DocumentMeasure.verticalMargin(fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum)))
+                + (8 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum)).rounded()
         )
         XCTAssertEqual(
             ContentWidthPreference.editorPlaceholderMinimumFontSize(
@@ -352,6 +443,49 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ),
             26
         )
+    }
+
+    /// design.md §10.11: switching view mode never moves the first line. Preview is handed its prose
+    /// size (the code size × 14⁄13) yet leaves the same space above the first line as Source.
+    func testPreviewLeavesSourcesTopMarginAtEveryTextSizeAndZoom() {
+        let service = MarkdownRenderService(stylesheet: "", rendererJavaScript: "")
+        for codeSize in [11.0, 12, 13, 14, 16, 17, 20, 24] {
+            for zoom in [WorkspaceZoomPolicy.minimum, 0.9, 1, 1.1, 1.25, 1.5, 1.75, WorkspaceZoomPolicy.maximum] {
+                let values = Dictionary(uniqueKeysWithValues: service.themeVariableValues(
+                    for: .defaultLight,
+                    zoomScale: zoom,
+                    baseFontSize: codeSize * DocumentMeasure.previewProseScale,
+                    contentWidthPercent: 88
+                ))
+                let source = ContentWidthPreference.editorVerticalInset(
+                    fontSize: CGFloat(codeSize * WorkspaceZoomPolicy.documentScale(zoom))
+                )
+                XCTAssertEqual(values["--document-margin-top"], "\(Int(source))px", "\(codeSize) pt at \(zoom)×")
+            }
+        }
+    }
+
+    /// design.md §10.11: on a narrow pane both modes keep the text the same least distance from the
+    /// pane's edge — Preview's gutter, which holds the block handles — at every zoom.
+    func testSourcesLeastInsetIsPreviewsGutterAtEveryZoom() {
+        let service = MarkdownRenderService(stylesheet: "", rendererJavaScript: "")
+        for zoom in [WorkspaceZoomPolicy.minimum, 0.9, 1, 1.1, 1.25, 1.5, 1.75, WorkspaceZoomPolicy.maximum] {
+            let values = Dictionary(uniqueKeysWithValues: service.themeVariableValues(
+                for: .defaultDark,
+                zoomScale: zoom,
+                baseFontSize: 13 * DocumentMeasure.previewProseScale,
+                contentWidthPercent: 88
+            ))
+            for viewportWidth: CGFloat in [200, 480] {
+                let textEdge = ContentWidthPreference.editorHorizontalInset(
+                    viewportWidth: viewportWidth,
+                    contentWidthPercent: 88,
+                    zoomScale: zoom,
+                    fontSize: 13 * CGFloat(WorkspaceZoomPolicy.documentScale(zoom))
+                ) + ContentWidthPreference.editorLineFragmentPadding(zoomScale: zoom)
+                XCTAssertEqual(values["--column-gutter"], "\(Int(textEdge))px", "\(viewportWidth) pt at \(zoom)×")
+            }
+        }
     }
 
     func testRenderedHTMLInstallsTheContentWidthConstraint() {

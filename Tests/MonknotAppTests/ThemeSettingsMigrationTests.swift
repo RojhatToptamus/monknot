@@ -394,36 +394,24 @@ final class ThemeSettingsMigrationTests: XCTestCase {
         XCTAssertNil(customizations["phosphor-dark"])
     }
 
-    func testQuietSidebarSecondaryInkStaysLegibleWithoutDoubleOpacity() {
-        for baseTheme in [AppTheme.defaultLight, AppTheme.defaultDark] {
-            let standard = baseTheme.sidebarMutedOpacity(prominence: 0.68)
-            let quietTheme = baseTheme.replacing(quietSidebar: true)
-            let quiet = quietTheme.sidebarMutedOpacity(prominence: 0.68)
-
-            XCTAssertLessThan(quiet, standard)
-            XCTAssertGreaterThanOrEqual(quiet, baseTheme.isDark ? 0.48 : 0.52)
-        }
-    }
-
     func testQuietSidebarSubduesRowInkOnceAndKeepsItLegible() {
-        for baseTheme in [AppTheme.defaultLight, AppTheme.defaultDark] {
+        let themes = (MonknotThemeCatalog.lightPresets + MonknotThemeCatalog.darkPresets).map(\.theme)
+        for baseTheme in themes {
             let quietTheme = baseTheme.replacing(quietSidebar: true)
             let floor = baseTheme.isDark ? 0.48 : 0.52
 
-            XCTAssertEqual(baseTheme.sidebarOpacity(AppTheme.mutedInkOpacity), AppTheme.mutedInkOpacity)
+            XCTAssertEqual(baseTheme.sidebarOpacity(baseTheme.labelInkOpacity), baseTheme.labelInkOpacity)
             XCTAssertEqual(quietTheme.sidebarOpacity(1), 0.8, accuracy: 0.0001)
 
             // A resting label (`ink2`) is subdued, but never below the legibility floor.
-            let quietLabel = quietTheme.sidebarOpacity(AppTheme.mutedInkOpacity)
-            XCTAssertLessThan(quietLabel, AppTheme.mutedInkOpacity)
+            let quietLabel = quietTheme.sidebarOpacity(quietTheme.labelInkOpacity)
+            XCTAssertLessThan(quietLabel, quietTheme.labelInkOpacity)
             XCTAssertGreaterThanOrEqual(quietLabel, floor)
 
-            // A resting glyph (`ink3`) is already under the floor, so it stays put instead of sinking
-            // toward the disabled `ink4`.
-            XCTAssertEqual(
-                quietTheme.sidebarOpacity(AppTheme.tertiaryInkOpacity),
-                AppTheme.tertiaryInkOpacity
-            )
+            // A resting glyph (`ink3`) never sinks under the floor or toward the disabled `ink4`.
+            let quietGlyph = quietTheme.sidebarOpacity(quietTheme.glyphInkOpacity)
+            XCTAssertGreaterThanOrEqual(quietGlyph, min(quietTheme.glyphInkOpacity, floor))
+            XCTAssertGreaterThan(quietGlyph, AppTheme.disabledInkOpacity)
         }
     }
 

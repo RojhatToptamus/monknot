@@ -33,22 +33,33 @@ short completions.
 <br>
 
 <p align="center">
-  <img src="docs/images/monknot-workspace.png" alt="Monknot showing Markdown source and its rendered preview side by side">
+  <img src="docs/images/monknot-workspace.png" alt="Monknot editing README.md in Preview, with the block menu open after typing /to below a to-do list">
 </p>
 
 <p align="center">
-  <sub>Split · Markdown source and rendered output, scrolling in sync</sub>
+  <sub>Preview · <code>/</code> opens the block menu, and every edit is written to the file as Markdown</sub>
 </p>
 
 ## Capabilities
 
 - **Local files:** Monknot reads and writes supported files in place. It does
-  not import them into a separate library.
-- **Markdown:** Edit with syntax highlighting, formatting controls, tabs, Quick
-  Open, heading navigation, daily notes, and wikilinks.
+  not import them into a separate library. The sidebar lists every file in the
+  folder except hidden ones, build folders such as `node_modules`, and packages;
+  archives, Office documents and other binary files open in their default app.
+- **Notebooks:** Jupyter notebooks (`.ipynb`) show their cells and outputs in
+  Preview and their JSON in Source.
+- **Markdown:** Edit with syntax highlighting, formatting shortcuts (⌘B, ⌘I,
+  ⌘E, ⌘K), tabs, Quick Open, heading navigation, daily notes, and wikilinks.
+- **Editing in Preview:** Edit Markdown as rendered text in the full-width
+  preview, with a block menu: `/` at the start of a line inserts text,
+  headings, lists, to-dos, toggles, callouts, quotes, tables, dividers, code,
+  images, video, audio, files, a new page or a table of contents. Drag a
+  block's handle to reorder it, or click it to turn the block into another
+  kind, duplicate or delete it. Selected text gets a floating format bar, and
+  `[[` lists workspace notes to link. Each edit is written to the file as
+  Markdown text, so syntax Monknot does not render is kept as written.
 - **Preview and export:** Render Markdown beside the source with synchronized
-  scrolling, or use a full-width preview. Export Markdown to PDF with page and
-  layout controls.
+  scrolling. Export Markdown to PDF with page and layout controls.
 - **Search and replace:** Search text files and selectable PDF text across a
   folder. Preview and scope multi-file replacements, then undo the last batch.
 - **PDF:** Add highlights, underlines, strikeouts, drawings, and text boxes.
@@ -71,25 +82,38 @@ completion.
 Apple Writing Tools are available on macOS 15.2 or later when macOS reports
 that they are ready.
 
+Typo fixes, reviewed repairs and on-device completions work the same way when
+you edit Markdown in Preview as in the source, except inside table cells, where
+Preview does not check or complete text. System inline predictions appear only
+in the source, and Show Writing Tools in Preview switches to the source and
+opens Writing Tools there.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="website/shots/writing-assistance-light.gif">
     <source media="(prefers-color-scheme: dark)" srcset="website/shots/writing-assistance.gif">
-    <img src="website/shots/writing-assistance.gif" width="800" height="520" alt="Monknot editing Field-brief.txt. The demo corrects a typo, presents a grammar repair for review, accepts a full on-device completion, and opens Apple Writing Tools.">
+    <img src="website/shots/writing-assistance.gif" width="800" height="520" alt="Monknot editing Field-brief.txt in Source. The demo offers a sentence's typos and grammar slip as one repair for review and takes it with Tab, accepts a full on-device completion by holding Tab, and opens Apple Writing Tools.">
   </picture>
 </p>
 
 <p align="center">
-  <sub>Inline typo fixes · Reviewed sentence repairs · On-device completions · Apple Writing Tools</sub>
+  <sub>Reviewed sentence repairs · On-device completions · Apple Writing Tools</sub>
 </p>
 
 <p align="center">
-  <img src="docs/images/monknot-pdf-dark.png" width="49%" alt="Monknot PDF reader with annotation tools">
-  <img src="docs/images/monknot-terminal-dark.png" width="49%" alt="Monknot with terminal sessions beside the active document">
+  <img src="docs/images/monknot-pdf.png" alt="Monknot showing an exported PDF with a highlight and an underline, and the PDF markup tools above it">
 </p>
 
 <p align="center">
-  <sub>PDF · Terminal</sub>
+  <sub>PDF · Highlight, underline, strike out, draw and add text boxes</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/monknot-terminal.png" alt="Monknot with README.md in Preview beside a terminal session that ran wc and grep in the workspace folder">
+</p>
+
+<p align="center">
+  <sub>Terminal · New zsh sessions start in the open document's folder, beside the editor</sub>
 </p>
 
 ## Install

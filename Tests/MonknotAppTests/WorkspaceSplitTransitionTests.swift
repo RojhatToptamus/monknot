@@ -185,6 +185,106 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
         XCTAssertTrue(controller.terminalItem.isCollapsed)
     }
 
+    /// design.md §10.0: the document and terminal sit on rounded cards, 6 from every window edge and
+    /// from each other, and the document card stays put when a pane opens or closes.
+    func testDocumentAndTerminalSitOnCardsSixPointsFromEveryEdge() throws {
+        let recorder = PresentationRecorder()
+        let controller = makeController(terminalPresented: true, recorder: recorder)
+        controller.cardStyle = WorkspaceCardStyle(
+            documentBackground: .white,
+            terminalBackground: .white,
+            border: .gray,
+            cornerRadius: 12,
+            inset: WorkspaceSplitMetrics.dividerThickness
+        )
+        let window = mount(controller, width: 1_400)
+        layout(window, controller)
+        let gap = WorkspaceSplitMetrics.dividerThickness
+        let split = controller.splitView
+        func card(_ index: Int) throws -> WorkspaceCardView {
+            try XCTUnwrap(Self.firstCard(in: split.arrangedSubviews[index]))
+        }
+        func frame(_ view: NSView) -> NSRect { view.convert(view.bounds, to: split) }
+
+        let documentCard = try card(1)
+        let terminalCard = try card(2)
+        XCTAssertEqual(documentCard.cornerRadius, 12)
+        XCTAssertEqual(frame(documentCard).minX - split.arrangedSubviews[0].frame.maxX, gap, accuracy: 0.5, "Sidebar to card")
+        XCTAssertEqual(frame(terminalCard).minX - frame(documentCard).maxX, gap, accuracy: 0.5, "Card to card")
+        XCTAssertEqual(split.bounds.maxX - frame(terminalCard).maxX, gap, accuracy: 0.5, "Card to the trailing edge")
+        func bottomGap(_ view: NSView) -> CGFloat {
+            split.isFlipped ? split.bounds.maxY - frame(view).maxY : frame(view).minY - split.bounds.minY
+        }
+        XCTAssertEqual(bottomGap(documentCard), gap, accuracy: 0.5, "Card to the bottom edge")
+        XCTAssertEqual(bottomGap(terminalCard), gap, accuracy: 0.5)
+        XCTAssertNil(Self.firstCard(in: split.arrangedSubviews[0]).map { $0.ringColor == .gray ? $0 : nil } ?? nil, "The sidebar has no card")
+
+        // Closing the terminal leaves its divider as the trailing margin.
+        update(controller, sidebarPresented: true, terminalPresented: false, recorder: recorder)
+        layout(window, controller)
+        XCTAssertEqual(split.bounds.maxX - frame(documentCard).maxX, gap, accuracy: 0.5)
+
+        // Closing the sidebar leaves its divider as the leading margin.
+        update(controller, sidebarPresented: false, terminalPresented: false, recorder: recorder)
+        layout(window, controller)
+        XCTAssertEqual(frame(documentCard).minX - split.bounds.minX, gap, accuracy: 0.5)
+        XCTAssertEqual(split.bounds.maxX - frame(documentCard).maxX, gap, accuracy: 0.5)
+    }
+
+    private static func firstCard(in view: NSView) -> WorkspaceCardView? {
+        if let card = view as? WorkspaceCardView, card.cornerRadius > 0 { return card }
+        for subview in view.subviews {
+            if let card = firstCard(in: subview) { return card }
+        }
+        return nil
+    }
+
+    /// The document is laid out live while a side pane moves, so its text reflows with the card on
+    /// every frame and nothing jumps when the pane stops (design.md §11). (A web view keeps still
+    /// on its own; see `WebViewPaneTransitionHold`.)
+    func testDocumentFollowsItsPaneOnEveryFrameWhileASidePaneMoves() {
+        let recorder = PresentationRecorder()
+        let controller = makeController(terminalPresented: false, recorder: recorder)
+        let window = mount(controller, width: 1_280)
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        layout(window, controller)
+        let document = controller.detailHostingController.view
+        let documentPane = controller.splitView.arrangedSubviews[1]
+        let restingWidth = documentPane.frame.width
+        let sidebarWidth = controller.splitView.arrangedSubviews[0].frame.width
+        // The divider stays at the window edge as the margin around the card (design.md §10.0).
+        let finalWidth = restingWidth + sidebarWidth
+
+        update(controller, sidebarPresented: false, terminalPresented: false, recorder: recorder, animated: true)
+        var widths: [CGFloat] = []
+        let deadline = Date().addingTimeInterval(MonknotMotion.paneTransitionDuration * 2)
+        while Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            let paneWidth = documentPane.frame.width
+            guard paneWidth > restingWidth + 1, paneWidth < finalWidth - 1 else { continue }
+            widths.append(document.frame.width)
+            XCTAssertEqual(document.frame.width, documentPane.bounds.width, accuracy: 0.5, "The document fills its pane mid-transition")
+        }
+        XCTAssertGreaterThan(Set(widths.map { Int($0) }).count, 1, "Precondition: the sidebar animates closed through several widths")
+        XCTAssertEqual(widths, widths.sorted(), "The width only grows as the sidebar closes")
+        XCTAssertTrue(controller.sidebarItem.isCollapsed)
+        XCTAssertEqual(document.frame.width, documentPane.bounds.width, accuracy: 0.5, "At rest the document fills its pane")
+
+        update(controller, sidebarPresented: false, terminalPresented: true, recorder: recorder, animated: true)
+        let terminalDeadline = Date().addingTimeInterval(MonknotMotion.paneTransitionDuration * 2)
+        var sawTerminalMove = false
+        while Date() < terminalDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            let terminal = controller.splitView.arrangedSubviews[2]
+            guard !terminal.isHidden, terminal.frame.width > 1, terminal.frame.width < controller.terminalHostingController.view.frame.width - 1 else { continue }
+            sawTerminalMove = true
+            XCTAssertEqual(document.frame.width, documentPane.bounds.width, accuracy: 0.5, "The document fills its pane while the terminal opens")
+        }
+        XCTAssertTrue(sawTerminalMove, "Precondition: the terminal animates open")
+        XCTAssertEqual(document.frame.width, documentPane.bounds.width, accuracy: 0.5)
+    }
+
     func testTrafficLightsStayPutWhileSidePanesOpenAndClose() async throws {
         let model = ChromeToggleModel(layoutScale: 1)
         let root = VStack(spacing: 0) {

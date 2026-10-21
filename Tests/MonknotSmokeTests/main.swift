@@ -45,7 +45,7 @@ defer { try? FileManager.default.removeItem(at: root) }
 try write("# Monknot\ntext-only-token", to: root.appendingPathComponent("README.md"))
 try write("<p>html-only-token</p>", to: root.appendingPathComponent("Notes/Preview.html"))
 try writeSearchablePDF("pdf-only-token", to: root.appendingPathComponent("Guide.pdf"))
-try write("ignored", to: root.appendingPathComponent("archive.zip"))
+try write("text-only-token", to: root.appendingPathComponent("archive.zip"))
 try FileManager.default.createSymbolicLink(
     at: root.appendingPathComponent("Loop"),
     withDestinationURL: root
@@ -53,8 +53,12 @@ try FileManager.default.createSymbolicLink(
 
 let scan = try WorkspaceDocumentScanner().scan(rootURL: root)
 expect(
-    scan.documents.map(\.relativePath).sorted() == ["Guide.pdf", "Notes/Preview.html", "README.md"],
-    "scanner must retain only supported workspace documents"
+    scan.documents.map(\.relativePath).sorted() == ["Guide.pdf", "Notes/Preview.html", "README.md", "archive.zip"],
+    "scanner must list every file"
+)
+expect(
+    scan.documents.first { $0.relativePath == "archive.zip" }?.capabilities.canSearchText == false,
+    "a binary file must never be searched"
 )
 expect(!scan.root.children!.contains { $0.name == "Loop" }, "scanner must not cross symlink boundaries")
 

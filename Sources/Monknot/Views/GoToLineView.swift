@@ -40,14 +40,14 @@ struct GoToLineView: View {
 
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale)))
-                        .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
+                        .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+                        .foregroundStyle(theme.dangerColor)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, scaled(16))
+                        .padding(.horizontal, scaled(MonknotCommandOverlayMetrics.contentInsetBase))
                         .frame(height: scaled(MonknotCommandOverlayMetrics.footerHeightBase))
                         .overlay(alignment: .top) {
-                            Rectangle().fill(theme.separatorColor).frame(height: 1)
+                            MonknotCommandOverlaySeparator(theme: theme)
                         }
                         .accessibilityLabel("Go to line error: \(errorMessage)")
                 } else {

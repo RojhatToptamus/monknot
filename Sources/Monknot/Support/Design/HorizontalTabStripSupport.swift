@@ -80,21 +80,19 @@ struct HorizontalTabEdgeShadows: View {
     var body: some View {
         HStack(spacing: 0) {
             edgeShadow(isLeading: true)
-                .opacity(showsLeading ? 1 : 0)
+                .monknotStateOpacity(showsLeading ? 1 : 0)
 
             Spacer(minLength: 0)
 
             edgeShadow(isLeading: false)
-                .opacity(showsTrailing ? 1 : 0)
+                .monknotStateOpacity(showsTrailing ? 1 : 0)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-        .animation(MonknotMotion.hoverAnimation, value: showsLeading)
-        .animation(MonknotMotion.hoverAnimation, value: showsTrailing)
     }
 
     private func edgeShadow(isLeading: Bool) -> some View {
-        let fill = surface ?? theme.contentSurfaceColor
+        let fill = surface ?? theme.surfaceColor
         return LinearGradient(
             stops: isLeading
                 ? [
