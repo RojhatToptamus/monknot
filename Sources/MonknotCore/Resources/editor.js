@@ -7575,6 +7575,16 @@
         }
         break;
       }
+      // The block menu's field takes focus a moment after the menu opens (⌘/); a key typed before
+      // then reaches the text, and is the menu's all the same.
+      if (blockMenu.isOpen) {
+        if (blockMenu.handleNavigation(event)) return true;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          blockMenu.close("escape");
+          return true;
+        }
+      }
       if (event.key === "Escape" && formatBar.classList.contains("mk-visible")) {
         event.preventDefault();
         hideFormatBar();

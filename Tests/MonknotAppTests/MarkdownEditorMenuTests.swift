@@ -23,6 +23,25 @@ final class MarkdownEditorMenuTests: WorkspaceStoreTestCase {
 
     // MARK: - One menu at a time
 
+    /// The block menu's field takes focus a moment after ⌘/ opens the menu: Esc pressed before then
+    /// still closes it, rather than reaching the text and leaving the menu open.
+    func testEscapeRightAfterTheShortcutClosesTheBlockMenu() async throws {
+        let fixture = try await makeFixture(markdown: "Alpha\n")
+        try await fixture.setSelection(3)
+        let menus = try await fixture.evaluate("""
+        (() => {
+          const root = document.getElementById('content');
+          const press = (key, metaKey) => root.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey, bubbles: true, cancelable: true }));
+          const open = () => [...document.querySelectorAll('.mk-menu.mk-visible')].map((menu) => menu.getAttribute('aria-label'));
+          press('/', true);
+          const opened = open();
+          press('Escape', false);
+          return [opened.join(','), open().join(',')];
+        })()
+        """) as? [String]
+        XCTAssertEqual(menus, ["Block", ""], "⌘/ opens the block menu, and Esc closes it before its field has focus")
+    }
+
     func testOpeningAMenuClosesTheOneAlreadyOpen() async throws {
         let fixture = try await makeFixture(markdown: "Alpha\n\nBeta\n")
         try await fixture.setSelection(5)
