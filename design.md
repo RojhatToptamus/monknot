@@ -1038,12 +1038,15 @@ a 10 badge for a pinned tab (`pin.fill`, `ink3`) or a file missing on disk (`dan
   truncation — that can only clip the tail and would append a second ellipsis to an already
   middle-elided string, taking the extension with it.
 - **Close:** a 9pt semibold `xmark` in a 16 round target, `ink2` → `ink` with the `hover` fill under
-  the pointer. It takes the glyph's place while the pointer is over the tab, active or not, and VoiceOver reaches it as the tab's named action. A pinned tab has none. ⌘W closes the
+  the pointer. It takes the glyph's place while the pointer is over the tab, active or not, and VoiceOver reaches it as the tab's named action. ⌘W closes the
   active tab.
 - **Reorder:** drag a tab along the strip: 4 pt starts the drag, as in the sidebar; the dragged tab
   stays at 35 % (a 120 ms fade) and the others make room at once.
 - **Pinned:** sits left of the unpinned run and scrolls with everything else. Pinning is about order
-  and session persistence, not about staying on screen.
+  and session persistence, not about staying on screen. A pinned tab never closes by accident: in
+  close's place it shows a `pin.slash` in the same target (the Unpin Tab glyph), which unpins it; ⌘W
+  leaves it open and moves to the most recently active unpinned tab (nothing, when every tab is
+  pinned). Its menu's Close Tab closes it, and Close Other Tabs closes only unpinned tabs.
 
 Do not add compression tiers, width floors, condensed icon-only chips, least-recently-used overflow
 lists, hidden-count pills or overflow menus. They are several mechanisms for what one scroller does,
@@ -1274,7 +1277,7 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 |---|---|
 | Frame | gaps 6 · cards radius 12, `cardring` 1 · card top 8 below the tab chips |
 | Titlebar | bar 44 · edges 18 leading (sidebar glyph column), 12 trailing (terminal bar's buttons) · traffic light 12 · icon button 28 box / 17 glyph, no border · segmented 28 outer (24 cells + 2 padding on a track) / 16 glyph · items 2 apart, groups 8 · strip inset 3 · 3 between tabs |
-| Tab | 28 · padding-x 10 · kind glyph 15 in the 18 column · gap 8 · label 13/400 · close 9 in 16, in the glyph column on hover · unsaved dot 6 on the glyph · pin or warning badge 10 · max width 220 · no minimum |
+| Tab | 28 · padding-x 10 · kind glyph 15 in the 18 column · gap 8 · label 13/400 · close 9 in 16, in the glyph column on hover (a pinned tab's `pin.slash` unpins) · unsaved dot 6 on the glyph · pin or warning badge 10 · max width 220 · no minimum |
 | Bar | 40 · padding 6 (10 for a header over a list) · 28 controls 2 apart, groups 8 apart · no rule (terminal, PDF, panel headers, banners) |
 | Sidebar | width 240 (196 minimum) · header 40: monogram 18 (radius 6, initial 10.5/600), name 13/600, chevron 10, search and New Markdown 28/17 · row 28 · padding-x 8 · disclosure chevron 10 or file glyph 15 in the 18 column · gap 8 · label 13/400 · indent 14 · list inset 10, top 4 · no gap between rows · Recents header: chevron, group header, count 12 · footer 28 |
 | Context menu | width 232, up to 320 (at least its control's) · list inset 6 · row 30, 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · separator `line2` 4 inside the inset, 6 each side · no shortcuts · radius 12, `e2` · a control's menu 4 below it · a pop-up's check 11 `ink2` at the row's end, its values at most 380 tall, then scrolling under the 4 / 6 thumb in a 9 lane |

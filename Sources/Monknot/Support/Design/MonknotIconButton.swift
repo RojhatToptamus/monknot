@@ -355,9 +355,11 @@ struct MonknotPressTrackingButtonStyle: ButtonStyle {
     }
 }
 
-/// The close and clear target: tabs, fields and banners (16 target, 9 pt xmark).
+/// The close and clear target: tabs, fields and banners (16 target, 9 pt xmark; a pinned tab's
+/// `pin.slash`).
 struct MonknotTabCloseButton: View {
     let label: String
+    var systemImage = "xmark"
     let theme: AppTheme
     let zoomScale: Double
     var isVisible = true
@@ -377,7 +379,7 @@ struct MonknotTabCloseButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "xmark")
+            Image(systemName: systemImage)
                 .font(.system(
                     size: MonknotMetrics.interfaceGlyph(MonknotMetrics.closeGlyphPointSizeBase, theme: theme, zoomScale: zoomScale),
                     weight: .semibold

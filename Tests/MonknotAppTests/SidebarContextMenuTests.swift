@@ -284,7 +284,6 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
 
     func testTabMenuItemsAreDisabledWhileTabsAre() async throws {
         let theme = AppTheme.defaultDark
-        let chrome = MonknotMetrics.chromeHeight(theme: theme, zoomScale: 1)
         var closed: [String] = []
         var pinned: [String] = []
         let bar = DocumentTabBar(
@@ -303,29 +302,7 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
             togglePin: { pinned.append($0) },
             reorderTab: { _, _ in }
         )
-        .frame(width: 600, height: chrome)
-        let host = NSHostingView(rootView: bar)
-        host.frame = NSRect(x: 0, y: 0, width: 600, height: chrome)
-        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = host
-        window.makeKeyAndOrderFront(nil)
-        defer { window.orderOut(nil); window.contentView = nil }
-        try await Task.sleep(nanoseconds: 400_000_000)
-
-        let point = host.convert(NSPoint(x: 40, y: chrome / 2), to: nil)
-        let event = try XCTUnwrap(NSEvent.mouseEvent(
-            with: .rightMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-            windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1
-        ))
-        var view: NSView? = host.hitTest(host.superview?.convert(point, from: nil) ?? point)
-        var menu: NSMenu?
-        while let current = view, menu == nil {
-            menu = current.menu(for: event)
-            view = current.superview
-        }
-        menu?.update()
-        let items = try XCTUnwrap(menu).items
+        let items = try await firstTabMenu(bar, theme: theme).items
         XCTAssertEqual(items.map(\.title), ["Close Tab", "Close Other Tabs", "", "Pin Tab"])
         XCTAssertEqual(items.map(\.isEnabled), [false, false, false, false])
         XCTAssertEqual(closed, [], "Building the menu runs nothing")
@@ -336,7 +313,6 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
     /// location items every file's menu has, each acting on the right-clicked tab.
     func testTabMenuClosesOthersAndOffersTheLocationItemsOfItsFile() async throws {
         let theme = AppTheme.defaultDark
-        let chrome = MonknotMetrics.chromeHeight(theme: theme, zoomScale: 1)
         var closedOthers: [String] = []
         var copied: [String] = []
         func makeBar(otherIsPinned: Bool) -> some View {
@@ -360,42 +336,79 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
                     location: { id in (copyPath: { copied.append(id) }, copyRelativePath: {}, revealInFinder: {}) }
                 )
             )
-            .frame(width: 600, height: chrome)
         }
 
-        func menu(otherIsPinned: Bool) async throws -> NSMenu {
-            let host = NSHostingView(rootView: makeBar(otherIsPinned: otherIsPinned))
-            host.frame = NSRect(x: 0, y: 0, width: 600, height: chrome)
-            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false
-            window.contentView = host
-            window.makeKeyAndOrderFront(nil)
-            addTeardownBlock { @MainActor in window.orderOut(nil); window.contentView = nil }
-            try await Task.sleep(nanoseconds: 400_000_000)
-            // The first tab, a.md.
-            let point = host.convert(NSPoint(x: 40, y: chrome / 2), to: nil)
-            let event = try XCTUnwrap(NSEvent.mouseEvent(
-                with: .rightMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1
-            ))
-            var view: NSView? = host.hitTest(host.superview?.convert(point, from: nil) ?? point)
-            var menu: NSMenu?
-            while let current = view, menu == nil {
-                menu = current.menu(for: event)
-                view = current.superview
-            }
-            menu?.update()
-            return try XCTUnwrap(menu)
-        }
-
-        let open = try await menu(otherIsPinned: false)
+        let open = try await firstTabMenu(makeBar(otherIsPinned: false), theme: theme)
         XCTAssertEqual(open.items.map(\.title), ["Close Tab", "Close Other Tabs", "", "Pin Tab", "", "Copy Path", "Copy Relative Path", "Reveal in Finder"])
         open.performActionForItem(at: 1)
         XCTAssertEqual(closedOthers, ["/w/a.md"], "Close Other Tabs keeps the right-clicked tab")
         open.performActionForItem(at: 5)
         XCTAssertEqual(copied, ["/w/a.md"], "Copy Path copies the right-clicked tab's file")
 
-        let pinnedOther = try await menu(otherIsPinned: true)
+        let pinnedOther = try await firstTabMenu(makeBar(otherIsPinned: true), theme: theme)
         XCTAssertFalse(pinnedOther.items.map(\.title).contains("Close Other Tabs"), "Pinned tabs are never closed by Close Other Tabs")
+    }
+
+    /// ⌘W and a click on its pin leave a pinned tab open, but its menu's Close Tab closes it, and its
+    /// Close Other Tabs closes only the unpinned tabs.
+    func testAPinnedTabsMenuClosesItExplicitly() async throws {
+        let theme = AppTheme.defaultDark
+        var closed: [String] = []
+        var closedOthers: [String] = []
+        var toggled: [String] = []
+        let bar = DocumentTabBar(
+            tabs: [
+                WorkspaceTabItem(documentID: "/w/a.md", displayName: "a.md", relativePath: "a.md", kind: .markdown, isPinned: true),
+                WorkspaceTabItem(documentID: "/w/b.md", displayName: "b.md", relativePath: "b.md", kind: .markdown),
+            ],
+            selectedDocumentID: "/w/a.md",
+            missingDocumentIDs: [],
+            theme: theme,
+            zoomScale: 1,
+            isDisabled: false,
+            saveState: { _ in .clean },
+            selectTab: { _ in },
+            closeTab: { closed.append($0) },
+            togglePin: { toggled.append($0) },
+            reorderTab: { _, _ in },
+            menu: DocumentTabMenuActions(closeOtherTabs: { closedOthers.append($0) })
+        )
+
+        let menu = try await firstTabMenu(bar, theme: theme)
+        XCTAssertEqual(menu.items.map(\.title), ["Close Tab", "Close Other Tabs", "", "Unpin Tab"])
+        menu.performActionForItem(at: 0)
+        XCTAssertEqual(closed, ["/w/a.md"], "Close Tab closes the pinned tab")
+        XCTAssertEqual(toggled, [], "and does not merely unpin it")
+        menu.performActionForItem(at: 1)
+        XCTAssertEqual(closedOthers, ["/w/a.md"])
+        menu.performActionForItem(at: 3)
+        XCTAssertEqual(toggled, ["/w/a.md"])
+    }
+
+    /// The right-click menu of the strip's first tab, from the real tab bar in a window.
+    private func firstTabMenu(_ bar: some View, theme: AppTheme) async throws -> NSMenu {
+        let chrome = MonknotMetrics.chromeHeight(theme: theme, zoomScale: 1)
+        let host = NSHostingView(rootView: bar.frame(width: 600, height: chrome))
+        host.frame = NSRect(x: 0, y: 0, width: 600, height: chrome)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        addTeardownBlock { @MainActor in window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(nanoseconds: 400_000_000)
+
+        let point = host.convert(NSPoint(x: 40, y: chrome / 2), to: nil)
+        let event = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .rightMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1
+        ))
+        var view: NSView? = host.hitTest(host.superview?.convert(point, from: nil) ?? point)
+        var menu: NSMenu?
+        while let current = view, menu == nil {
+            menu = current.menu(for: event)
+            view = current.superview
+        }
+        menu?.update()
+        return try XCTUnwrap(menu)
     }
 }

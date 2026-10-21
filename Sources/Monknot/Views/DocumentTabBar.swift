@@ -310,12 +310,10 @@ private struct DocumentTabItemView: View {
             badges: badges,
             isDisabled: isDisabled,
             isDragging: isDragging,
-            // A pinned tab closes from its menu or with ⌘W, never from a stray click on its glyph.
-            closeLabel: tab.isPinned ? nil : "Close \(label)",
+            hoverButton: .documentTab(isPinned: tab.isPinned, label: label, close: close, togglePin: togglePin),
             theme: theme,
             zoomScale: zoomScale,
-            select: select,
-            close: close
+            select: select
         )
         .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
         .contextMenu {
@@ -378,6 +376,21 @@ private struct DocumentTabItemView: View {
             parts.append(saveState.accessibilityDescription)
         }
         return parts.joined(separator: ", ")
+    }
+}
+
+extension MonknotTab.HoverButton {
+    /// A file tab's hover button: close, or on a pinned tab its unpin. A pinned tab closes only from
+    /// its menu; ⌘W and a stray click leave it open (design.md §10.3).
+    static func documentTab(
+        isPinned: Bool,
+        label: String,
+        close: @escaping () -> Void,
+        togglePin: @escaping () -> Void
+    ) -> Self {
+        isPinned
+            ? Self(label: "Unpin \(label)", systemImage: "pin.slash", action: togglePin)
+            : Self(label: "Close \(label)", action: close)
     }
 }
 

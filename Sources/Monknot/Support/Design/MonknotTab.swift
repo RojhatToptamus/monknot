@@ -5,9 +5,9 @@ import SwiftUI
 /// `10 padding · 15 glyph in the 18 column · 8 gap · 13 / 400 label · 10 padding`, 28 tall, radius 8,
 /// hugging its label, 3 apart, so a file reads the same in a tab as in a sidebar row.
 ///
-/// While the pointer is over a tab that can close, its close button takes the glyph's place, as
-/// Safari's does: no slot is reserved, so hovering never moves a label and an inactive tab costs only
-/// its name. The glyph column also carries the tab's state: a 6 pt `accent` dot on its corner while
+/// While the pointer is over a tab, its button (close, or a pinned file's unpin) takes the glyph's
+/// place, as Safari's close does: no slot is reserved, so hovering never moves a label and an inactive
+/// tab costs only its name. The glyph column also carries the tab's state: a 6 pt `accent` dot on its corner while
 /// unsaved, a spinner while saving, a `danger` triangle when saving failed.
 struct MonknotTab: View {
     /// Where the strip sits decides how the active tab stands out.
@@ -34,6 +34,14 @@ struct MonknotTab: View {
         }
     }
 
+    /// The button that takes the glyph's place under the pointer: close, or on a pinned file a
+    /// `pin.slash` that unpins it (design.md §10.3).
+    struct HoverButton {
+        let label: String
+        var systemImage = "xmark"
+        let action: () -> Void
+    }
+
     static let heightBase: CGFloat = MonknotMetrics.rowHeightBase
     static let paddingBase: CGFloat = 10
     static let glyphGapBase: CGFloat = MonknotMetrics.rowGlyphGapBase
@@ -50,12 +58,10 @@ struct MonknotTab: View {
     var badges: [Badge] = []
     var isDisabled = false
     var isDragging = false
-    /// The close button's label, or nil when the tab cannot be closed from the strip (a pinned file).
-    var closeLabel: String?
+    var hoverButton: HoverButton?
     let theme: AppTheme
     let zoomScale: Double
     let select: () -> Void
-    var close: () -> Void = {}
 
     /// Every tab has a context menu: right-clicked, it holds its open state while the menu shows.
     @State private var isHovered = false
@@ -75,14 +81,14 @@ struct MonknotTab: View {
         RoundedRectangle(cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale))
     }
 
-    private var showsClose: Bool {
-        isHovered && closeLabel != nil && !isDisabled
+    private var showsHoverButton: Bool {
+        isHovered && hoverButton != nil && !isDisabled
     }
 
     var body: some View {
         Button(action: select) {
             HStack(spacing: density(Self.glyphGapBase)) {
-                // The glyph column is drawn over the button, so the close button is not nested in it.
+                // The glyph column is drawn over the button, so the hover button is not nested in it.
                 Color.clear
                     .frame(width: glyphColumn, height: glyphColumn)
 
@@ -122,24 +128,31 @@ struct MonknotTab: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .modifier(MonknotTabCloseAction(label: isDisabled ? nil : closeLabel, close: close))
+        .modifier(MonknotTabHoverButtonAction(button: isDisabled ? nil : hoverButton))
     }
 
     private var glyphColumn: CGFloat {
         glyph(MonknotMetrics.rowIconColumnWidthBase)
     }
 
-    /// Under the pointer, close crossfades with the glyph in the same place. Only colour and
-    /// opacity animate, so a tab that moves as another opens or closes moves at once.
+    /// Under the pointer, the hover button crossfades with the glyph in the same place. Only colour
+    /// and opacity animate, so a tab that moves as another opens or closes moves at once.
     private var glyphSlot: some View {
         ZStack {
             MonknotDocumentGlyph(systemImage: systemImage, status: status, color: glyphColor, theme: theme, zoomScale: zoomScale)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
-                .monknotStateOpacity(showsClose ? 0 : 1)
-            if let closeLabel {
-                MonknotTabCloseButton(label: closeLabel, theme: theme, zoomScale: zoomScale, isVisible: showsClose, action: close)
-                    .accessibilityHidden(true)
+                .monknotStateOpacity(showsHoverButton ? 0 : 1)
+            if let hoverButton {
+                MonknotTabCloseButton(
+                    label: hoverButton.label,
+                    systemImage: hoverButton.systemImage,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    isVisible: showsHoverButton,
+                    action: hoverButton.action
+                )
+                .accessibilityHidden(true)
             }
         }
     }
@@ -209,14 +222,14 @@ struct MonknotTab: View {
     }
 }
 
-/// Close appears only under the pointer, so VoiceOver and keyboard users reach it as a named action.
-private struct MonknotTabCloseAction: ViewModifier {
-    let label: String?
-    let close: () -> Void
+/// The hover button appears only under the pointer, so VoiceOver and keyboard users reach it as a
+/// named action.
+private struct MonknotTabHoverButtonAction: ViewModifier {
+    let button: MonknotTab.HoverButton?
 
     func body(content: Content) -> some View {
-        if let label {
-            content.accessibilityAction(named: label, close)
+        if let button {
+            content.accessibilityAction(named: button.label, button.action)
         } else {
             content
         }
