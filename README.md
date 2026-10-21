@@ -33,11 +33,11 @@ short completions.
 <br>
 
 <p align="center">
-  <img src="docs/images/monknot-workspace.png" alt="Monknot showing Markdown source and its rendered preview side by side">
+  <img src="docs/images/monknot-workspace.png" alt="Monknot editing README.md in Preview, with the block menu open after typing /to below a to-do list">
 </p>
 
 <p align="center">
-  <sub>Split · Markdown source and rendered output, scrolling in sync</sub>
+  <sub>Preview · <code>/</code> opens the block menu, and every edit is written to the file as Markdown</sub>
 </p>
 
 ## Capabilities
@@ -92,21 +92,28 @@ opens Writing Tools there.
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="website/shots/writing-assistance-light.gif">
     <source media="(prefers-color-scheme: dark)" srcset="website/shots/writing-assistance.gif">
-    <img src="website/shots/writing-assistance.gif" width="800" height="520" alt="Monknot editing Field-brief.txt. The demo corrects a typo, presents a grammar repair for review, accepts a full on-device completion, and opens Apple Writing Tools.">
+    <img src="website/shots/writing-assistance.gif" width="800" height="520" alt="Monknot editing Field-brief.txt in Source. The demo offers a sentence's typos and grammar slip as one repair for review and takes it with Tab, accepts a full on-device completion by holding Tab, and opens Apple Writing Tools.">
   </picture>
 </p>
 
 <p align="center">
-  <sub>Inline typo fixes · Reviewed sentence repairs · On-device completions · Apple Writing Tools</sub>
+  <sub>Reviewed sentence repairs · On-device completions · Apple Writing Tools</sub>
 </p>
 
 <p align="center">
-  <img src="docs/images/monknot-pdf-dark.png" width="49%" alt="Monknot PDF reader with annotation tools">
-  <img src="docs/images/monknot-terminal-dark.png" width="49%" alt="Monknot with terminal sessions beside the active document">
+  <img src="docs/images/monknot-pdf.png" alt="Monknot showing an exported PDF with a highlight and an underline, and the PDF markup tools above it">
 </p>
 
 <p align="center">
-  <sub>PDF · Terminal</sub>
+  <sub>PDF · Highlight, underline, strike out, draw and add text boxes</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/monknot-terminal.png" alt="Monknot with README.md in Preview beside a terminal session that ran wc and grep in the workspace folder">
+</p>
+
+<p align="center">
+  <sub>Terminal · New zsh sessions start in the open document's folder, beside the editor</sub>
 </p>
 
 ## Install

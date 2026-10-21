@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import MonknotCore
+import PDFKit
 import Sparkle
 import SwiftUI
 import WebKit
@@ -13,8 +14,11 @@ import XCTest
 /// `MONKNOT_UI_TOUR_ZOOM` (0.8…2) takes the whole tour at one workspace zoom.
 @MainActor
 final class WorkspaceUITourTests: WorkspaceStoreTestCase {
+    /// What a stop does once its document shows, before the capture.
+    private typealias Prepare = @MainActor (_ host: NSView, _ window: NSWindow, _ store: WorkspaceStore) async throws -> Void
+
     private struct Stop {
-        let name: String
+        var name: String
         var theme: ThemePreference = .light
         var mode: EditorMode = .preview
         var layout = ContentView.InitialLayout.standard
@@ -27,6 +31,27 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         var themeID: String?
         /// Leaves the shown document edited and unsaved, so its tab shows the unsaved dot.
         var edits = false
+        /// A workspace zoom for this stop alone.
+        var zoom: Double?
+        /// Draws the close, minimize and zoom buttons in their active colours, which a test process,
+        /// never the active app, does not show.
+        var activeWindowControls = false
+        /// Shows `document` with Source beside Preview.
+        var splitView = false
+        var prepare: Prepare?
+
+        /// This stop under another name, showing `document` after `tabs` in `layout`, with split view
+        /// and `prepare` as given.
+        func named(_ name: String, layout: ContentView.InitialLayout? = nil, document: String? = nil, tabs: [String] = [], splitView: Bool = false, prepare: Prepare? = nil) -> Stop {
+            var stop = self
+            stop.name = name
+            stop.layout = layout ?? self.layout
+            stop.document = document ?? self.document
+            stop.tabs = tabs
+            stop.splitView = splitView
+            stop.prepare = prepare
+            return stop
+        }
     }
 
     func testCaptureTheWorkspaceInEveryLayoutState() async throws {
@@ -99,6 +124,101 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         }
     }
 
+    /// Takes the README's pictures (docs/images) in Harbor light from the Borealis workspace, each set
+    /// on the README's backdrop. Runs only when `MONKNOT_README_SHOTS_DIR` names a folder for them;
+    /// `MONKNOT_UI_TOUR_ONLY` picks pictures by name.
+    func testCaptureTheReadmeImages() async throws {
+        let directory = try Self.outputDirectory(named: "MONKNOT_README_SHOTS_DIR")
+        let root = try await makeBorealisWorkspace()
+        let size = NSSize(width: 1_240, height: 780)
+        let stops: [Stop] = [
+            Stop(name: "monknot-pdf", size: size, document: "Field-note.pdf", tabs: ["README.md"], zoom: 1.15, activeWindowControls: true),
+            Stop(name: "monknot-terminal", layout: .init(showsSidebar: false, showsTerminal: true), size: size, document: "README.md", tabs: ["checklist.md"], zoom: 1.15, activeWindowControls: true, prepare: Self.runTerminal),
+            Stop(name: "monknot-workspace", size: size, document: "README.md", tabs: ["notes/route-plan.md"], zoom: 1.15, activeWindowControls: true, prepare: Self.openBlockMenu),
+        ]
+        for stop in Self.picked(stops) {
+            try await capture(stop, root: root, into: directory)
+            try Self.setOnReadmeBackdrop(directory.appendingPathComponent("\(stop.name).png"))
+        }
+    }
+
+    /// Takes the website's product shots (website/shots) in Harbor light and dark from the Borealis
+    /// workspace, each filling the laptop's screen: a window of a 14-inch MacBook Pro's default 1512
+    /// by 982 points, saved at the page's 1600 by 1039. The social card is the dark editor's top. Runs
+    /// only when `MONKNOT_WEBSITE_SHOTS_DIR` names a folder for them; `MONKNOT_UI_TOUR_ONLY` picks
+    /// shots by name.
+    func testCaptureTheWebsiteImages() async throws {
+        let directory = try Self.outputDirectory(named: "MONKNOT_WEBSITE_SHOTS_DIR")
+        let root = try await makeBorealisWorkspace()
+        var stops: [Stop] = []
+        for (theme, name) in [(ThemePreference.light, "light"), (.dark, "dark")] {
+            let screen = Stop(name: "", theme: theme, size: Self.laptopScreen, document: "README.md", zoom: 1.15, activeWindowControls: true)
+            stops += [
+                screen.named("editor-\(name)", tabs: ["notes/route-plan.md"], prepare: Self.openBlockMenu),
+                screen.named("split-\(name)", tabs: ["notes/route-plan.md"], splitView: true),
+                screen.named("preview-\(name)", layout: .init(showsSidebar: false, showsTerminal: false), document: "notes/route-plan.md", tabs: ["README.md"], prepare: { host, window, store in
+                    try await Self.selectInPreview("every two hours", host: host, window: window, store: store)
+                }),
+                screen.named("pdf-\(name)", document: "Field-note.pdf", tabs: ["README.md"]),
+                screen.named("terminal-\(name)", layout: .init(showsSidebar: true, showsTerminal: true), tabs: ["checklist.md"], prepare: Self.runTerminal),
+            ]
+        }
+        for stop in Self.picked(stops) {
+            try await capture(stop, root: root, into: directory)
+            let picture = directory.appendingPathComponent("\(stop.name).png")
+            if stop.name == "editor-dark" {
+                try Self.writeImage(
+                    try Self.screenImage(of: Self.image(at: picture), size: CGSize(width: 1_200, height: 630)),
+                    to: directory.appendingPathComponent("monknot-social.jpg")
+                )
+            }
+            try Self.writeImage(
+                try Self.screenImage(of: Self.image(at: picture), size: Self.screenShotSize),
+                to: directory.appendingPathComponent("\(stop.name).jpg")
+            )
+            try FileManager.default.removeItem(at: picture)
+        }
+    }
+
+    /// Records writing assistance in Source on a plain-text note, in Harbor dark and light, with the
+    /// system's spell checker and Apple's on-device model as the app uses them: a sentence's typos and
+    /// grammar slip offered as one repair for review and taken with Tab, a completion taken whole by
+    /// holding Tab, then Writing Tools. Each frame fills the laptop's screen like the
+    /// website's shots; `writing-assistance[-light]/` holds the frames and `frames.json`, each frame's
+    /// delay and the frames where each step shows, for the website's GIFs and posters. Runs only when
+    /// `MONKNOT_WEBSITE_SHOTS_DIR` names a folder, on a Mac where the model is available.
+    func testRecordTheWritingAssistanceDemos() async throws {
+        let directory = try Self.outputDirectory(named: "MONKNOT_WEBSITE_SHOTS_DIR")
+        guard FlowSentenceRepairService.system.isAvailable(for: Locale(identifier: "en_US")) else {
+            throw XCTSkip("Apple's on-device model is not available on this Mac")
+        }
+        let root = try await makeBorealisWorkspace()
+        // A title line keeps Writing Tools' panel, which opens beside the caret's line, inside the window.
+        try "Field brief, day two\n\n".write(to: root.appendingPathComponent("Field-brief.txt"), atomically: true, encoding: .utf8)
+        let defaults = UserDefaults.standard
+        let settings: [String: Any] = [
+            EditorTextCheckingOptions.spellingPreferenceKey: true,
+            EditorTextCheckingOptions.grammarPreferenceKey: true,
+            EditorTextCheckingOptions.inlinePredictionsPreferenceKey: true,
+            EditorTextCheckingOptions.onDeviceProseCompletionsPreferenceKey: true,
+        ]
+        let saved = settings.keys.map { ($0, defaults.object(forKey: $0)) }
+        defer { for (key, value) in saved { defaults.set(value, forKey: key) } }
+        for (key, value) in settings { defaults.set(value, forKey: key) }
+
+        for (theme, name) in [(ThemePreference.dark, "writing-assistance"), (.light, "writing-assistance-light")] {
+            guard Self.picked([Stop(name: name)]).isEmpty == false else { continue }
+            let frames = directory.appendingPathComponent(name, isDirectory: true)
+            try? FileManager.default.removeItem(at: frames)
+            try FileManager.default.createDirectory(at: frames, withIntermediateDirectories: true)
+            let stop = Stop(name: name, theme: theme, mode: .source, size: Self.laptopScreen, document: "Field-brief.txt", tabs: ["research/weather-window.md"], zoom: 1.4, activeWindowControls: true, prepare: { host, window, _ in
+                try await self.recordWritingAssistance(into: frames, host: host, window: window)
+            })
+            try await capture(stop, root: root, into: frames)
+            try? FileManager.default.removeItem(at: frames.appendingPathComponent("\(name).png"))
+        }
+    }
+
     private func capture(_ stop: Stop, root: URL, into directory: URL) async throws {
         let defaults = UserDefaults.standard
         let savedMode = defaults.object(forKey: "Monknot.editorMode")
@@ -110,6 +230,7 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         let defaultWidthKey = WorkspaceSplitMetrics.defaultSidebarWidthAppliedKey
         let savedSplitFrames = defaults.object(forKey: splitFramesKey)
         let savedDefaultWidth = defaults.object(forKey: defaultWidthKey)
+        let savedZoom = defaults.object(forKey: "Monknot.zoomScale")
         defaults.removeObject(forKey: splitFramesKey)
         defaults.removeObject(forKey: defaultWidthKey)
         defer {
@@ -118,6 +239,10 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             defaults.set(savedThemeID, forKey: themeIDKey)
             defaults.set(savedSplitFrames, forKey: splitFramesKey)
             defaults.set(savedDefaultWidth, forKey: defaultWidthKey)
+            defaults.set(savedZoom, forKey: "Monknot.zoomScale")
+        }
+        if let zoom = stop.zoom {
+            defaults.set(WorkspaceZoomPolicy.clamp(zoom), forKey: "Monknot.zoomScale")
         }
         defaults.set(stop.mode.rawValue, forKey: "Monknot.editorMode")
         defaults.set(stop.theme.rawValue, forKey: "Monknot.themePreference")
@@ -126,6 +251,16 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         } else {
             defaults.removeObject(forKey: themeIDKey)
         }
+
+        // Split view is the document's own preference.
+        let documentPath = root.appendingPathComponent(stop.document).standardizedFileURL.path
+        DocumentSplitViewPersistence.setEnabled(stop.splitView, forDocumentPath: documentPath)
+        defer { DocumentSplitViewPersistence.setEnabled(false, forDocumentPath: documentPath) }
+
+        // Each stop opens only the tabs it names, none left over from the stop before.
+        let tabState = WorkspaceTabStatePersistence()
+        tabState.remove(for: root)
+        defer { tabState.remove(for: root) }
 
         let store = makeWorkspaceStore()
         let library = WorkspaceLibraryStore(userDefaults: UserDefaults(suiteName: "MonknotUITour.\(UUID().uuidString)")!)
@@ -169,6 +304,7 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
                 store.setDocumentText(store.documentText + "\nA line not yet saved.\n")
             }
         }
+        try await stop.prepare?(host, window, store)
         try await Task.sleep(nanoseconds: 1_800_000_000)
 
         guard let image = CGWindowListCreateImage(
@@ -215,6 +351,19 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
                 path.lineWidth = scale
                 color.setStroke()
                 path.stroke()
+            }
+        }
+        if stop.activeWindowControls {
+            for (type, fill, rim) in Self.activeWindowControlColors {
+                guard let button = window.standardWindowButton(type) else { continue }
+                let frame = button.convert(button.bounds, to: nil)
+                let diameter = min(frame.width, frame.height) * scale
+                let circle = NSBezierPath(ovalIn: CGRect(x: frame.midX * scale - diameter / 2, y: frame.midY * scale - diameter / 2, width: diameter, height: diameter))
+                NSColor(hex: fill).setFill()
+                circle.fill()
+                circle.lineWidth = scale / 2
+                NSColor(hex: rim).setStroke()
+                circle.stroke()
             }
         }
         for popover in popovers {
@@ -466,6 +615,427 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         return root
     }
 
+    /// The README's and the website's workspace, a folder named Borealis, with its folders open in the
+    /// sidebar. The terminal's shell reads its prompt, and the commands it shows having run, from
+    /// `borealisShellProfile` rather than the user's own. Field-note.pdf is README.md exported as
+    /// Monknot exports it, with a highlight and an underline on it.
+    private func makeBorealisWorkspace() async throws -> URL {
+        let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotBorealis")
+            .appendingPathComponent("Borealis", isDirectory: true)
+        for (path, text) in [
+            ("README.md", Self.borealisReadme),
+            ("checklist.md", "# Checklist\n\n- [ ] Charge the satellite messenger\n- [ ] Pack spare gloves\n"),
+            ("data/route.json", "{\n  \"days\": 3,\n  \"bases\": [\"Alder Bay\", \"North Ridge\", \"Glass Lake\"]\n}\n"),
+            ("notes/observations.md", "# Observations\n\nWind turned north after noon. Snow depth 42 cm at the ridge marker.\n"),
+            ("notes/route-plan.md", Self.borealisRoutePlan),
+            ("research/sea-ice.md", "# Sea ice\n\nThe bay holds until late March in most years.\n"),
+            ("research/weather-window.md", "# Weather window\n\nThree calm days in a row are likely from the 12th.\n"),
+        ] {
+            let url = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        let pdfURL = root.appendingPathComponent("Field-note.pdf")
+        try await MarkdownPDFExportService.makeDefault().exportPDF(
+            for: MarkdownPDFExportRequest(
+                markdown: Self.borealisReadme,
+                baseURL: root,
+                resourceRoot: root,
+                theme: .defaultLight,
+                usePointerCursors: false,
+                fontSmoothing: true,
+                options: MarkdownPDFExportOptions(
+                    pageSize: .letter,
+                    marginPreset: .normal,
+                    themeMode: .light,
+                    scalePercent: 100,
+                    textSizePoints: 12,
+                    contentWidthPercent: 92
+                )
+            ),
+            to: pdfURL
+        )
+        let pdf = try XCTUnwrap(PDFDocument(url: pdfURL))
+        // The viewer's own markup: a yellow highlight and a red underline.
+        for (phrase, type, color) in [
+            ("three-day winter research route", PDFAnnotationSubtype.highlight, NSColor(hex: "#ffd84d").withAlphaComponent(0.46)),
+            ("Record wind, visibility, and snow depth", .underline, NSColor(hex: "#ef5350")),
+        ] {
+            for line in pdf.findString(phrase, withOptions: .caseInsensitive).first?.selectionsByLine() ?? [] {
+                guard let page = line.pages.first else { continue }
+                let bounds = line.bounds(for: page)
+                let annotation = PDFAnnotation(bounds: bounds, forType: type, withProperties: nil)
+                annotation.color = color
+                annotation.quadrilateralPoints = pdfTextMarkupQuadrilateralPoints(for: bounds.size)
+                page.addAnnotation(annotation)
+            }
+        }
+        XCTAssertTrue(pdf.write(to: pdfURL))
+
+        let workspace = root.standardizedFileURL
+        let expansion = WorkspaceTreeExpansionPersistence()
+        expansion.save(Set(["data", "notes", "research"].map { workspace.path + "/" + $0 }), for: workspace)
+        let expansionKey = expansion.key(for: workspace)
+        addTeardownBlock { UserDefaults.standard.removeObject(forKey: expansionKey) }
+
+        let shell = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotBorealisShell")
+        try Self.borealisShellProfile.write(to: shell.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+        let savedShellDirectory = ProcessInfo.processInfo.environment["ZDOTDIR"]
+        setenv("ZDOTDIR", shell.path, 1)
+        addTeardownBlock {
+            if let savedShellDirectory { setenv("ZDOTDIR", savedShellDirectory, 1) } else { unsetenv("ZDOTDIR") }
+        }
+        return root
+    }
+
+    /// A 14-inch MacBook Pro's default screen, in points, and the website's picture of it.
+    private static let laptopScreen = NSSize(width: 1_512, height: 982)
+    fileprivate nonisolated static let screenShotSize = CGSize(width: 1_600, height: 1_039)
+
+    private static func outputDirectory(named variable: String) throws -> URL {
+        guard let output = ProcessInfo.processInfo.environment[variable] else {
+            throw XCTSkip("Set \(variable) to a folder for the pictures")
+        }
+        let directory = URL(fileURLWithPath: output, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    /// The stops whose names hold one of `MONKNOT_UI_TOUR_ONLY`'s (`a|b`), or every stop.
+    private static func picked(_ stops: [Stop]) -> [Stop] {
+        guard let filters = ProcessInfo.processInfo.environment["MONKNOT_UI_TOUR_ONLY"]?.split(separator: "|") else {
+            return stops
+        }
+        return stops.filter { stop in filters.contains { stop.name.contains($0) } }
+    }
+
+    /// A new line after README.md's to-do list, with the block menu filtered by "to".
+    private static func openBlockMenu(_ host: NSView, _ window: NSWindow, _ store: WorkspaceStore) async throws {
+        try await typeInPreview("\r\r/to", after: "Export the final brief as PDF", host: host, window: window, store: store)
+    }
+
+    /// The terminal's shell run and drawn, with focus in it.
+    private static func runTerminal(_ host: NSView, _ window: NSWindow, _ store: WorkspaceStore) async throws {
+        try await drawTerminal(in: host, window: window)
+    }
+
+    /// Selects `text` in Preview, which shows the format bar over it.
+    private static func selectInPreview(_ text: String, host: NSView, window: NSWindow, store: WorkspaceStore) async throws {
+        let range = (store.documentText as NSString).range(of: text)
+        try await setPreviewSelection(range.location, NSMaxRange(range), host: host, window: window)
+        // The bar shows when the mouse comes up on the page, as after a drag. It grows in with a
+        // transition, which a page in a test process never runs, so it is shown at its end.
+        let webView = try XCTUnwrap(descendants(of: WKWebView.self, in: host).first { !$0.isHiddenOrHasHiddenAncestor })
+        _ = try await webView.evaluateJavaScript("document.getElementById('content').dispatchEvent(new MouseEvent('mouseup', {bubbles: true})); true")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        _ = try await webView.evaluateJavaScript("document.querySelectorAll('.mk-visible.mk-animate').forEach(element => element.classList.remove('mk-animate')); true")
+    }
+
+    /// Puts Preview's caret after `text` and types `typed` there (`\r` is Return), through AppKit's key
+    /// handling as a keyboard would.
+    private static func typeInPreview(_ typed: String, after text: String, host: NSView, window: NSWindow, store: WorkspaceStore) async throws {
+        let offset = NSMaxRange((store.documentText as NSString).range(of: text))
+        try await setPreviewSelection(offset, offset, host: host, window: window)
+        for characters in typed.map(String.init) {
+            press(characters, in: window)
+            try await Task.sleep(nanoseconds: 80_000_000)
+        }
+    }
+
+    /// One key, down and up, as the keyboard sends it to the window.
+    private static func press(_ characters: String, in window: NSWindow, type types: [NSEvent.EventType] = [.keyDown, .keyUp]) {
+        let keyCodes: [String: UInt16] = ["\r": 36, "\t": 48, " ": 49]
+        for type in types {
+            guard let event = NSEvent.keyEvent(
+                with: type,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: keyCodes[characters] ?? 0
+            ) else { continue }
+            window.sendEvent(event)
+        }
+    }
+
+    private static func setPreviewSelection(_ anchor: Int, _ head: Int, host: NSView, window: NSWindow) async throws {
+        // Preview's page may still be on its way: wait for its web view, then for its editor.
+        var shown: WKWebView?
+        for _ in 0..<100 {
+            shown = descendants(of: WKWebView.self, in: host).first { !$0.isHiddenOrHasHiddenAncestor }
+            if let shown, (try? await shown.evaluateJavaScript("Boolean(window.MonknotEditor)")) as? Bool == true { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let webView = try XCTUnwrap(shown)
+        window.makeFirstResponder(webView)
+        _ = try await webView.evaluateJavaScript("window.MonknotEditor.setSelection(\(anchor), \(head))")
+        try await Task.sleep(nanoseconds: 100_000_000)
+    }
+
+    /// A page in a test process counts as hidden and gets no animation frames, which is when xterm
+    /// draws: this hands them to timers, fits the terminal to its pane and draws its screen again
+    /// once the shell has written.
+    private static func drawTerminal(in host: NSView, window: NSWindow) async throws {
+        let script = """
+        if (typeof term === 'undefined') { false } else {
+          window.requestAnimationFrame = callback => setTimeout(() => callback(performance.now()), 0);
+          term._core._renderService._renderDebouncer._animationFrame = undefined;
+          fitAddon.fit();
+          term.refresh(0, term.rows - 1);
+          true
+        }
+        """
+        for _ in 0..<3 {
+            for webView in descendants(of: WKWebView.self, in: host) {
+                // Focus in the terminal, as after typing there, so the note shows no caret.
+                if (try? await webView.evaluateJavaScript(script)) as? Bool == true {
+                    window.makeFirstResponder(webView)
+                }
+            }
+            try await Task.sleep(nanoseconds: 700_000_000)
+        }
+    }
+
+    /// Types the demo into Source as a person would while `DemoRecorder` saves the window.
+    private func recordWritingAssistance(into frames: URL, host: NSView, window: NSWindow) async throws {
+        let textView = try XCTUnwrap(Self.descendants(of: MarkdownNSTextView.self, in: host).first)
+        window.makeFirstResponder(textView)
+        textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+        let ready = await waitUntil(timeout: 5) { textView.flowWritingToolsReady }
+        XCTAssertTrue(ready, "Writing assistance scanned the note")
+        let controls = Self.activeWindowControlColors.compactMap { type, fill, rim -> DemoRecorder.Control? in
+            window.standardWindowButton(type).map { button in
+                DemoRecorder.Control(frame: button.convert(button.bounds, to: nil), fill: NSColor(hex: fill).cgColor, rim: NSColor(hex: rim).cgColor)
+            }
+        }
+        let recorder = DemoRecorder(windowID: CGWindowID(window.windowNumber), windowWidth: window.frame.width, controls: controls, directory: frames)
+        recorder.start()
+        func pause(_ seconds: Double) async throws {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        }
+        func type(_ text: String) async throws {
+            for (index, character) in text.enumerated() {
+                Self.press(String(character), in: window)
+                // A steady hand, a little slower between words.
+                try await pause(character == " " ? 0.09 : 0.045 + Double(index % 3) * 0.01)
+            }
+        }
+
+        /// Waits for `fixed`, or for a repair offered for review, which Tab takes.
+        func settle(until fixed: String, step: String) async throws {
+            guard await waitUntil(timeout: 6, { textView.string.contains(fixed) || textView.flowSuggestion != nil }) else {
+                return XCTFail("Nothing fixed \(step)")
+            }
+            recorder.mark(step)
+            try await pause(1.5)
+            if textView.flowSuggestion != nil {
+                Self.press("\t", in: window)
+                _ = await waitUntil(timeout: 2) { textView.flowSuggestion == nil }
+                try await pause(0.4)
+            }
+        }
+
+        try await pause(0.5)
+        // The sentence's typos and grammar slip come as one repair for review, and Tab takes it.
+        try await type("These maps is definately useful, but the route was labled incorectly.")
+        try await settle(until: "maps are definitely", step: "review")
+        try await pause(0.6)
+        // Holding Tab takes the whole completion.
+        Self.press("\r", in: window)
+        try await type("The field team will recheck the labels before ")
+        if await waitUntil(timeout: 8, { textView.flowProseSuggestion != nil }) {
+            recorder.mark("completion")
+            try await pause(1.3)
+            Self.press("\t", in: window, type: [.keyDown])
+            _ = await waitUntil(timeout: 3) { textView.flowProseSuggestion == nil }
+            Self.press("\t", in: window, type: [.keyUp])
+        } else {
+            XCTFail("The on-device model offered no completion")
+        }
+        try await pause(1.0)
+        if textView.writingToolsRequestHandler?() == true {
+            recorder.mark("writingTools")
+            try await pause(2.8)
+        }
+        await recorder.stop()
+    }
+
+    /// macOS's close, minimize and zoom colours in an active window, each with its darker rim.
+    fileprivate nonisolated static let activeWindowControlColors: [(NSWindow.ButtonType, String, String)] = [
+        (.closeButton, "#ff5f57", "#e0443e"), (.miniaturizeButton, "#febc2e", "#dea123"), (.zoomButton, "#28c840", "#1aab29"),
+    ]
+
+    /// Draws a window's picture across `size`'s width from its top (a shorter `size` keeps the top of
+    /// the window), over the chrome's colour where the window's rounded corners leave it empty, as a
+    /// window filling the screen shows. The window's 2-point rim, drawn where it meets the desktop, is
+    /// left out.
+    fileprivate nonisolated static func screenImage(of picture: CGImage, size: CGSize) throws -> CGImage {
+        guard let window = picture.cropping(to: CGRect(x: 0, y: 0, width: picture.width, height: picture.height).insetBy(dx: 4, dy: 4)) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let context = try opaqueContext(width: Int(size.width), height: Int(size.height))
+        context.setFillColor(try chromeColor(of: window))
+        context.fill(CGRect(origin: .zero, size: size))
+        context.interpolationQuality = .high
+        let height = CGFloat(window.height) * size.width / CGFloat(window.width)
+        context.draw(window, in: CGRect(x: 0, y: size.height - height, width: size.width, height: height))
+        guard let image = context.makeImage() else { throw CocoaError(.fileWriteUnknown) }
+        return image
+    }
+
+    /// The chrome's colour: the window's right edge, halfway down, which is the margin beside the
+    /// document's card (or the terminal's).
+    private nonisolated static func chromeColor(of window: CGImage) throws -> CGColor {
+        guard let pixel = window.cropping(to: CGRect(x: window.width - 4, y: window.height / 2, width: 1, height: 1)) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let context = try opaqueContext(width: 1, height: 1)
+        context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard let data = context.data?.assumingMemoryBound(to: UInt8.self) else { throw CocoaError(.fileReadCorruptFile) }
+        return CGColor(srgbRed: CGFloat(data[0]) / 255, green: CGFloat(data[1]) / 255, blue: CGFloat(data[2]) / 255, alpha: 1)
+    }
+
+    fileprivate nonisolated static func opaqueContext(width: Int, height: Int) throws -> CGContext {
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+              )
+        else { throw CocoaError(.fileWriteUnknown) }
+        return context
+    }
+
+    fileprivate nonisolated static func image(at url: URL) throws -> CGImage {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { throw CocoaError(.fileReadCorruptFile) }
+        return image
+    }
+
+    /// Writes a PNG, or a JPEG at 88 % quality when `url` ends in .jpg.
+    fileprivate nonisolated static func writeImage(_ image: CGImage, to url: URL) throws {
+        let isJPEG = url.pathExtension == "jpg"
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, (isJPEG ? "public.jpeg" : "public.png") as CFString, 1, nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        CGImageDestinationAddImage(destination, image, isJPEG ? [kCGImageDestinationLossyCompressionQuality: 0.88] as CFDictionary : nil)
+        guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
+    }
+
+    /// Sets a window's picture on the README's backdrop, a soft harbor-blue gradient under the
+    /// window's shadow, 2,000 pixels wide.
+    private static func setOnReadmeBackdrop(_ url: URL) throws {
+        let window = try image(at: url)
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB) else { throw CocoaError(.fileWriteUnknown) }
+        let margin = CGFloat(window.width) * 0.055
+        let scale = 2_000 / (CGFloat(window.width) + margin * 2)
+        let width = 2_000
+        let height = Int(((CGFloat(window.height) + margin * 2) * scale).rounded())
+        // Opaque: the backdrop fills the picture, so the PNG needs no alpha.
+        let context = try opaqueContext(width: width, height: height)
+        context.interpolationQuality = .high
+        let colors = [
+            CGColor(srgbRed: 0.906, green: 0.929, blue: 0.957, alpha: 1),
+            CGColor(srgbRed: 0.769, green: 0.820, blue: 0.886, alpha: 1),
+        ] as CFArray
+        if let gradient = CGGradient(colorsSpace: space, colors: colors, locations: [0, 1]) {
+            context.drawLinearGradient(gradient, start: CGPoint(x: 0, y: CGFloat(height)), end: CGPoint(x: CGFloat(width), y: 0), options: [])
+        }
+        let frame = CGRect(
+            x: margin * scale, y: margin * scale,
+            width: CGFloat(window.width) * scale, height: CGFloat(window.height) * scale
+        )
+        // A wide shadow for depth, then a close one for the edge, both cast by the window's own
+        // rounded corners. Sizes are in points of the 2x picture.
+        for (blur, offset, alpha) in [(CGFloat(70), CGFloat(26), CGFloat(0.22)), (6, 1, 0.16)] {
+            context.saveGState()
+            context.setShadow(offset: CGSize(width: 0, height: -offset * scale * 2), blur: blur * scale * 2, color: CGColor(gray: 0, alpha: alpha))
+            context.draw(window, in: frame)
+            context.restoreGState()
+        }
+        guard let image = context.makeImage() else { throw CocoaError(.fileWriteUnknown) }
+        try writeImage(image, to: url)
+    }
+
+    /// Shows a short prompt and a few commands run in the workspace, the way typing them would.
+    private static let borealisShellProfile = #"""
+    unsetopt PROMPT_SP
+    PROMPT='%F{blue}%1~%f %# '
+    show() { print -rn -- "${(%)PROMPT}"; print -r -- "$*"; eval "$*"; }
+    show 'wc -w *.md notes/*.md'
+    show "grep -c '\[ \]' *.md"
+    """#
+
+    private static let borealisReadme = """
+    # Project Borealis
+
+    An offline field guide for a small team planning a three-day winter research route.
+
+    > [!NOTE]
+    > **Current focus:** turn scattered observations into a clear route and equipment brief.
+
+    ## This week
+
+    - [x] Compare the north and harbor routes
+    - [x] Collect equipment notes
+    - [ ] Review the weather window
+    - [ ] Export the final brief as PDF
+
+    ## Route snapshot
+
+    | Day | Base | Plan |
+    | --- | --- | --- |
+    | 1 | Alder Bay | Test equipment and map the shoreline |
+    | 2 | North Ridge | Record wind, visibility, and snow depth |
+    | 3 | Glass Lake | Photograph markers and close open notes |
+
+    ## Notes
+
+    Linked notes: [[route-plan]], [[observations]] and [[weather-window]].
+
+    ```swift
+    let open = observations.filter { !$0.isResolved }
+    ```
+
+    """
+
+    private static let borealisRoutePlan = """
+    # Route plan
+
+    Leave Alder Bay at first light and reach North Ridge before the wind turns north.
+
+    > [!WARNING]
+    > Sea ice past the second marker is thinner than last year. Stay on the marked line.
+
+    ## Day by day
+
+    1. **Alder Bay**: test the sleds and map the shoreline.
+    2. **North Ridge**: record wind, visibility and snow depth every two hours.
+    3. **Glass Lake**: photograph the markers and close open notes.
+
+    <details>
+    <summary>Packing list</summary>
+
+    - Satellite messenger
+    - Spare gloves and liner socks
+    - Snow probe and shovel
+
+    </details>
+
+    ## Checkpoints
+
+    | Time | Place | Call-in |
+    | --- | --- | --- |
+    | 08:00 | Alder Bay | Radio |
+    | 13:00 | North Ridge | Satellite |
+    | 17:30 | Glass Lake | Radio |
+
+    """
+
     /// Three letter pages of headed text, so the PDF stops show pages, thumbnails and an outline-free
     /// navigator.
     private static func writeSamplePDF(to url: URL) throws {
@@ -573,6 +1143,161 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
     totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae.
 
     """
+}
+
+/// Saves a window, with this process's windows in front of it (Writing Tools' panel), ten times a
+/// second until stopped, each picture filling the laptop's screen as `frame-NNN.png`. `frames.json`
+/// holds each frame's delay in milliseconds and the frames `mark` named.
+private final class DemoRecorder: @unchecked Sendable {
+    /// A window button's frame in the window, in points from its bottom left, and its active colours.
+    struct Control {
+        let frame: CGRect
+        let fill: CGColor
+        let rim: CGColor
+    }
+
+    private let windowID: CGWindowID
+    private let windowWidth: CGFloat
+    private let controls: [Control]
+    private let directory: URL
+    private let lock = NSLock()
+    private var isStopped = false
+    private var times: [TimeInterval] = []
+    private var marks: [String: Int] = [:]
+    private let finished = DispatchGroup()
+
+    init(windowID: CGWindowID, windowWidth: CGFloat, controls: [Control], directory: URL) {
+        self.windowID = windowID
+        self.windowWidth = windowWidth
+        self.controls = controls
+        self.directory = directory
+    }
+
+    func start() {
+        finished.enter()
+        let thread = Thread { [self] in
+            let start = Date()
+            let encoder = DispatchQueue(label: "MonknotUITour.demo", attributes: .concurrent)
+            let written = DispatchGroup()
+            var index = 0
+            while !lock.withLock({ isStopped }) {
+                Thread.sleep(until: start.addingTimeInterval(Double(index) / 10))
+                index += 1
+                guard let (picture, front) = capture() else { continue }
+                let number = lock.withLock { () -> Int in
+                    times.append(Date().timeIntervalSince(start))
+                    return times.count - 1
+                }
+                let url = directory.appendingPathComponent(String(format: "frame-%03d.png", number))
+                encoder.async(group: written) { [self] in
+                    guard let painted = paintingControls(on: picture, clearOf: front),
+                          let image = try? WorkspaceUITourTests.screenImage(of: painted, size: WorkspaceUITourTests.screenShotSize)
+                    else { return }
+                    try? WorkspaceUITourTests.writeImage(image, to: url)
+                }
+            }
+            written.wait()
+            finished.leave()
+        }
+        thread.qualityOfService = .userInitiated
+        thread.start()
+    }
+
+    /// Names the latest frame.
+    func mark(_ name: String) {
+        lock.withLock { marks[name] = max(0, times.count - 1) }
+    }
+
+    func stop() async {
+        lock.withLock { isStopped = true }
+        await withCheckedContinuation { continuation in
+            finished.notify(queue: .global()) { continuation.resume() }
+        }
+        let (times, marks) = lock.withLock { (self.times, self.marks) }
+        // Each frame shows until the next; the last holds a moment before the demo starts over.
+        let delays = zip(times, times.dropFirst()).map { Int((($1 - $0) * 1_000).rounded()) } + [1_500]
+        let json: [String: Any] = ["delays": delays, "marks": marks]
+        if let data = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: directory.appendingPathComponent("frames.json"))
+        }
+    }
+
+    /// The window's picture with its buttons in their active colours, which a test process, never
+    /// the active app, does not show, painted only where `front` (the windows in front of it) leaves
+    /// them uncovered.
+    private func paintingControls(on picture: CGImage, clearOf front: CGImage?) -> CGImage? {
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil, width: picture.width, height: picture.height, bitsPerComponent: 8, bytesPerRow: 0,
+                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              )
+        else { return nil }
+        context.draw(picture, in: CGRect(x: 0, y: 0, width: picture.width, height: picture.height))
+        let scale = CGFloat(picture.width) / windowWidth
+        let circles = controls.map { control -> (CGRect, Control) in
+            let diameter = min(control.frame.width, control.frame.height) * scale
+            return (CGRect(x: control.frame.midX * scale - diameter / 2, y: control.frame.midY * scale - diameter / 2, width: diameter, height: diameter), control)
+        }
+        if let front, let first = circles.first {
+            let region = circles.reduce(first.0) { $0.union($1.0) }.insetBy(dx: -scale, dy: -scale).integral
+            guard let mask = Self.uncoveredMask(of: front, in: region) else { return nil }
+            context.clip(to: region, mask: mask)
+        }
+        for (circle, control) in circles {
+            context.setFillColor(control.fill)
+            context.fillEllipse(in: circle)
+            context.setStrokeColor(control.rim)
+            context.setLineWidth(scale / 2)
+            context.strokeEllipse(in: circle)
+        }
+        return context.makeImage()
+    }
+
+    /// A grey mask of `region` (from the picture's bottom left): white where nothing of `front` is
+    /// drawn, black under it.
+    private static func uncoveredMask(of front: CGImage, in region: CGRect) -> CGImage? {
+        let width = Int(region.width)
+        let height = Int(region.height)
+        guard let crop = front.cropping(to: CGRect(x: region.minX, y: CGFloat(front.height) - region.maxY, width: region.width, height: region.height)),
+              let pixels = CGContext(
+                  data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              )
+        else { return nil }
+        pixels.draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let rgba = pixels.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        let clear = (0..<(width * height)).map { 255 - rgba[$0 * 4 + 3] }
+        guard let provider = CGDataProvider(data: Data(clear) as CFData) else { return nil }
+        return CGImage(
+            width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: width,
+            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
+        )
+    }
+
+    /// The window with this process's windows in front of it, composited as the screen shows them
+    /// (a panel's material blends with the window behind it), and those windows alone, each within the
+    /// window's bounds.
+    private func capture() -> (window: CGImage, front: CGImage?)? {
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenAboveWindow, .optionIncludingWindow], windowID) as? [[String: Any]],
+              let main = windows.first(where: { ($0[kCGWindowNumber as String] as? CGWindowID) == windowID }),
+              let boundsDictionary = main[kCGWindowBounds as String] as? NSDictionary,
+              let bounds = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary)
+        else { return nil }
+        let processID = ProcessInfo.processInfo.processIdentifier
+        // Front to back, as the window list orders them.
+        let front = windows
+            .filter { ($0[kCGWindowOwnerPID as String] as? Int32) == processID }
+            .compactMap { $0[kCGWindowNumber as String] as? CGWindowID }
+            .filter { $0 != windowID }
+        func picture(of ids: [CGWindowID]) -> CGImage? {
+            var pointers = ids.map { UnsafeRawPointer(bitPattern: UInt($0)) }
+            guard let array = CFArrayCreate(nil, &pointers, pointers.count, nil) else { return nil }
+            return CGImage(windowListFromArrayScreenBounds: bounds, windowArray: array, imageOption: [.bestResolution])
+        }
+        guard let window = picture(of: front + [windowID]) else { return nil }
+        return (window, front.isEmpty ? nil : picture(of: front))
+    }
 }
 
 /// A test window that counts as the key and main window although the test process cannot take focus

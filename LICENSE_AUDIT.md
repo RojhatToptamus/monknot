@@ -94,7 +94,9 @@ These items are not copied by `script/build_and_run.sh` into `Monknot.app`:
 | Component | Location/use | License/provenance | Status |
 | --- | --- | --- | --- |
 | GitHub-maintained workflow action | SHA-pinned [`actions/checkout`](https://github.com/actions/checkout) | MIT in the official action repository | Build-service dependency only; not an app-bundle notice |
-| README workspace screenshot and non-logo website captures | `docs/images`, `website/shots` | Repository contains no separate source/ownership record for every image | Not copied into the app bundle; review publication rights before reuse outside their current project context |
+| README screenshots | `docs/images/monknot-workspace.png`, `monknot-pdf.png`, `monknot-terminal.png` | Captured from Monknot by `WorkspaceUITourTests.testCaptureTheReadmeImages`, from a workspace the test writes | Not copied into the app bundle |
+| Website product shots and demos | `website/shots/{editor,split,preview,pdf,terminal}-{light,dark}.jpg`, `writing-assistance*`, `website/social/monknot-social.jpg` | Captured from Monknot by `WorkspaceUITourTests.testCaptureTheWebsiteImages` and `testRecordTheWritingAssistanceDemos`, from a workspace the test writes; the GIFs are assembled by `script/make_writing_demo_gif.py` | Not copied into the app bundle |
+| Laptop frame and website icon capture | `website/shots/macbook-pro.png`, `website/shots/icon-graphite.png` | Repository contains no separate source/ownership record for these images | Not copied into the app bundle; review publication rights before reuse outside their current project context |
 
 GitHub-hosted runners, Xcode, Swift, macOS command-line tools, and App Store
 services are build/platform tooling rather than components distributed in

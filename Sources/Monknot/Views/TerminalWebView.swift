@@ -749,14 +749,20 @@ struct TerminalWebView: NSViewRepresentable {
         webView.layer?.backgroundColor = NSColor(hex: theme.background).cgColor
     }
 
+    /// xterm's files from the app's bundle or, run from the checkout (`swift test`), from the
+    /// repository's sources, as `MarkdownRenderService` finds the preview's.
     private static func bundledResource(named name: String, extension fileExtension: String) -> String {
-        guard let url = Bundle.main.url(forResource: name, withExtension: fileExtension),
-              let contents = try? String(contentsOf: url, encoding: .utf8)
-        else {
-            return ""
+        let currentDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let candidates = [
+            Bundle.main.url(forResource: name, withExtension: fileExtension),
+            currentDirectory.appendingPathComponent("Sources/Monknot/Resources/\(name).\(fileExtension)")
+        ].compactMap { $0 }
+        for url in candidates {
+            if let contents = try? String(contentsOf: url, encoding: .utf8) {
+                return contents
+            }
         }
-
-        return contents
+        return ""
     }
 
     /// The xterm.js theme, for the page and for every later theme change alike. `term.options.theme`
