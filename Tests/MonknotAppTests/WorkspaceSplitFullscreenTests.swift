@@ -18,9 +18,7 @@ final class WorkspaceSplitFullscreenTests: WorkspaceSplitViewTestCase {
     /// the same native transition, its card a divider's width from the sidebar and the terminal on
     /// every frame, and lands exactly where it was, with nothing settling afterwards.
     func testLeavingTerminalFullWidthRunsTheTransitionBackwardsAndLandsExactly() async throws {
-        // Recorded frame by frame, as a Mac's display draws it. A CI runner's virtual display runs the
-        // transition with too few frames, and lays the document out differently, to check.
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] == "true", "Frame-by-frame motion is checked on a Mac's display")
+        try skipFrameByFrameRecordingOnCI()
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
         let window = mount(controller, width: 1_300)

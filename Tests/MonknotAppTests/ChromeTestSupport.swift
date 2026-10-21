@@ -16,6 +16,12 @@ final class KeyTestWindow: NSWindow {
     override var isMainWindow: Bool { true }
 }
 
+/// A test that records an animation frame by frame runs where a Mac's display draws the frames. A CI
+/// runner's virtual display drops some of them, and on some runs all of them, so there it skips.
+func skipFrameByFrameRecordingOnCI() throws {
+    try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] == "true", "Frame-by-frame motion is recorded on a Mac's display")
+}
+
 func interfaceScales(theme: AppTheme, zoomScale: Double) -> [CGFloat] {
     [
         theme.interfaceTextScale(zoomScale: zoomScale),

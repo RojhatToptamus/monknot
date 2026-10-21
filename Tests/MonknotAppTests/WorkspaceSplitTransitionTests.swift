@@ -242,7 +242,8 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
     /// The document is laid out live while a side pane moves, so its text reflows with the card on
     /// every frame and nothing jumps when the pane stops (design.md §11). (A web view keeps still
     /// on its own; see `WebViewPaneTransitionHold`.)
-    func testDocumentFollowsItsPaneOnEveryFrameWhileASidePaneMoves() {
+    func testDocumentFollowsItsPaneOnEveryFrameWhileASidePaneMoves() throws {
+        try skipFrameByFrameRecordingOnCI()
         let recorder = PresentationRecorder()
         let controller = makeController(terminalPresented: false, recorder: recorder)
         let window = mount(controller, width: 1_280)
