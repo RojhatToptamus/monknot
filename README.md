@@ -58,6 +58,13 @@ short completions.
   kind, duplicate or delete it. Selected text gets a floating format bar, and
   `[[` lists workspace notes to link. Each edit is written to the file as
   Markdown text, so syntax Monknot does not render is kept as written.
+- **Alignment and image size:** Center or right-align paragraphs, headings,
+  images and video (⇧⌘E, ⇧⌘R, ⇧⌘L for left, or from the format bar, the block
+  menu or the bar over an image). The file gets `<div align="center">` around
+  those blocks, which GitHub renders the same way. Drag the handles on an image's
+  or video's sides to resize it. The width is saved in the alt text as Obsidian
+  writes it, `![Chart|480](chart.png)`. GitHub ignores the width and shows the
+  image at its own size. Double-click a handle to return to that size.
 - **Preview and export:** Render Markdown beside the source with synchronized
   scrolling. Export Markdown to PDF with page and layout controls.
 - **Search and replace:** Search text files and selectable PDF text across a

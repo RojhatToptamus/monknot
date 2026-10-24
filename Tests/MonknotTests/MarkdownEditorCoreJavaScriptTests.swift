@@ -30,8 +30,10 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
 
     /// Random documents and random patches, including CRLF line endings: after every patch the
     /// incrementally updated document must equal a fresh parse of the new text.
-    /// Toggles, callouts and `[TOC]` lines are among the snippets, so a typed `</details>` far below
-    /// its `<details>` is covered too. Toggles opened or closed on the page keep that state wherever
+    /// Toggles, callouts, alignment divs, sized images and `[TOC]` lines are among the snippets, so a
+    /// typed `</details>` or `</div>` far below its opening line is covered too, and every planner,
+    /// alignment and image width included, plans the same patch on an edited document as on a fresh
+    /// parse of its text. Toggles opened or closed on the page keep that state wherever
     /// a toggle still starts at the same place, footnotes and references match a fresh parse, and
     /// every new unit gets an id no unit had before. The seed is fixed, so the same documents run
     /// every time: 600 by default, half of them from snippets and half generated;
@@ -92,7 +94,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
       let seed = 20261017;
       const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
       const pick = (list) => list[Math.floor(random() * list.length)];
-      const snippets = ["<details>\n<summary>T</summary>\n\nbody [^n]\n\n</details>", "> [!NOTE]", "> [!TIP]", "<details>", "<details open>", "<summary>Title</summary>", "<summary></summary>", "</details>", "[TOC]", "![v](a.mp4)", "# Title", "## Sub", "para text", "more *em* and **bold**", "- item", "- [ ] task", "1. one", "  - nested", "> quote", "> > deep", "```js", "```", "code line", "| a | b |", "| --- | --- |", "| 1 | 2 |", "---", "[ref]: http://x", "[^n]: note", "see [^n] and [l][ref]", "", "", "text with [link](u) end", "~~del~~", "`code`", "line  ", "next", "esc \\* and \\\\", "tail\\", "pair\\\\"];
+      const snippets = ["<details>\n<summary>T</summary>\n\nbody [^n]\n\n</details>", "> [!NOTE]", "> [!TIP]", "<details>", "<details open>", "<summary>Title</summary>", "<summary></summary>", "</details>", "[TOC]", "![v](a.mp4)", "![i|40](a.png)", "<div align=\"center\">", "<div align=\"right\">\n\nx\n\n</div>", "</div>", "# Title", "## Sub", "para text", "more *em* and **bold**", "- item", "- [ ] task", "1. one", "  - nested", "> quote", "> > deep", "```js", "```", "code line", "| a | b |", "| --- | --- |", "| 1 | 2 |", "---", "[ref]: http://x", "[^n]: note", "see [^n] and [l][ref]", "", "", "text with [link](u) end", "~~del~~", "`code`", "line  ", "next", "esc \\* and \\\\", "tail\\", "pair\\\\"];
       // Every node at every depth and every unit, with each offset where it is now: an edit inside a
       // container moves the nodes after it by their own shifts, so those have to add up.
       const describe = (model) => {
@@ -105,6 +107,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
             // An empty line with no line of its own (in an empty toggle or callout) has no line number.
             const fields = [depth, node.type, E.bStart(node), E.bEnd(node), node.type === "empty" && !node.view ? "-" : E.bLine(node)];
             if (node.type === "toggle") fields.push(node.open, where(node, node.summaryStart), where(node, node.summaryEnd), where(node, node.summaryView.end), node.close ? [where(node, node.close.start), where(node, node.close.end), node.close.line + E.nodeLineShift(node)].join(",") : "-");
+            if (node.type === "align") fields.push(node.align, node.close ? [where(node, node.close.start), where(node, node.close.end), node.close.line + E.nodeLineShift(node)].join(",") : "-");
             if (node.type === "quote") fields.push(node.callout ? node.callout.kind : "-");
             if (node.type === "list") fields.push(node.ordered, node.startNumber);
             if (node.type === "empty") fields.push(node.position, node.needsSeparatorBefore, node.needsSeparatorAfter, where(node, node.anchor), Boolean(node.virtual));
@@ -196,12 +199,16 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
         add("bold", () => E.planInlineStyle(model, range, "strong"));
         add("toggle", () => E.planWrapToggle(model, caret));
         add("callout", () => E.planWrapCallout(model, caret));
+        add("center", () => E.planAlign(model, range, "center"));
+        add("unalign", () => E.planAlign(model, range, "left"));
+        add("width", () => E.planMediaWidth(model, raw, 120));
         add("markdown", () => E.balancedMarkdown(model, raw, to));
         if (unit) {
           add("backspace", () => E.planBackspaceAtStart(model, unit));
           add("forward", () => E.planDeleteForwardAtEnd(model, unit));
           add("task", () => E.planToggleTask(model, unit));
           add("kind", () => E.planCalloutKind(model, unit, "tip"));
+          add("alignment", () => E.alignmentOf(unit));
           add("unquote", () => E.planUnwrapQuote(model, unit, caret));
           for (const action of ["rowBelow", "deleteRow", "columnRight", "deleteColumn"]) add(action, () => E.planTable(model, unit, action));
           const target = E.handleTargetOf(model, unit);
@@ -227,12 +234,13 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
         return list;
       };
       // Documents of nested toggles, quotes, callouts and lists, where most edits land inside a container.
-      const leaf = () => pick(["para text", "more *em* and **bold**", "## Sub", "- item", "- [ ] task", "1. one", "```\ncode\n```", "| a | b |\n| --- | --- |\n| 1 | 2 |", "---", "[TOC]", "text [^n] end", ""]);
+      const leaf = () => pick(["para text", "more *em* and **bold**", "![i|80](a.png)", "## Sub", "- item", "- [ ] task", "1. one", "```\ncode\n```", "| a | b |\n| --- | --- |\n| 1 | 2 |", "---", "[TOC]", "text [^n] end", ""]);
       const inner = (depth) => {
         const roll = random();
         if (depth > 2 || roll < 0.35) return leaf();
         if (roll < 0.5) return "<details" + (random() < 0.5 ? " open" : "") + ">\n<summary>T" + depth + "</summary>\n\n" + body(depth + 1) + "\n\n</details>";
-        if (roll < 0.65) return (random() < 0.4 ? "[!NOTE]\n" : "") + body(depth + 1);
+        if (roll < 0.58) return (random() < 0.4 ? "[!NOTE]\n" : "") + body(depth + 1);
+        if (roll < 0.65) return "<div align=\"" + pick(["center", "right"]) + "\">\n\n" + body(depth + 1) + "\n\n</div>";
         if (roll < 0.85) {
           const items = [];
           const count = 1 + Math.floor(random() * 6);
@@ -254,7 +262,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
         }
         return parts.join(random() < 0.8 ? "\n\n" : "\n");
       };
-      const inserts = ["<details>\n", "<summary>S</summary>\n", "</details>", "> [!NOTE]\n", "[TOC]\n", "x", "x", "x", "ab", " ", "\n", "\n\n", "\n> ", "\n- ", "\n  - ", "# ", "- ", "  ", "**", "`", "```", "> ", "|", "[ ] ", "1. ", "[a](b)", "[^n]", "\\"];
+      const inserts = ["<details>\n", "<summary>S</summary>\n", "</details>", "<div align=\"center\">\n", "</div>", "<div>\n", "|300", "> [!NOTE]\n", "[TOC]\n", "x", "x", "x", "ab", " ", "\n", "\n\n", "\n> ", "\n- ", "\n  - ", "# ", "- ", "  ", "**", "`", "```", "> ", "|", "[ ] ", "1. ", "[a](b)", "[^n]", "\\"];
       let steps = 0;
       let inside = 0;
       let nested = 0;
@@ -319,7 +327,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
         for (let step = 0; step < 6; step += 1) {
           const from = Math.floor(random() * (text.length + 1));
           const to = Math.min(text.length, from + (random() < 0.6 ? 0 : Math.floor(random() * 12)));
-          const insert = random() < 0.25 ? "" : run < fuzzRuns / 2 ? pick(["<details>\n", "<summary>S</summary>\n", "</details>", "> [!NOTE]\n", "[TOC]\n", "x", "\n", "\n\n", "# ", "- ", "**", "`", "```", "> ", "|", " ", "[a](b)", "\\", pick(snippets) + "\n"]) : pick(inserts);
+          const insert = random() < 0.25 ? "" : run < fuzzRuns / 2 ? pick(["<details>\n", "<summary>S</summary>\n", "</details>", "<div align=\"right\">\n", "</div>", "> [!NOTE]\n", "[TOC]\n", "x", "\n", "\n\n", "# ", "- ", "**", "`", "```", "> ", "|", " ", "[a](b)", "\\", pick(snippets) + "\n"]) : pick(inserts);
           // Open or close some toggles, as a click on the page does; the state should follow each
           // toggle that still starts where it did, moved by the patch.
           const expectedOpen = new Map();
@@ -849,7 +857,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     check("unwrap quote keeps its blocks", "> # T‸\n>\n> 2020. x\n>\n> ```\n> [x]: y\n> ```", unquote, "# T‸\n\n2020. x\n\n```\n[x]: y\n```");
     check("backspace quote escapes a footnote", "> ‸[^1]: note", backspaceAtStart, "‸[^1]\\: note");
     // Whatever an item holds reads as the same text once ⌫ takes its marker away.
-    for (const text of ["2020. A year", "1) x", "12345678901. x", "- x", "+ x", "* x", "# x", "> x", "***", "___", "```js", "~~~", "[TOC]", "[a]: b", "[^1]: note"]) {
+    for (const text of ["2020. A year", "1) x", "12345678901. x", "- x", "+ x", "* x", "# x", "> x", "***", "___", "```js", "~~~", "<div align=center>", "[TOC]", "[a]: b", "[^1]: note"]) {
       const model = E.createModel("- " + text);
       const op = E.planBackspaceAtStart(model, E.allUnits(model)[0]);
       E.applyPatch(model, op.from, op.to, op.insert);
@@ -887,7 +895,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     check("unwrap toggle in a toggle keeps a definition", "<details open>\n<summary>A</summary>\n\n<details>\n<summary>‸T</summary>\n\n[x]: https://x.org\n\n</details>\n\n</details>", backspaceAtStart, "<details open>\n<summary>A</summary>\n\n‸T\n\n[x]: https://x.org\n\n</details>");
     // Whatever follows reads as the same text once ↩, ⇧↩ or a deletion brings it to a line's start.
     const withoutLines = (html) => html.replace(/ data-source-line="\d+"/g, "");
-    for (const text of ["2020. A year", "1) x", "- x", "+ x", "* x", "# x", "> x", "***", "___", "```js", "~~~", "<details>", "[TOC]", "[a]: b", "[^1]: note"]) {
+    for (const text of ["2020. A year", "1) x", "- x", "+ x", "* x", "# x", "> x", "***", "___", "```js", "~~~", "<details>", "<div align=center>", "[TOC]", "[a]: b", "[^1]: note"]) {
       const html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       for (const [name, marked, plan, expected] of [
         ["enter", "In ‸", enter, "<p>In </p>\n<p>" + html + "</p>"],
@@ -900,6 +908,88 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
         expectEqual(name + " keeps text reading as text: " + text, withoutLines(window.MonknotMarkdown.renderMarkdown(model.source)), expected);
       }
     }
+    // Alignment: a `<div align>` around blocks, its lines written and taken away, the blocks' own
+    // lines untouched.
+    const align = (value) => (m, s) => E.planAlign(m, s, value);
+    const centered = (body) => "<div align=\"center\">\n\n" + body + "\n\n</div>";
+    check("center a paragraph", "A\n\nB‸\n\nC", align("center"), "A\n\n" + centered("B‸") + "\n\nC");
+    check("right-align a heading", "# T‸itle", align("right"), "<div align=\"right\">\n\n# T‸itle\n\n</div>");
+    check("center an image", "![a](b.png)‸", align("center"), centered("![a](b.png)‸"));
+    check("center to right", centered("B‸"), align("right"), "<div align=\"right\">\n\nB‸\n\n</div>");
+    check("left takes the div away", "A\n\n" + centered("B‸") + "\n\nC", align("left"), "A\n\nB‸\n\nC");
+    check("already centered", centered("B‸"), align("center"), "(no-op)");
+    check("left on the last of two splits the div", centered("A\n\nB‸"), align("left"), centered("A") + "\n\nB‸");
+    check("right on the middle of three", centered("A\n\nB‸\n\nC"), align("right"), centered("A") + "\n\n<div align=\"right\">\n\nB‸\n\n</div>\n\n" + centered("C"));
+    check("center joins the div above", centered("A") + "\n\nB‸", align("center"), centered("A\n\nB‸"));
+    check("center joins the divs on both sides", centered("A") + "\n\nB‸\n\n" + centered("C"), align("center"), centered("A\n\nB‸\n\nC"));
+    check("two paragraphs share one div", "«A\n\nB»", align("center"), centered("«A\n\nB»"));
+    check("a list between keeps its place", "«A\n\n- x\n\nB»", align("center"), centered("«A") + "\n\n- x\n\n" + centered("B»"));
+    check("an empty line goes with the block before it", "«A\n\n\nB»", align("center"), centered("«A\n\n\nB»"));
+    check("a heading right above keeps its line", "# H\nA‸", align("center"), "# H\n" + centered("A‸"));
+    check("a heading right above gets its line back", "# H\n" + centered("A‸"), align("left"), "# H\nA‸");
+    check("a paragraph right above stays apart", "P\n" + centered("A‸"), align("left"), "P\n\nA‸");
+    check("a list right below stays apart", "A‸\n- b", align("center"), centered("A‸") + "\n\n- b");
+    check("center in a quote", "> A‸", align("center"), "> <div align=\"center\">\n>\n> A‸\n>\n> </div>");
+    check("center in a callout", "> [!NOTE]\n> A‸", align("center"), "> [!NOTE]\n> <div align=\"center\">\n>\n> A‸\n>\n> </div>");
+    check("center in a toggle", "<details open>\n<summary>T</summary>\n\nA‸\n\n</details>", align("center"), "<details open>\n<summary>T</summary>\n\n" + centered("A‸") + "\n\n</details>");
+    check("center with CRLF", "A‸\r\n\r\nB", align("center"), "<div align=\"center\">\r\n\r\nA‸\r\n\r\n</div>\r\n\r\nB");
+    check("list items do not align", "- a‸", align("center"), "(no-op)");
+    check("a toggle's title does not align", "<details>\n<summary>T‸</summary>\n</details>", align("center"), "(no-op)");
+    check("a hand-written div keeps its blocks", "<div align='center'>\nA‸\n</div>", align("right"), "<div align=\"right\">\n\nA‸\n\n</div>");
+    // Every alignment taken away again gives back the source it was set on.
+    for (const marked of ["A\n\nB‸\n\nC", "# H‸", "«A\n\nB»\n\nC", "> [!TIP]\n> A‸\n>\n> B", "A‸\r\n\r\nB\r\n", "<details>\n<summary>T</summary>\n\nA‸\n\n</details>", "![a|300](b.png)‸\n"]) {
+      for (const value of ["center", "right"]) {
+        const { source, sel } = parse(marked);
+        const model = E.createModel(source);
+        const set = applyOp(model, E.planAlign(model, sel, value));
+        const { anchor, head } = set.sel;
+        const back = applyOp(model, E.planAlign(model, { anchor, head, from: Math.min(anchor, head), to: Math.max(anchor, head) }, "left"));
+        expectEqual("taking " + value + " away from " + JSON.stringify(marked), show(back.source, back.sel), marked);
+      }
+    }
+    // The keys at a div's edges: ⌫ takes the alignment away first, ↩ stays in it, and ↩ on its empty
+    // last line leaves it. Text never joins across its edges.
+    check("backspace at a centered paragraph's start", "A\n\n" + centered("‸B"), backspaceAtStart, "A\n\n‸B");
+    check("backspace at a centered heading's start", centered("# ‸T"), backspaceAtStart, centered("‸T"));
+    check("backspace at the second paragraph of a div joins", centered("A\n\n‸B"), backspaceAtStart, centered("A‸B"));
+    check("backspace on an empty div's line", "A\n\n<div align=\"center\">\n‸\n</div>\n\nB", backspaceAtStart, "A\n\n‸\nB");
+    check("enter at the end of a centered paragraph", centered("A‸"), enter, "<div align=\"center\">\n\nA\n\n‸\n</div>");
+    check("enter on a div's empty last line leaves it", "<div align=\"center\">\n\nA\n\n‸\n</div>", enter, centered("A") + "\n‸\n");
+    check("enter on an empty div's line drops the div", "A\n\n<div align=\"center\">\n‸\n</div>\n\nB", enter, "A\n\n‸\nB");
+    check("delete forward before a div", "A‸\n\n" + centered("B"), delFwd, "(no-op)");
+    check("delete forward at a div's end", centered("A‸") + "\n\nB", delFwd, "(no-op)");
+    check("typing into a div", centered("A‸"), type("x"), centered("Ax‸"));
+    (() => {
+      const model = E.createModel("A\n\n" + centered("B") + "\n\n<div align=\"right\">\n\n# C\n\n</div>\n\n- d");
+      const at = (text) => E.alignmentOf(E.unitAt(model, model.source.indexOf(text), "right"));
+      expectEqual("alignments", [at("A"), at("B"), at("C"), at("- d")].join(","), "left,center,right,");
+    })();
+
+    // Media width: a number after a bar at the end of the alt text, as Obsidian writes it.
+    const width = (value) => (m, s) => E.planMediaWidth(m, s.head, value);
+    check("resize an image", "‸![a](b.png)", width(480), "![a|480](b.png)");
+    check("resize again", "‸![a|480](b.png)", width(320.4), "![a|320](b.png)");
+    check("original size", "‸![a|480](b.png)", width(0), "![a](b.png)");
+    check("original size of a width and height", "‸![a|100x145](b.png)", width(0), "![a](b.png)");
+    check("resize an image without alt text", "‸![](b.png)", width(200), "![|200](b.png)");
+    check("resize a video", "‸![Demo](clip.mp4)", width(640), "![Demo|640](clip.mp4)");
+    check("resize an image in a sentence", "see ‸![a](b.png) here", width(90), "see ![a|90](b.png) here");
+    check("an escaped bar is alt text", "‸![a\\|480](b.png)", width(200), "![a\\|480|200](b.png)");
+    check("the same width", "‸![a|480](b.png)", width(480), "(no-op)");
+    check("no image there", "‸text", width(480), "(no-op)");
+    (() => {
+      const render = window.MonknotMarkdown.renderMarkdown;
+      expectEqual("width rendered", render("![a|480](b.png)"), "<p data-source-line=\"1\"><img src=\"b.png\" alt=\"a\" width=\"480\"></p>");
+      expectEqual("width and height rendered", render("![a|100x145](b.png)"), "<p data-source-line=\"1\"><img src=\"b.png\" alt=\"a\" width=\"100\"></p>");
+      expectEqual("escaped bar rendered", render("![a\\|480](b.png)"), "<p data-source-line=\"1\"><img src=\"b.png\" alt=\"a|480\"></p>");
+      expectEqual("video width rendered", render("![v|640](c.mp4)"), "<p data-source-line=\"1\"><video src=\"c.mp4\" controls preload=\"metadata\" width=\"640\" aria-label=\"v\"></video></p>");
+      expectEqual("audio keeps its width", render("![s|640](c.mp3)"), "<p data-source-line=\"1\"><audio src=\"c.mp3\" controls preload=\"metadata\" aria-label=\"s\"></audio></p>");
+      expectEqual("div rendered", render(centered("# T")), "<div data-source-line=\"1\" align=\"center\"><h1 data-source-line=\"3\" id=\"t\">T</h1></div>");
+      expectEqual("unclosed div runs to the end", render("<div align=\"right\">\n\nA\n\nB"), "<div data-source-line=\"1\" align=\"right\"><p data-source-line=\"3\">A</p>\n<p data-source-line=\"5\">B</p></div>");
+      expectEqual("nested div closes in order", render("<div align=\"center\">\n\n<div>\n\nA\n\n</div>\n\nB\n\n</div>\n\nC"), "<div data-source-line=\"1\" align=\"center\"><p data-source-line=\"3\">&lt;div&gt;</p>\n<p data-source-line=\"5\">A</p>\n<p data-source-line=\"7\">&lt;/div&gt;</p>\n<p data-source-line=\"9\">B</p></div>\n<p data-source-line=\"13\">C</p>");
+      expectEqual("a div interrupts a paragraph", render("A\n<div align=\"center\">\n\nB\n\n</div>"), "<p data-source-line=\"1\">A</p>\n<div data-source-line=\"2\" align=\"center\"><p data-source-line=\"4\">B</p></div>");
+    })();
+
     return JSON.stringify({ passed, failures });
     })()
     """#

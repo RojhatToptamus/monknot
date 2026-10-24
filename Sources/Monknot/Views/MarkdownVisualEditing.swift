@@ -425,7 +425,7 @@ final class MarkdownEditorWebView: PaneTransitionWebView {
 /// theme's ink. Sizes follow design.md §8: 15 beside a label, 17 alone in a button, and the chrome's
 /// 10 semibold secondary marks for a check and a chevron.
 enum MarkdownEditorSymbolAssets {
-    /// Glyphs beside a label in the slash, block, Turn Into, callout and table menus (15 nominal).
+    /// Glyphs beside a label in the slash, block, Turn Into, Align, callout and table menus (15 nominal).
     static let menuSymbols = [
         "textformat", "list.bullet", "list.number", "checklist", "chevron.right.square", "doc",
         "text.bubble", "text.quote", "tablecells", "minus", "arrow.up.right.square", "photo",
@@ -434,12 +434,13 @@ enum MarkdownEditorSymbolAssets {
         "exclamationmark.bubble", "exclamationmark.triangle", "exclamationmark.octagon",
         "arrow.triangle.2.circlepath", "plus.square.on.square", "doc.on.doc", "arrow.up", "arrow.down",
         "arrow.up.to.line", "arrow.down.to.line", "arrow.left.to.line", "arrow.right.to.line", "trash",
-        "magnifyingglass", "doc.text", "link"
+        "magnifyingglass", "doc.text", "link", "text.alignleft", "text.aligncenter", "text.alignright"
     ]
-    /// Glyphs alone in a format bar or link card button (17 nominal).
+    /// Glyphs alone in a format bar, media bar or link card button (17 nominal).
     static let toolSymbols = [
         "bold", "italic", "strikethrough", "curlybraces", "link", "arrow.up.right.square",
-        MonknotWorkspaceIcons.rename, "trash", "link.badge.minus"
+        MonknotWorkspaceIcons.rename, "trash", "link.badge.minus", "text.alignleft", "text.aligncenter",
+        "text.alignright"
     ]
     /// A menu row's check and submenu chevron, the chevron of a dropdown and a callout's title: the
     /// chrome's secondary marks (`MonknotSecondaryGlyph`), 10 semibold.

@@ -785,6 +785,10 @@
   color: var(--mk-ink3);
 }
 
+.mk-row-check.mk-row-unchecked {
+  visibility: hidden;
+}
+
 .mk-menu-row.mk-open-submenu {
   background: var(--mk-highlight);
 }
@@ -927,6 +931,63 @@
 .mk-tool-chevron {
   display: flex;
   color: var(--mk-ink3);
+}
+
+/* A menu button showing a glyph (the format bar's alignment) rests at ink3, as an icon button does. */
+.mk-tool-menu.mk-tool-glyph-menu {
+  color: var(--mk-ink3);
+  padding: 0 calc(6px * var(--mk-z));
+}
+
+/* The media bar appears and leaves with the pointer, as the block handles do: a 120 ms fade. */
+.mk-floating.mk-media-bar.mk-visible {
+  transition: opacity 120ms ease-out, visibility 0s;
+}
+
+.mk-floating.mk-media-bar:not(.mk-visible) {
+  transition: opacity 120ms ease-out, visibility 0s linear 120ms;
+}
+
+/* An image's or video's resize handles: a capsule on each side, the ink of a tooltip with a ring of
+   the page so it reads on any picture, in a wider target. */
+.mk-resize-handle {
+  position: absolute;
+  display: flex;
+  justify-content: center;
+  width: calc(14px * var(--mk-z));
+  cursor: ew-resize;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease-out, visibility 0s linear 120ms;
+}
+
+.mk-resize-handle.mk-visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 120ms ease-out, visibility 0s;
+}
+
+.mk-resize-handle::before {
+  content: "";
+  width: calc(6px * var(--mk-z));
+  height: 100%;
+  border-radius: calc(3px * var(--mk-z));
+  background: color-mix(in srgb, var(--fg) 72%, var(--bg));
+  box-shadow: 0 0 0 calc(1px * var(--mk-z)) color-mix(in srgb, var(--bg) 85%, transparent);
+  transition: background-color 120ms ease-out;
+}
+
+.mk-resize-handle:hover::before,
+.mk-resize-handle.mk-on::before {
+  background: color-mix(in srgb, var(--fg) 88%, var(--bg));
+}
+
+.mk-editing.mk-resizing,
+.mk-editing.mk-resizing * {
+  cursor: ew-resize !important;
+  user-select: none;
 }
 
 .mk-tool-divider {
