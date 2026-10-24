@@ -242,7 +242,10 @@ Shorter and more specific is preferable to polished but meaningless copy.
   toggle's body (`containerBody`, units scoped to it, re-parsed inside by `applyInside`), so text never
   joins across its edges. `planAlign` regroups the blocks from the first to the last it changes into
   runs of one alignment and writes only div lines, so taking an alignment away gives back the file;
-  ⌫ at the start of a div's first block takes its alignment away. ⇧⌘L / ⇧⌘E / ⇧⌘R, the format bar's
+  an empty line is aligned on its own (`alignEmptyLine`, a div whose body is one blank line). ⌫ at
+  the start of a div's first block takes its alignment away, ⌫ after a div and ⌦ at its end join
+  text into it (`joinIntoDiv`), and ↩ after an aligned image that ends its div starts a line after
+  the div. A toggle's or div's last empty line writes a blank line before the closing tag when typed in. ⇧⌘L / ⇧⌘E / ⇧⌘R, the format bar's
   alignment selector, the block menu's Align › (one `choiceMenu` lists Turn Into's blocks or the
   alignments) and the media bar all run it.
 - An image's or video's width is a number after a bar at the end of its alt text, as Obsidian writes

@@ -1498,7 +1498,7 @@ CommonMark with tables and task lists renders:
 | Block handles | the pointer over a block, in its left gutter; gone while typing | + (a new line below with the slash menu open on it; ⌥ above; Esc takes the line back) and the grip (drag to move; click for the block menu). A tooltip after 450 ms names both gestures |
 | Block menu | a click on the grip, or ⌘/ at the caret | a search field, Turn into ›, Align › (a paragraph, heading or aligned group, its row showing the current alignment's glyph), Duplicate ⌘D, Copy, Move up ⇧⌘↑, Move down ⇧⌘↓, Delete; the block it acts on is tinted with the selection colour while it is open. Typing in the field lists the Turn Into targets and the alignments too |
 | Turn Into | the block menu's row (hover, → or ↩) or the format bar's selector | Text, Heading 1–3, the three lists, Toggle list, Code, Quote, Callout, the current one checked; beside the menu, aligned to its row |
-| Align | the block menu's row or the format bar's alignment selector, in the same place as Turn Into | Left ⇧⌘L, Center ⇧⌘E, Right ⇧⌘R with `text.alignleft`, `text.aligncenter`, `text.alignright`, the current one checked. From the block menu it aligns the whole block, an aligned group with everything in it; from the format bar, the selection's paragraphs and headings |
+| Align | the block menu's row or the format bar's alignment selector, in the same place as Turn Into | Left ⇧⌘L, Center ⇧⌘E, Right ⇧⌘R with `text.alignleft`, `text.aligncenter`, `text.alignright`, the current one checked. From the block menu it aligns the whole block, an aligned group with everything in it; from the format bar, the blocks the selection reaches |
 | Media bar | the pointer over an image, video or audio player, or one selected; it waits 250 ms after the pointer leaves, so the pointer can reach it | Align left, Center, Align right, the current one on. Inside a picture's top-right corner, 8 in, when the picture is wider than the bar and three times as tall; above it otherwise, and above an audio player, whose controls fill it. Not shown for media in a list item or table cell, which have no alignment of their own. Choosing keeps the media selected |
 | Resize handles | the pointer over an image or video | a 6 wide capsule on each side, 2 in from the edge, 40 % of the media's height between 16 and 48, centred on it, in the tooltip's ink with a 1 pt ring of the page so it reads on any picture; a 14 wide target with the resize cursor |
 | Callout kind | a click on a callout's title | Note, Tip, Important, Warning, Caution |
@@ -1541,14 +1541,23 @@ item or heading made into text (by ⌫ or Turn Into) gets a blank line on each s
 reads it as more of the item or paragraph above; at the start of a callout's text it makes the callout a quote; at the
 start of a toggle's title it unwraps the toggle into a paragraph followed by its body; at the start of
 an aligned group's first block it takes that block's alignment away (a heading loses its level first),
-and an aligned group left with only empty lines goes. Text never joins across a toggle's or aligned
-group's edge, so its markup cannot break; ⌫ or ⌦ there moves the caret instead. ↩ at the end of an
-aligned block starts a block with the same alignment; ↩ on its empty last line leaves the group. ⌫ after a
+and an aligned group left with only empty lines goes with its line. Text never joins across a
+toggle's edge, so its markup cannot break; ⌫ or ⌦ there moves the caret instead. Across an aligned
+group's edge text joins as anywhere: ⌫ at the start of the block after it, or ⌦ at the end of its
+last block, brings that text into the group's last paragraph or heading; ⌦ right before a group
+takes its first block's alignment away first. ↩ at the end of aligned text starts a line with the
+same alignment, and the typed line keeps a blank line before `</div>`; ↩ on the group's empty last
+line leaves it. ↩ after an aligned image or video that ends its group starts a left-aligned line
+after the group, and ↩ with an image, video or audio player selected starts a line after it
+instead of replacing it. ⌫ after a
 divider or table of contents deletes it. ⇥/⇧⇥ indent and outdent list items, move between table cells
 (adding a row after the last) and indent code. ⌘↩ leaves a code block. ⌘/ opens the block menu, ⌘D
 duplicates the block, ⇧⌘↑/⇧⌘↓ move it. ⌘B ⌘I ⌘E ⇧⌘X ⌘K and ⌥⌘0–6 format; ⇧⌘L, ⇧⌘E and ⇧⌘R
-align the paragraphs and headings in the selection left, centre and right (no app or editor shortcut
-used them). ⌘-click opens a link.
+align the blocks in the selection left, centre and right: from its first paragraph or heading, every
+block it reaches beside it, a list or code between included (no app or editor shortcut used them).
+On an empty line they align the line, so the next words are typed centred or right-aligned; its
+placeholder starts at the caret in the middle of a centred line and ends at it on a right-aligned
+one. ⌘-click opens a link.
 
 **Resizing media.** Dragging a resize handle draws the image or video at its new width on every move,
 its width and height in a tooltip centred under it (inside its bottom edge where the window ends);

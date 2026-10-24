@@ -101,6 +101,17 @@
   content: "Empty toggle";
 }
 
+/* In an aligned block a placeholder sits where the caret does: from the middle of a centred line,
+   up to the end of a right-aligned one. */
+.mk-editing div[align="center"] [data-mk-empty]::before {
+  left: 50%;
+}
+
+.mk-editing div[align="right"] [data-mk-empty]::before {
+  left: auto;
+  right: 0;
+}
+
 /* Lists: the item's text is its own line box, so the caret and the marker share a baseline. */
 .mk-editing li > .mk-item-text {
   display: block;

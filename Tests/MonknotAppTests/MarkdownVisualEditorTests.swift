@@ -1635,6 +1635,133 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         XCTAssertEqual(undoManager.undoActionName, "Original Size")
     }
 
+    /// Writing on in an aligned block: Return keeps the alignment for the next line, the next line's
+    /// text gets a blank line before `</div>`, Return on the empty last line leaves the alignment,
+    /// and the line after it reads left aligned again.
+    func testReturnInAlignedTextKeepsTheAlignmentUntilAnEmptyLine() async throws {
+        let source = "Title\n"
+        let fixture = try await makeFixture(markdown: source)
+        try await fixture.setSelection(5)
+        fixture.press(.character("e"), modifiers: [.command, .shift])
+        let centered = await waitUntil { fixture.store.documentText == "<div align=\"center\">\n\nTitle\n\n</div>\n" }
+        XCTAssertTrue(centered, fixture.store.documentText)
+        fixture.press(.return)
+        fixture.type("Sub")
+        let typed = await waitUntil { fixture.store.documentText == "<div align=\"center\">\n\nTitle\n\nSub\n\n</div>\n" }
+        XCTAssertTrue(typed, fixture.store.documentText)
+        let subAlignment = try await fixture.evaluate(Self.textAlign(of: "Sub")) as? String
+        XCTAssertEqual(subAlignment, "-webkit-center", "The new line is centred as the one above")
+        fixture.press(.return)
+        fixture.press(.return)
+        fixture.type("Body")
+        let left = await waitUntil { fixture.store.documentText == "<div align=\"center\">\n\nTitle\n\nSub\n\n</div>\n\nBody\n" }
+        XCTAssertTrue(left, "Return on the empty last line leaves the alignment: \(fixture.store.documentText)")
+        let bodyAlignment = try await fixture.evaluate(Self.textAlign(of: "Body")) as? String
+        XCTAssertEqual(bodyAlignment, "start")
+    }
+
+    /// Return after an aligned image starts a line of text after it, left aligned, whether the image
+    /// is selected (as the media bar leaves it) or the caret is after it; it never replaces the image.
+    func testReturnAfterAnAlignedImageStartsATextLine() async throws {
+        let source = "Intro\n\n![Chart](chart.png)\n\nAfter\n"
+        let fixture = try await makeFixture(markdown: source, images: ["chart.png": CGSize(width: 320, height: 160)])
+        try await fixture.hoverImage()
+        _ = try await fixture.evaluate("document.querySelector('.mk-media-bar button[aria-label=\"Center\"]').click(); true")
+        let centered = "Intro\n\n<div align=\"center\">\n\n![Chart](chart.png)\n\n</div>\n\nAfter\n"
+        let aligned = await waitUntil { fixture.store.documentText == centered }
+        XCTAssertTrue(aligned, fixture.store.documentText)
+        let selected = await waitUntil { ((try? await fixture.evaluate("window.getSelection().toString() === '' && !window.getSelection().isCollapsed")) as? Bool) == true }
+        XCTAssertTrue(selected, "The image is selected")
+        fixture.press(.return)
+        fixture.type("Caption")
+        let captioned = "Intro\n\n<div align=\"center\">\n\n![Chart](chart.png)\n\n</div>\n\nCaption\n\nAfter\n"
+        let typed = await waitUntil { fixture.store.documentText == captioned }
+        XCTAssertTrue(typed, "Return with the image selected keeps it and starts a line after it: \(fixture.store.documentText)")
+        let alignment = try await fixture.evaluate(Self.textAlign(of: "Caption")) as? String
+        XCTAssertEqual(alignment, "start")
+
+        // The caret right after the image: the same.
+        let image = (captioned as NSString).range(of: "![Chart](chart.png)")
+        try await fixture.setSelection(image.location + image.length)
+        fixture.press(.return)
+        fixture.type("Note")
+        let noted = await waitUntil { fixture.store.documentText == "Intro\n\n<div align=\"center\">\n\n![Chart](chart.png)\n\n</div>\n\nNote\n\nCaption\n\nAfter\n" }
+        XCTAssertTrue(noted, fixture.store.documentText)
+    }
+
+    /// An empty line takes an alignment to type in: the placeholder sits where the caret does, the
+    /// typed text is centred, and ⌫ on the empty centred line takes it away as it would any line.
+    func testAnEmptyLineTakesAnAlignmentToTypeIn() async throws {
+        let source = "Intro\n\n\n\nAfter\n"
+        let fixture = try await makeFixture(markdown: source)
+        try await fixture.setSelection(7)
+        fixture.press(.character("e"), modifiers: [.command, .shift])
+        let wrapped = "Intro\n\n<div align=\"center\">\n\n</div>\n\n\nAfter\n"
+        let centered = await waitUntil { fixture.store.documentText == wrapped }
+        XCTAssertTrue(centered, fixture.store.documentText)
+        let placeholder = try await fixture.evaluate("(() => { const line = document.querySelector('#content div[align=center] .mk-empty'); return line ? Math.abs(parseFloat(getComputedStyle(line, '::before').left) - line.clientWidth / 2) < 1 : false; })()") as? Bool
+        XCTAssertEqual(placeholder, true, "The placeholder starts at the caret, in the middle of the line")
+        fixture.press(.backspace)
+        let removed = await waitUntil { fixture.store.documentText == "Intro\n\n\nAfter\n" }
+        XCTAssertTrue(removed, "⌫ takes the empty centred line away: \(fixture.store.documentText)")
+        let undoManager = try XCTUnwrap(fixture.webView.undoManager)
+        undoManager.undo()
+        let back = await waitUntil { fixture.store.documentText == wrapped }
+        XCTAssertTrue(back, fixture.store.documentText)
+        try await fixture.setSelection((wrapped as NSString).range(of: "<div align=\"center\">\n").upperBound)
+        fixture.type("Centered")
+        let typed = await waitUntil { fixture.store.documentText == "Intro\n\n<div align=\"center\">\n\nCentered\n\n</div>\n\n\nAfter\n" }
+        XCTAssertTrue(typed, fixture.store.documentText)
+        let alignment = try await fixture.evaluate(Self.textAlign(of: "Centered")) as? String
+        XCTAssertEqual(alignment, "-webkit-center")
+    }
+
+    /// ⌫ at the start of the line after an aligned block and ⌦ at the end of its last line join the
+    /// two as they would any two lines; the joined text keeps the aligned block's alignment.
+    func testBackspaceAndDeleteJoinAcrossAnAlignedBlock() async throws {
+        let source = "<div align=\"center\">\n\nAlpha\n\n</div>\n\nBeta\n"
+        let fixture = try await makeFixture(markdown: source)
+        try await fixture.setSelection((source as NSString).range(of: "Beta").location)
+        fixture.press(.backspace)
+        let joined = "<div align=\"center\">\n\nAlphaBeta\n\n</div>\n"
+        let backspaced = await waitUntil { fixture.store.documentText == joined }
+        XCTAssertTrue(backspaced, fixture.store.documentText)
+        fixture.type(" ")
+        let caret = await waitUntil { fixture.store.documentText == "<div align=\"center\">\n\nAlpha Beta\n\n</div>\n" }
+        XCTAssertTrue(caret, "The caret stays where the two met: \(fixture.store.documentText)")
+        let undoManager = try XCTUnwrap(fixture.webView.undoManager)
+        undoManager.undo()
+        undoManager.undo()
+        let restored = await waitUntil { fixture.store.documentText == source }
+        XCTAssertTrue(restored, fixture.store.documentText)
+
+        try await fixture.setSelection((source as NSString).range(of: "Alpha").upperBound)
+        fixture.press(.forwardDelete)
+        let forward = await waitUntil { fixture.store.documentText == joined }
+        XCTAssertTrue(forward, fixture.store.documentText)
+    }
+
+    /// A selected aligned image deleted with ⌫ leaves an empty centred line; ⌫ again takes the line
+    /// and its alignment away.
+    func testDeletingASelectedAlignedImage() async throws {
+        let source = "Intro\n\n<div align=\"center\">\n\n![Chart](chart.png)\n\n</div>\n\nAfter\n"
+        let fixture = try await makeFixture(markdown: source, images: ["chart.png": CGSize(width: 320, height: 160)])
+        try await fixture.hoverImage()
+        _ = try await fixture.evaluate("(() => { const img = document.querySelector('#content img'); const box = img.getBoundingClientRect(); img.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: box.left + 10, clientY: box.top + 10, button: 0 })); return true; })()")
+        let selected = await waitUntil { ((try? await fixture.evaluate("Boolean(document.querySelector('.mk-media-bar.mk-visible'))")) as? Bool) == true }
+        XCTAssertTrue(selected, "Clicking the image selects it and shows its bar")
+        fixture.press(.backspace)
+        let emptied = await waitUntil { fixture.store.documentText == "Intro\n\n<div align=\"center\">\n\n\n\n</div>\n\nAfter\n" }
+        XCTAssertTrue(emptied, fixture.store.documentText)
+        fixture.press(.backspace)
+        let gone = await waitUntil { fixture.store.documentText == "Intro\n\nAfter\n" }
+        XCTAssertTrue(gone, fixture.store.documentText)
+    }
+
+    private static func textAlign(of text: String) -> String {
+        "getComputedStyle([...document.querySelectorAll('#content p, #content h1, #content h2')].find(e => e.textContent === '\(text)')).textAlign"
+    }
+
     private static let alignMenuRows = """
     (() => {
       const menu = document.querySelector('.mk-menu.mk-visible[aria-label="Align"]');
@@ -2017,6 +2144,18 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
             try await shot("format-bar-align")
             fixture.press(.escape)
 
+            // Return at the end of a right-aligned and a centred line: an empty aligned line.
+            for (label, line) in [("new-line-right", "Signed, the team"), ("new-line-center", "middle of the column.")] {
+                let end = (markdown as NSString).range(of: line)
+                try await fixture.setSelection(end.location + end.length)
+                fixture.press(.return)
+                try await shot(label)
+                let empty = await waitUntil { fixture.store.documentText == markdown.replacingOccurrences(of: line + "\n\n", with: line + "\n\n\n") }
+                XCTAssertTrue(empty, "\(name): Return makes an empty aligned line")
+                try XCTUnwrap(fixture.webView.undoManager).undo()
+                _ = await waitUntil { fixture.store.documentText == markdown }
+            }
+
             try await fixture.hoverBlock(containing: "Signed, the team")
             try await fixture.openBlockMenu()
             _ = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-menu-row')].find(r => r.textContent.includes('Align'))?.click(); true")
@@ -2283,6 +2422,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         enum Key {
             case `return`
             case backspace
+            case forwardDelete
             case escape
             case tab
             case down
@@ -2292,6 +2432,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
                 switch self {
                 case .return: return "\r"
                 case .backspace: return "\u{7F}"
+                case .forwardDelete: return String(UnicodeScalar(NSDeleteFunctionKey)!)
                 case .escape: return "\u{1B}"
                 case .tab: return "\t"
                 case .down: return String(UnicodeScalar(NSDownArrowFunctionKey)!)
@@ -2303,6 +2444,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
                 switch self {
                 case .return: return 36
                 case .backspace: return 51
+                case .forwardDelete: return 117
                 case .escape: return 53
                 case .tab: return 48
                 case .down: return 125

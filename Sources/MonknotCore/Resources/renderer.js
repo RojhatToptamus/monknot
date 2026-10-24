@@ -657,7 +657,8 @@
     for (let index = first; index < count; index += 1) {
       const block = emptyBlock(blanks[index], position, context);
       block.needsSeparatorBefore = blocks.length > 0 && index === 0;
-      block.needsSeparatorAfter = followedByBlock && index === count - 1;
+      // In a toggle's or alignment div's body the closing line needs a blank line before it too.
+      block.needsSeparatorAfter = (followedByBlock || Boolean(context.separators)) && index === count - 1;
       blocks.push(block);
     }
   }

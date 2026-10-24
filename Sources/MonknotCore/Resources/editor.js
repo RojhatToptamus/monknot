@@ -1792,6 +1792,11 @@
       const insert = unit.region.j + eol + prefix + eol + prefix + "```";
       return { from: start, to: unitEnd(unit), insert, select: caretAt(start + unit.region.j.length + eol.length + prefix.length), kind: "enter", label: "Code Block" };
     }
+    // After an aligned image or video that ends its div, the new line is text after the div.
+    const div = alignDivOf(unit.block);
+    if (after === "" && div && unit.role === "paragraph" && holdsOnlyMedia(model, unit) && isLastInDiv(model, unit, div)) {
+      return { ...insertEmptyAt(model, bEnd(div), quotePrefixOfLine(source, bEnd(div))), kind: "enter" };
+    }
     if (after === "" || options.exitBlock) return { ...insertEmptyAfter(model, unit), kind: "enter" };
     if (before === "") return { ...insertEmptyBefore(model, unit, position), kind: "enter" };
     const separator = prefix ? eol + blank + eol + prefix : eol + eol;
@@ -1868,7 +1873,7 @@
     const previous = previousUnit(model, unit);
     const onlyLine = !previous || previous.role === "summary" || unitEnd(previous) < bStart(scope);
     // A div with nothing else in it is only an alignment for the empty line: the line stays, the div goes.
-    if (scope.type === "align" && onlyLine && scope.children.every((child) => child.type === "empty")) return { ...dropEmptyDiv(model, scope), kind: "enter" };
+    if (scope.type === "align" && onlyLine && scope.children.every((child) => child.type === "empty")) return { ...dropEmptyDiv(model, scope, true), kind: "enter" };
     let removed = 0;
     if (unit.block.view && !onlyLine) {
       const lineStart = lineStartOf(source, S(unit, unit.block.view.start));
@@ -1979,7 +1984,7 @@
     // level; a div left holding only empty lines goes.
     const div = alignDivOf(unit.block);
     if (div && isFirstInDiv(model, unit, div)) {
-      if (div.children.every((child) => child.type === "empty")) return { ...dropEmptyDiv(model, div), kind: "delete" };
+      if (div.children.every((child) => child.type === "empty")) return { ...dropEmptyDiv(model, div, false), kind: "delete" };
       if (unit.role === "paragraph") return planAlign(model, withOrder(position, position), "left");
     }
     if (unit.kind === "empty") {
@@ -2084,6 +2089,11 @@
     }
     if (!previous) return null;
     if (!canJoin(previous, unit) || isHiddenUnit(previous)) {
+      // Text right after an alignment div joins the text block the div ends with.
+      const div = alignDivOf(previous.block);
+      if (div && isAlignable(previous) && isAlignable(unit) && unit.block.parent === div.parent && isLastInDiv(model, previous, div)) {
+        return joinIntoDiv(model, previous, unit, div);
+      }
       const target = visiblePrevious(model, unit);
       return target ? { move: true, select: caretAt(unitEnd(target)) } : null;
     }
@@ -2120,7 +2130,19 @@
       const after = model.blocks[topIndex + 2];
       return { from: bStart(nextTop), to: after ? bStart(after) : bEnd(nextTop), insert: "", select: caretAt(position), kind: "delete", label: atomBlockLabel(nextTop) };
     }
-    if (!canJoin(unit, next) || isHiddenUnit(next)) return null;
+    if (!canJoin(unit, next) || isHiddenUnit(next)) {
+      if (!isAlignable(unit) || !isAlignable(next)) return null;
+      // At the end of an alignment div's last block the text after the div joins it; right before a
+      // div, the div's first block loses its alignment first, as ⌫ at its start takes it away.
+      const div = alignDivOf(unit.block);
+      if (div && next.block.parent === div.parent && isLastInDiv(model, unit, div)) return joinIntoDiv(model, unit, next, div);
+      const nextDiv = alignDivOf(next.block);
+      if (nextDiv && unit.block.parent === nextDiv.parent && isFirstInDiv(model, next, nextDiv)) {
+        const op = planAlign(model, withOrder(unitStart(next), unitStart(next)), "left");
+        return op && { ...op, select: caretAt(position) };
+      }
+      return null;
+    }
     if (next.kind === "empty") {
       const block = next.block;
       if (!block.view) return null;
@@ -3561,19 +3583,21 @@
     return div ? div.align : "left";
   }
 
-  /// Aligns the paragraphs and headings in `range` that sit where the first one does (directly in
-  /// their container, or in an alignment div there). The page keeps `keep` selected.
+  /// Aligns the blocks `range` touches where its first paragraph or heading sits (directly in its
+  /// container, or in an alignment div there): that paragraph, and every block beside it the range
+  /// reaches, a list or code between included. On an empty line it aligns the line, to type in. The
+  /// page keeps `keep` selected.
   function planAlign(model, range, align, keep = range) {
     if (!ALIGNMENTS[align]) return null;
-    const units = unitsBetween(model, range.from, range.to).filter(isAlignable);
-    if (units.length === 0) return null;
+    const units = unitsBetween(model, range.from, range.to);
+    const anchor = units.find(isAlignable);
+    if (!anchor) return units.length === 1 && units[0].kind === "empty" ? alignEmptyLine(model, units[0], align) : null;
     const holder = (block) => alignDivOf(block) || block;
-    const level = holder(units[0].block).parent;
-    const picked = new Set(units.filter((unit) => holder(unit.block).parent === level).map((unit) => unit.block));
+    const level = holder(anchor.block).parent;
     const siblings = level ? childNodes(level) : model.blocks;
-    const blocks = [...picked];
-    let first = siblings.indexOf(holder(blocks[0]));
-    let last = siblings.indexOf(holder(blocks[blocks.length - 1]));
+    const touched = (block) => bStart(block) <= range.to && bEnd(block) >= range.from;
+    let first = siblings.findIndex(touched);
+    let last = siblings.findLastIndex(touched);
     // A div of the same alignment right beside takes the blocks in.
     const joins = (sibling) => align !== "left" && Boolean(sibling) && sibling.type === "align" && sibling.align === align;
     if (joins(siblings[first - 1])) first -= 1;
@@ -3586,7 +3610,7 @@
       for (const block of div ? div.children : [siblings[index]]) {
         // An empty div's line stands in for its body and has no line of its own.
         if (block.type === "empty" && !block.view) continue;
-        items.push({ block, div, align: picked.has(block) ? align : div ? div.align : "left" });
+        items.push({ block, div, align: touched(block) ? align : div ? div.align : "left" });
       }
     }
     let carried = items.find((item) => item.block.type !== "empty").align;
@@ -3637,21 +3661,106 @@
     };
   }
 
-  /// A div holding nothing but empty lines goes, leaving one empty line where it was.
-  function dropEmptyDiv(model, div) {
+  /// An empty line takes an alignment, to be typed in: a div around it, a blank line its body. A div
+  /// holding nothing else changes its alignment, or goes for left; the last empty line of a div with
+  /// text in it leaves the div for left, as Return does there.
+  function alignEmptyLine(model, unit, align) {
+    const block = unit.block;
+    if (!block.view) return null;
     const source = model.source;
-    const from = lineStartOf(source, bStart(div));
-    const end = bEnd(div);
-    // The blank line after the div takes the place of its lines.
+    const eol = model.eol;
+    const div = alignDivOf(block);
+    if (div) {
+      if (align === div.align) return null;
+      if (!div.children.every((child) => child.type === "empty")) {
+        return align === "left" && isLastInDiv(model, unit, div) ? { ...leaveScope(model, unit), kind: "format", label: ALIGNMENTS.left } : null;
+      }
+      if (align === "left") return { ...dropEmptyDiv(model, div, true), kind: "format", label: ALIGNMENTS.left };
+      const from = atNode(div, div.openView.start);
+      const to = atNode(div, div.openView.end);
+      const insert = source.slice(from, to).replace(/align=(["']?)\w+\1/i, `align="${align}"`);
+      return { from, to, insert, select: (next) => caretOnFirstEmptyAfter(next, from), kind: "format", label: ALIGNMENTS[align] };
+    }
+    if (align === "left") return null;
+    const start = lineStartOf(source, S(unit, block.view.start));
+    const end = S(unit, block.view.end);
+    const prefix = quotePrefixOfLine(source, start);
+    const blank = prefix.trimEnd();
+    // The line was the blank line before the block above or after the block below too: one stays.
+    const before = block.needsSeparatorBefore ? blank + eol : "";
     const next = nextLineStart(source, end);
-    const to = next > end && next < source.length && isBlankLineIn(source, next, quotePrefixOfLine(source, from)) ? next : end;
-    return { from, to, insert: "", select: (nextModel) => caretAt(closestUnitPosition(nextModel, from)) };
+    const after = next > end && next < source.length ? eol + blank : "";
+    const insert = `${before}${prefix}<div align="${align}">${eol}${blank}${eol}${prefix}</div>${after}`;
+    return { from: start, to: end, insert, select: (nextModel) => caretOnFirstEmptyAfter(nextModel, start + before.length + 1), kind: "format", label: ALIGNMENTS[align] };
+  }
+
+  /// A div holding nothing but empty lines goes. With `keepLine` (Return, Align Left) one empty line
+  /// stays where it was; without (⌫) the line goes too, as ⌫ takes an empty line away.
+  function dropEmptyDiv(model, div, keepLine) {
+    const source = model.source;
+    const start = lineStartOf(source, bStart(div));
+    const end = bEnd(div);
+    const prefix = quotePrefixOfLine(source, start);
+    // The blank line after the div, which its alignment wrote, is part of its line.
+    const next = nextLineStart(source, end);
+    const blankAfter = next > end && next < source.length && isBlankLineIn(source, next, prefix);
+    if (keepLine) {
+      // The empty line that stays is the blank line after the div, or else the one before it, or
+      // else the div's own first line.
+      const blankBefore = start > 0 && isBlankLineIn(source, lineStartOf(source, previousLineEnd(source, start)), prefix);
+      const to = blankAfter || (blankBefore && next > end) ? next : end;
+      return { from: start, to, insert: "", select: (nextModel) => caretAt(closestUnitPosition(nextModel, start)) };
+    }
+    const lineEnd = blankAfter ? lineEndOf(source, next) : end;
+    const previousEnd = previousLineEnd(source, start);
+    const from = previousEnd >= 0 ? previousEnd : start;
+    const to = previousEnd >= 0 ? lineEnd : nextLineStart(source, lineEnd);
+    return {
+      from,
+      to,
+      insert: "",
+      select: (nextModel) => {
+        const target = unitAt(nextModel, Math.max(0, from), "left");
+        return caretAt(target ? (from > 0 ? unitEnd(target) : unitStart(target)) : 0);
+      }
+    };
   }
 
   /// Whether `unit` is the first of its alignment div's: nothing before it in the div can take its text.
   function isFirstInDiv(model, unit, div) {
     const previous = previousUnit(model, unit);
     return !previous || unitEnd(previous) < bStart(div);
+  }
+
+  /// Whether `unit` is the last of its alignment div's.
+  function isLastInDiv(model, unit, div) {
+    const next = nextUnit(model, unit);
+    return !next || unitStart(next) > bEnd(div);
+  }
+
+  /// Text right after an alignment div joins the div's last paragraph or heading, as it would the
+  /// block above it: `after`'s text moves up to the end of `before`, inside the div.
+  function joinIntoDiv(model, before, after, div) {
+    const source = model.source;
+    const from = unitEnd(before);
+    const insert = source.slice(unitStart(after), unitEnd(after)) + source.slice(from, bEnd(div));
+    return keepingBackslashes(model, { from, to: lineEndOf(source, unitEnd(after)), insert, select: caretAt(from), kind: "delete" });
+  }
+
+  /// Whether a paragraph holds images or video and nothing else to read.
+  function holdsOnlyMedia(model, unit) {
+    const map = visibleMap(model, unit);
+    let media = false;
+    for (const segment of map.segments) {
+      if (!segment.atom) {
+        if (map.visible.slice(segment.v, segment.v + segment.len).trim()) return false;
+      } else if (model.source.startsWith("![", rawOf(unit, segment.s))) {
+        media = true;
+      } else {
+        return false;
+      }
+    }
+    return media;
   }
 
   /// The image or video whose Markdown holds `raw`: its source range, where its width is written (or
@@ -4855,7 +4964,11 @@
 
   function enter(selection, options) {
     const group = newGroup();
-    if (selection.from !== selection.to) {
+    // With an image, video or audio player selected, Return starts a line after it instead of
+    // replacing it.
+    if (selectedMediaElement()) {
+      selection = withOrder(selection.to, selection.to);
+    } else if (selection.from !== selection.to) {
       apply(planDelete(model, selection.from, selection.to), { group });
       selection = readSelection() || withOrder(selection.from, selection.from);
     }
@@ -6355,8 +6468,7 @@
 
   /// Aligns a handle's block, an alignment div with all it holds; a caret in it stays where it was.
   function alignTarget(target, align) {
-    const range = targetSelection(model, target);
-    if (!range) return false;
+    const range = withOrder(bStart(target.block), bEnd(target.block));
     const selection = readSelection() || lastSelection;
     const keep = selection && selection.from >= range.from && selection.to <= range.to ? selection : caretAt(range.from);
     return apply(planAlign(model, range, align, keep), { coalesce: false });

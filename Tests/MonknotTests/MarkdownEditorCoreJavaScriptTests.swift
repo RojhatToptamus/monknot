@@ -923,7 +923,15 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     check("center joins the div above", centered("A") + "\n\nB‸", align("center"), centered("A\n\nB‸"));
     check("center joins the divs on both sides", centered("A") + "\n\nB‸\n\n" + centered("C"), align("center"), centered("A\n\nB‸\n\nC"));
     check("two paragraphs share one div", "«A\n\nB»", align("center"), centered("«A\n\nB»"));
-    check("a list between keeps its place", "«A\n\n- x\n\nB»", align("center"), centered("«A") + "\n\n- x\n\n" + centered("B»"));
+    check("a list between is aligned with them", "«A\n\n- x\n\nB»", align("center"), centered("«A\n\n- x\n\nB»"));
+    check("a selection starting in a list item", "- «x\n\nA»", align("center"), centered("- «x\n\nA»"));
+    check("only the selected block of a div", centered("- x\n\n«P»"), align("right"), centered("- x") + "\n\n<div align=\"right\">\n\n«P»\n\n</div>");
+    check("a whole div, its list too", "<div align=\"center\">\n\n- x\n\nP\n\n</div>", (m) => E.planAlign(m, { anchor: 0, head: m.source.length, from: 0, to: m.source.length }, "right"), "<div align=\"right\">\n\n- «x\n\nP»\n\n</div>");
+    check("center an empty line", "A\n\n‸\n\nB", align("center"), "A\n\n<div align=\"center\">\n‸\n</div>\n\n\nB");
+    check("right-align an empty centered line", "<div align=\"center\">\n‸\n</div>", align("right"), "<div align=\"right\">\n‸\n</div>");
+    check("left on an empty centered line", "A\n\n<div align=\"center\">\n‸\n</div>\n\nB", align("left"), "A\n\n‸\nB");
+    check("left on a div's last empty line leaves it", "<div align=\"center\">\n\nA\n\n‸\n</div>", align("left"), centered("A") + "\n‸\n");
+    check("an empty line among a div's blocks", centered("A\n\n\n‸\n\nB"), align("right"), "(no-op)");
     check("an empty line goes with the block before it", "«A\n\n\nB»", align("center"), centered("«A\n\n\nB»"));
     check("a heading right above keeps its line", "# H\nA‸", align("center"), "# H\n" + centered("A‸"));
     check("a heading right above gets its line back", "# H\n" + centered("A‸"), align("left"), "# H\nA‸");
@@ -937,7 +945,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     check("a toggle's title does not align", "<details>\n<summary>T‸</summary>\n</details>", align("center"), "(no-op)");
     check("a hand-written div keeps its blocks", "<div align='center'>\nA‸\n</div>", align("right"), "<div align=\"right\">\n\nA‸\n\n</div>");
     // Every alignment taken away again gives back the source it was set on.
-    for (const marked of ["A\n\nB‸\n\nC", "# H‸", "«A\n\nB»\n\nC", "> [!TIP]\n> A‸\n>\n> B", "A‸\r\n\r\nB\r\n", "<details>\n<summary>T</summary>\n\nA‸\n\n</details>", "![a|300](b.png)‸\n"]) {
+    for (const marked of ["A\n\nB‸\n\nC", "# H‸", "«A\n\nB»\n\nC", "> [!TIP]\n> A‸\n>\n> B", "A‸\r\n\r\nB\r\n", "<details>\n<summary>T</summary>\n\nA‸\n\n</details>", "![a|300](b.png)‸\n", "A\n\n‸\n\nB\n", "A\n‸\n", "‸\n\nB", "> A\n>\n>‸\n>\n> B"]) {
       for (const value of ["center", "right"]) {
         const { source, sel } = parse(marked);
         const model = E.createModel(source);
@@ -952,12 +960,28 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     check("backspace at a centered paragraph's start", "A\n\n" + centered("‸B"), backspaceAtStart, "A\n\n‸B");
     check("backspace at a centered heading's start", centered("# ‸T"), backspaceAtStart, centered("‸T"));
     check("backspace at the second paragraph of a div joins", centered("A\n\n‸B"), backspaceAtStart, centered("A‸B"));
-    check("backspace on an empty div's line", "A\n\n<div align=\"center\">\n‸\n</div>\n\nB", backspaceAtStart, "A\n\n‸\nB");
+    check("backspace on an empty div's line takes the line away", "A\n\n<div align=\"center\">\n‸\n</div>\n\nB", backspaceAtStart, "A‸\n\nB");
+    check("backspace on a first empty div's line", "<div align=\"center\">\n‸\n</div>\n\nB", backspaceAtStart, "‸B");
+    check("backspace after a div joins its last block", centered("A") + "\n\n‸B\n\nC", backspaceAtStart, centered("A‸B") + "\n\nC");
+    check("backspace after a div joins a heading's text", centered("# A") + "\n\n‸B", backspaceAtStart, centered("# A‸B"));
+    check("backspace after a div ending in a list moves the caret", centered("- a") + "\n\n‸B", backspaceAtStart, centered("- a‸") + "\n\nB");
+    check("typing on a new line in a div keeps a blank line before its end", centered("A") + "\n\nB", (m) => {
+      const enterOp = E.planEnter(m, { anchor: 23, head: 23, from: 23, to: 23 }, {});
+      E.applyPatch(m, enterOp.from, enterOp.to, enterOp.insert);
+      const caret = enterOp.select(m).head;
+      return E.planInsertText(m, { anchor: caret, head: caret, from: caret, to: caret }, "x", { typing: true });
+    }, centered("A\n\nx‸") + "\n\nB");
+    check("enter after a centered image starts a line after the div", centered("![a](b.png)‸") + "\n\nAfter", enter, centered("![a](b.png)") + "\n\n‸\nAfter");
+    check("enter after a centered image at the end of the file", centered("![a](b.png)‸"), enter, centered("![a](b.png)") + "\n‸\n");
+    check("enter after a centered image above its caption stays in the div", centered("![a](b.png)‸\n\nCaption"), enter, "<div align=\"center\">\n\n![a](b.png)\n\n‸\nCaption\n\n</div>");
+    check("enter after centered text stays in the div", centered("Text‸"), enter, "<div align=\"center\">\n\nText\n\n‸\n</div>");
+    check("enter after an image and text stays in the div", centered("![a](b.png) and text‸"), enter, "<div align=\"center\">\n\n![a](b.png) and text\n\n‸\n</div>");
     check("enter at the end of a centered paragraph", centered("A‸"), enter, "<div align=\"center\">\n\nA\n\n‸\n</div>");
     check("enter on a div's empty last line leaves it", "<div align=\"center\">\n\nA\n\n‸\n</div>", enter, centered("A") + "\n‸\n");
     check("enter on an empty div's line drops the div", "A\n\n<div align=\"center\">\n‸\n</div>\n\nB", enter, "A\n\n‸\nB");
-    check("delete forward before a div", "A‸\n\n" + centered("B"), delFwd, "(no-op)");
-    check("delete forward at a div's end", centered("A‸") + "\n\nB", delFwd, "(no-op)");
+    check("delete forward before a div takes the alignment away first", "A‸\n\n" + centered("B\n\nC"), delFwd, "A‸\n\nB\n\n" + centered("C"));
+    check("delete forward at a div's end joins the text after it", centered("A‸") + "\n\nB", delFwd, centered("A‸B"));
+    check("delete forward at a div's end before a list", centered("A‸") + "\n\n- b", delFwd, "(no-op)");
     check("typing into a div", centered("A‸"), type("x"), centered("Ax‸"));
     (() => {
       const model = E.createModel("A\n\n" + centered("B") + "\n\n<div align=\"right\">\n\n# C\n\n</div>\n\n- d");
