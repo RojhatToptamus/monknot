@@ -223,31 +223,31 @@ Shorter and more specific is preferable to polished but meaningless copy.
 - `MarkdownVisualEditingSession` is owned by `EditorPaneView`, so Preview's undo history survives a
   switch to Source and back; steps verify the text they change. `MarkdownEditorWebView` hands the Edit
   menu that undo manager and drops WebKit's own undo registrations.
-- Menus (slash, block menu with its Turn Into and Align submenus, callout kind, wikilinks, table, code
-  language), the floating format bar, link card and editor, and table bar live in the page (`editor.js`
-  `UI`); the media bar and resize handles are `editor.js` `Media`;
-  the block handles and drag-and-drop are `editor.js` `Handles`. All are styled by `editor.css` from
-  theme tokens; SF Symbols come from `MarkdownEditorSymbolAssets` as mask images, and
+- Menus (slash, block menu with its Turn Into and Align submenus, callout kind, wikilinks, table,
+  code language), the floating format bar, link card and editor, and table bar live in the page
+  (`editor.js` `UI`); the media bar and resize handles are `editor.js` `Media`; the block handles
+  and drag-and-drop are `editor.js` `Handles`. All are styled by `editor.css` from theme tokens;
+  SF Symbols come from `MarkdownEditorSymbolAssets` as mask images, and
   `MarkdownPresentationTokenTests` checks the glyphs the page asks for and the glyphs drawn match,
-  both ways. There is no docked
-  Markdown toolbar in any view mode; the word count is `MarkdownWordCountLabel` in the editor's corner.
-  design.md §10.10 is the interaction spec.
+  both ways. There is no docked Markdown toolbar in any view mode; the word count is
+  `MarkdownWordCountLabel` in the editor's corner. design.md §10.10 is the interaction spec.
 - Notion's blocks map to Markdown the renderer parses: toggles are `<details>`/`<summary>` (an unclosed
   one runs to the end, which keeps re-parsing local), callouts are `> [!KIND]` quotes, `[TOC]` lists the
   top-level h1–h3. A toggle's open state on the page is view state carried across re-parses
   (`carryToggleState`), never written to the file. Units carry `scope` (the toggle whose body holds
   them); joins never cross it, so toggle markup cannot be broken by Delete or Backspace.
-- Alignment is `<div align="center">` or `<div align="right">` around blocks, a blank line inside each
-  edge, as GitHub renders it; left has no div. `renderer.js` parses it as an `align` container like a
-  toggle's body (`containerBody`, units scoped to it, re-parsed inside by `applyInside`), so text never
-  joins across its edges. `planAlign` regroups the blocks from the first to the last it changes into
-  runs of one alignment and writes only div lines, so taking an alignment away gives back the file;
-  an empty line is aligned on its own (`alignEmptyLine`, a div whose body is one blank line). ⌫ at
-  the start of a div's first block takes its alignment away, ⌫ after a div and ⌦ at its end join
-  text into it (`joinIntoDiv`), and ↩ after an aligned image that ends its div starts a line after
-  the div. A toggle's or div's last empty line writes a blank line before the closing tag when typed in. ⇧⌘L / ⇧⌘E / ⇧⌘R, the format bar's
-  alignment selector, the block menu's Align › (one `choiceMenu` lists Turn Into's blocks or the
-  alignments) and the media bar all run it.
+- Alignment is `<div align="center">` or `<div align="right">` around blocks, a blank line inside
+  each edge, as GitHub renders it; left has no div. `renderer.js` parses it as an `align` container
+  like a toggle's body (`containerBody`, units scoped to it, re-parsed inside by `applyInside`), so
+  text never joins across its edges. `planAlign` regroups the blocks from the first to the last it
+  changes into runs of one alignment and writes only div lines, so taking an alignment away gives
+  back the file; an empty line is aligned on its own (`alignEmptyLine`, a div whose body is one
+  blank line). ⌫ at the start of a div's first block takes its alignment away, ⌫ after a div and ⌦
+  at its end join text into it (`joinIntoDiv`), and ↩ after an aligned image that ends its div
+  starts a line after the div. A toggle's or div's last empty line writes a blank line before the
+  closing tag when typed in. ⇧⌘L / ⇧⌘E / ⇧⌘R, the format bar's alignment selector, the block menu's
+  Align › (one `choiceMenu` lists Turn Into's blocks or the alignments) and the media bar all run
+  it.
 - An image's or video's width is a number after a bar at the end of its alt text, as Obsidian writes
   it: `![Chart|480](chart.png)` (`RE_MEDIA_WIDTH`, read by the renderer as the `width` attribute).
   `mediaAt` finds an image's Markdown and `planMediaWidth` writes or removes the number. The page's

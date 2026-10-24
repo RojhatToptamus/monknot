@@ -1601,8 +1601,8 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         // Esc while dragging puts the image back as it was.
         try await fixture.hoverImage()
         _ = try await fixture.evaluate(Self.dragGrip("right", by: 50, release: false))
-        _ = try await fixture.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 })); document.querySelector('#content img').style.width")
-        try await Task.sleep(nanoseconds: 200_000_000)
+        let cancelled = try await fixture.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 })); document.querySelector('#content img').style.width") as? String
+        XCTAssertEqual(cancelled, "", "Esc puts the image back")
         XCTAssertEqual(fixture.store.documentText, source)
 
         // Never narrower than 80 px, never wider than the column.

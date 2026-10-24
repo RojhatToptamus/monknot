@@ -8344,7 +8344,8 @@
       if (tableUnit && visible(tableBar)) placeTableBar();
       if (slashMenu.isOpen) slashMenu.reposition(caretRect());
       if (wikilinkMenu.isOpen) wikilinkMenu.reposition(caretRect());
-      // Turn Into last: it sits beside the block menu's row, or below the format bar's selector.
+      // Turn Into or Align last: it sits beside the block menu's row, or below the format bar's
+      // selector.
       for (const menu of [blockMenu, calloutMenu, languageMenu, tableMenu, choiceMenu]) menu.reposition();
     }
 
