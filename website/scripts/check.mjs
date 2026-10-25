@@ -14,18 +14,16 @@ const expectedAssets = new Map([
   ["shots/macbook-pro.png", "42ab04218d7e3312a25dcc977fcdaa0787a91597c54337490ad5029b0aa8c129"],
   ["shots/editor-dark.jpg", "9f7753a40fdd7d7bfa4ce6fd960a7e24eabc8a3e07573b364f44b6a4117c5fe9"],
   ["shots/split-dark.jpg", "aea19ab16046af89f19c2ecec3cfa1c98de369fd5dfd4fb1e9b2298419b1f42a"],
-  ["shots/preview-dark.jpg", "c90b7e8d345effb7de678c91b5af5765ac4c0217a2770507a87fafc646dd607c"],
   ["shots/pdf-dark.jpg", "5eb184ea9be32484ff0482e8650b7179db5a86f65b54f30251a0cdb0a4160647"],
   ["shots/terminal-dark.jpg", "68f80fa59123682eecefaae151070cc94198e457f5d074d159a4f178173f204a"],
   ["shots/editor-light.jpg", "8bd2f02456aa1d80c5ca1a82795e669610780f7b5964ec42826f3ba1453847ee"],
   ["shots/split-light.jpg", "c89f9a48b0abb8b0936ed1c7ebc858cbadfbcbcbecadedd2c4f8e7c24fd6831d"],
-  ["shots/preview-light.jpg", "19fec5fc032cf48620949ca7743bbe4090a7d10d8c7780f00dfb1c56154f8d0f"],
   ["shots/pdf-light.jpg", "75fac9790f228089f29beb51748ebc0f51719981a6b723a8f45f10e71c91cc95"],
   ["shots/terminal-light.jpg", "8e6cdfb518aec6bcad336e9c1b566003555d15e92a74b470d80fd45fe0cd943f"],
-  ["shots/writing-assistance.gif", "7e69e0bd9dc893ab6185ef0c55b07d36c58b0f9891fdd4f7c9b17710e41f07dc"],
-  ["shots/writing-assistance-poster.png", "72cb0c81bf82980fd7f65f882c55738e7009673c6429b7f6c8588db2256d313a"],
-  ["shots/writing-assistance-light.gif", "e96667d07e75f64850f32a33349b9854edb67d661290cae313fb3bc9fb9b50f9"],
-  ["shots/writing-assistance-light-poster.png", "8c2fcf300772d1b8b4bcbf9006f7ef362ff0ab3250d45f95b61adb14c3bbfe25"],
+  ["shots/writing-assistance.gif", "fb574a15f269bb817dbed3d5bb4658a85c4ef2cb41dac2484a48621f5b374d52"],
+  ["shots/writing-assistance-poster.png", "566838d9e237d0787537d1e27bbb0546fad011afb39cfe394774e77478040372"],
+  ["shots/writing-assistance-light.gif", "f63d788df2f3a8a71ce2f9c47c016a9623b9a3a6b48800e2c07d686b1dc1c457"],
+  ["shots/writing-assistance-light-poster.png", "9454dc77b0492ee805a030e025ba6a4a41342551a7690ff563ea34d1c49faf0b"],
 ]);
 
 await Promise.all(["index.html", "support.html", "privacy.html", "styles.css", "main.js", "page.js", "theme-catalog.json", "robots.txt", "sitemap.xml", "vercel.json", ...expectedAssets.keys()].map((file) => access(resolve(root, file))));
@@ -94,7 +92,7 @@ const requiredMarkup = [
   'src="shots/macbook-pro.png"',
   'id="theme-list"',
   'id="theme-preview-window"',
-  ...["editor", "split", "preview", "pdf", "terminal"].flatMap((view) => [
+  ...["editor", "split", "pdf", "terminal"].flatMap((view) => [
     `data-view="${view}" data-mode="dark"`,
     `data-view="${view}" data-mode="light"`,
     `id="tab-${view}"`,
@@ -247,8 +245,8 @@ for (const marker of [
   if (!styles.includes(marker)) throw new Error(`Supplied geometry changed: ${marker}`);
 }
 
-if ((html.match(/class="product-shot/g) ?? []).length !== 12) throw new Error("Expected ten screenshots and two writing-assistance demos.");
-if ((html.match(/role="tab"/g) ?? []).length !== 6) throw new Error("Expected six product tabs.");
+if ((html.match(/class="product-shot/g) ?? []).length !== 10) throw new Error("Expected eight screenshots and two writing-assistance demos.");
+if ((html.match(/role="tab"/g) ?? []).length !== 5) throw new Error("Expected five product tabs.");
 const writingMedia = [...html.matchAll(/<img class="product-shot" data-view="writing"[^>]+>/g)].map((match) => match[0]);
 if (writingMedia.length !== 2 || writingMedia.some((media) => !media.includes('width="1600" height="1039"'))) {
   throw new Error("Writing-assistance media must keep its fixed 1600 by 1039 dimensions.");
@@ -289,4 +287,4 @@ await Promise.all(
     .map((file) => access(resolve(root, file.replace(/^\//, ""))))
 );
 
-console.log(`Checked ${expectedAssets.size} assets, complete SEO metadata, six product views backed by 12 media elements, 49 theme presets, the direct-download flow and its releases-page fallback, support and privacy routes, and deployment files.`);
+console.log(`Checked ${expectedAssets.size} assets, complete SEO metadata, five product views backed by 10 media elements, 49 theme presets, the direct-download flow and its releases-page fallback, support and privacy routes, and deployment files.`);

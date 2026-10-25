@@ -152,13 +152,10 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         let root = try await makeBorealisWorkspace()
         var stops: [Stop] = []
         for (theme, name) in [(ThemePreference.light, "light"), (.dark, "dark")] {
-            let screen = Stop(name: "", theme: theme, size: Self.laptopScreen, document: "README.md", zoom: 1.15, activeWindowControls: true)
+            let screen = Stop(name: "", theme: theme, size: Self.laptopScreen, document: "README.md", zoom: Self.laptopZoom, activeWindowControls: true)
             stops += [
                 screen.named("editor-\(name)", tabs: ["notes/route-plan.md"], prepare: Self.openBlockMenu),
                 screen.named("split-\(name)", tabs: ["notes/route-plan.md"], splitView: true),
-                screen.named("preview-\(name)", layout: .init(showsSidebar: false, showsTerminal: false), document: "notes/route-plan.md", tabs: ["README.md"], prepare: { host, window, store in
-                    try await Self.selectInPreview("every two hours", host: host, window: window, store: store)
-                }),
                 screen.named("pdf-\(name)", document: "Field-note.pdf", tabs: ["README.md"]),
                 screen.named("terminal-\(name)", layout: .init(showsSidebar: true, showsTerminal: true), tabs: ["checklist.md"], prepare: Self.runTerminal),
             ]
@@ -193,8 +190,8 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             throw XCTSkip("Apple's on-device model is not available on this Mac")
         }
         let root = try await makeBorealisWorkspace()
-        // A title line keeps Writing Tools' panel, which opens beside the caret's line, inside the window.
-        try "Field brief, day two\n\n".write(to: root.appendingPathComponent("Field-brief.txt"), atomically: true, encoding: .utf8)
+        // The heading lines keep Writing Tools' panel, which opens beside the caret's line, inside the window.
+        try "Field brief, day two\nNorth Ridge to Glass Lake\nTeam of four, two sleds\nClear until early afternoon\n\n".write(to: root.appendingPathComponent("Field-brief.txt"), atomically: true, encoding: .utf8)
         let defaults = UserDefaults.standard
         let settings: [String: Any] = [
             EditorTextCheckingOptions.spellingPreferenceKey: true,
@@ -211,7 +208,7 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             let frames = directory.appendingPathComponent(name, isDirectory: true)
             try? FileManager.default.removeItem(at: frames)
             try FileManager.default.createDirectory(at: frames, withIntermediateDirectories: true)
-            let stop = Stop(name: name, theme: theme, mode: .source, size: Self.laptopScreen, document: "Field-brief.txt", tabs: ["research/weather-window.md"], zoom: 1.4, activeWindowControls: true, prepare: { host, window, _ in
+            let stop = Stop(name: name, theme: theme, mode: .source, size: Self.laptopScreen, document: "Field-brief.txt", tabs: ["research/weather-window.md"], zoom: Self.laptopZoom, activeWindowControls: true, prepare: { host, window, _ in
                 try await self.recordWritingAssistance(into: frames, host: host, window: window)
             })
             try await capture(stop, root: root, into: frames)
@@ -691,6 +688,9 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
     /// A 14-inch MacBook Pro's default screen, in points, and the website's picture of it.
     private static let laptopScreen = NSSize(width: 1_512, height: 982)
     fileprivate nonisolated static let screenShotSize = CGSize(width: 1_600, height: 1_039)
+    /// Every website shot and the writing demo use one zoom, so the window keeps its size from tab to
+    /// tab and its file tabs stay left of the laptop's notch.
+    private static let laptopZoom = 1.15
 
     private static func outputDirectory(named variable: String) throws -> URL {
         guard let output = ProcessInfo.processInfo.environment[variable] else {
@@ -717,18 +717,6 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
     /// The terminal's shell run and drawn, with focus in it.
     private static func runTerminal(_ host: NSView, _ window: NSWindow, _ store: WorkspaceStore) async throws {
         try await drawTerminal(in: host, window: window)
-    }
-
-    /// Selects `text` in Preview, which shows the format bar over it.
-    private static func selectInPreview(_ text: String, host: NSView, window: NSWindow, store: WorkspaceStore) async throws {
-        let range = (store.documentText as NSString).range(of: text)
-        try await setPreviewSelection(range.location, NSMaxRange(range), host: host, window: window)
-        // The bar shows when the mouse comes up on the page, as after a drag. It grows in with a
-        // transition, which a page in a test process never runs, so it is shown at its end.
-        let webView = try XCTUnwrap(descendants(of: WKWebView.self, in: host).first { !$0.isHiddenOrHasHiddenAncestor })
-        _ = try await webView.evaluateJavaScript("document.getElementById('content').dispatchEvent(new MouseEvent('mouseup', {bubbles: true})); true")
-        try await Task.sleep(nanoseconds: 300_000_000)
-        _ = try await webView.evaluateJavaScript("document.querySelectorAll('.mk-visible.mk-animate').forEach(element => element.classList.remove('mk-animate')); true")
     }
 
     /// Puts Preview's caret after `text` and types `typed` there (`\r` is Return), through AppKit's key
