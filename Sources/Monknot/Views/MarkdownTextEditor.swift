@@ -6485,7 +6485,10 @@ class MarkdownNSTextView: NSTextView {
             x: anchor.maxX + max(6, (10 * scale).rounded()) + translation,
             y: anchor.midY - keyHeight / 2
         )
-        if origin.x + contentWidth > visibleRect.maxX - edgeInset {
+        // The text view draws only inside its text container (the centred column), so a hint that
+        // would pass the column's edge goes below the line instead.
+        let lineEnd = min(visibleRect.maxX, textContainerOrigin.x + (textContainer?.size.width ?? bounds.width))
+        if origin.x + contentWidth > lineEnd - edgeInset {
             origin.x = lineFragmentOriginX(atUTF16Offset: selectedRange().location)
                 ?? visibleRect.minX + edgeInset
             origin.x += translation

@@ -915,6 +915,49 @@ final class FlowPresentationTests: FlowEditorTestCase {
         XCTAssertEqual(box.value, source)
     }
 
+    /// The text view draws only inside its text container, the centred column of a wide pane: a
+    /// review's hint that would pass the column's edge goes below the line, though the view has room.
+    func testReviewHintAtTheColumnsEdgeGoesBelowTheLine() async throws {
+        let source = "We will probbly finish the long survey of the northern ridge."
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        window.setContentSize(NSSize(width: 900, height: 520))
+        textView.frame = scrollView.contentView.bounds
+        textView.textContainerInset = NSSize(width: 150, height: 20)
+        let suggestion = flowSuggestion(
+            coordinator: coordinator,
+            textView: textView,
+            checkedText: "probbly",
+            replacement: "probably",
+            acceptance: .reviewOnly
+        )
+        textView.flowSuggestion = suggestion
+        await renderFlowSuggestion(in: textView, window: window)
+        XCTAssertTrue(textView.hasRenderedFlowSuggestion(suggestion))
+
+        let layoutManager = try XCTUnwrap(textView.layoutManager)
+        let container = try XCTUnwrap(textView.textContainer)
+        let line = layoutManager.lineFragmentUsedRect(forGlyphAt: layoutManager.numberOfGlyphs - 1, effectiveRange: nil)
+            .offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
+        XCTAssertEqual(line.minY, textView.textContainerOrigin.y, accuracy: 1, "The sentence is one line")
+        XCTAssertGreaterThan(line.maxX + 200, textView.textContainerOrigin.x + container.size.width, "No room for the hint after it")
+        let image = try XCTUnwrap(textView.bitmapImageRepForCachingDisplay(in: textView.bounds))
+        textView.cacheDisplay(in: textView.bounds, to: image)
+        let scale = CGFloat(image.pixelsWide) / textView.bounds.width
+        let background = try XCTUnwrap(image.colorAt(x: Int(line.midX * scale), y: Int((textView.bounds.maxY - 8) * scale)))
+        func drawn(in rect: NSRect) -> Bool {
+            stride(from: rect.minY, to: rect.maxY, by: 1).contains { y in
+                stride(from: rect.minX, to: rect.maxX, by: 1).contains { x in
+                    image.colorAt(x: Int(x * scale), y: Int(y * scale)) != background
+                }
+            }
+        }
+        let below = NSRect(x: textView.textContainerOrigin.x, y: line.maxY + 1, width: container.size.width, height: 24)
+        XCTAssertTrue(drawn(in: below), "The hint shows below the line, inside the column")
+    }
+
     func testActiveSettlementAndGhostTextUseAccentWhenThemeChanges() throws {
         let source = "teh."
         let box = EditorTextBox(source)
