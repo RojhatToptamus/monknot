@@ -8,21 +8,11 @@ import XCTest
 /// (design.md §11).
 final class WorkspacePaneTransitionTests: WorkspaceSplitViewTestCase {
     func testASidebarHiddenAtLaunchFirstOpensToTheDefaultWidth() {
-        let autosaveName = WorkspaceSplitMetrics.autosaveName
-        let framesKey = "NSSplitView Subview Frames \(autosaveName)"
-        let savedFrames = UserDefaults.standard.object(forKey: framesKey)
-        removeSplitAutosaveDefaults(named: autosaveName)
-        defer {
-            removeSplitAutosaveDefaults(named: autosaveName)
-            if let savedFrames {
-                UserDefaults.standard.set(savedFrames, forKey: framesKey)
-            }
-        }
         let recorder = PresentationRecorder()
         let controller = makeController(
             sidebarPresented: false,
             terminalPresented: false,
-            autosaveName: autosaveName,
+            autosaveName: WorkspaceSplitMetrics.autosaveName,
             recorder: recorder
         )
         let window = mount(controller, width: 1_300)
@@ -45,20 +35,10 @@ final class WorkspacePaneTransitionTests: WorkspaceSplitViewTestCase {
     }
 
     func testASavedLayoutSurvivesTheNextWindowWithoutTheDefaultReplacingIt() async throws {
-        let autosaveName = WorkspaceSplitMetrics.autosaveName
-        let framesKey = "NSSplitView Subview Frames \(autosaveName)"
-        let savedFrames = UserDefaults.standard.object(forKey: framesKey)
-        removeSplitAutosaveDefaults(named: autosaveName)
-        defer {
-            removeSplitAutosaveDefaults(named: autosaveName)
-            if let savedFrames {
-                UserDefaults.standard.set(savedFrames, forKey: framesKey)
-            }
-        }
         // The seed window is the first under this name and opens at the default width; the next
         // window must restore the layout saved after it, not apply the default again.
         let restored = try await seedAndVerifyAutosavedSplitGeometry(
-            named: autosaveName,
+            named: WorkspaceSplitMetrics.autosaveName,
             sidebarWidth: 300,
             terminalWidth: 420
         )
