@@ -1444,7 +1444,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         })()
         """)
         let labels = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-row-label')].map(e => e.textContent).join(',')") as? String
-        XCTAssertEqual(labels, "Turn into,Duplicate,Copy,Move up,Move down,Delete")
+        XCTAssertEqual(labels, "Turn into,Align,Duplicate,Copy,Move up,Move down,Delete")
         let picked = try await fixture.evaluate("document.querySelector('.mk-block-picked')?.textContent ?? ''") as? String
         XCTAssertEqual(picked, "Two", "The block the menu acts on stays tinted")
 
@@ -1467,6 +1467,331 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         """)
         let deleted = await waitUntil { fixture.store.documentText == "One\n\nOne\n" }
         XCTAssertTrue(deleted, fixture.store.documentText)
+    }
+
+    // MARK: - Alignment and media size
+
+    /// ⇧⌘E, ⇧⌘R and ⇧⌘L wrap the caret's block in `<div align>`, change it and take it away, each one
+    /// undo step; the caret stays in the text, and taking the alignment away gives back the file.
+    func testAlignmentKeysWrapTheBlockAsOneUndoStepEach() async throws {
+        let source = "Intro\n\nTitle\n"
+        let fixture = try await makeFixture(markdown: source)
+        try await fixture.setSelection((source as NSString).range(of: "Title").location + 2)
+        fixture.press(.character("e"), modifiers: [.command, .shift])
+        let centered = "Intro\n\n<div align=\"center\">\n\nTitle\n\n</div>\n"
+        let wrapped = await waitUntil { fixture.store.documentText == centered }
+        XCTAssertTrue(wrapped, fixture.store.documentText)
+        let alignment = try await fixture.evaluate("getComputedStyle([...document.querySelectorAll('#content p')].find(p => p.textContent === 'Title')).textAlign") as? String
+        XCTAssertEqual(alignment, "-webkit-center", "The page draws the div as GitHub does")
+        let undoManager = try XCTUnwrap(fixture.webView.undoManager)
+        XCTAssertEqual(undoManager.undoActionName, "Center")
+
+        fixture.press(.character("r"), modifiers: [.command, .shift])
+        let right = "Intro\n\n<div align=\"right\">\n\nTitle\n\n</div>\n"
+        let moved = await waitUntil { fixture.store.documentText == right }
+        XCTAssertTrue(moved, fixture.store.documentText)
+        XCTAssertEqual(undoManager.undoActionName, "Align Right")
+        fixture.press(.character("l"), modifiers: [.command, .shift])
+        let back = await waitUntil { fixture.store.documentText == source }
+        XCTAssertTrue(back, "Left takes the div away: \(fixture.store.documentText)")
+
+        fixture.type("!")
+        let typed = await waitUntil { fixture.store.documentText == "Intro\n\nTi!tle\n" }
+        XCTAssertTrue(typed, "The caret stayed where it was: \(fixture.store.documentText)")
+        undoManager.undo()
+        undoManager.undo()
+        let undone = await waitUntil { fixture.store.documentText == right }
+        XCTAssertTrue(undone, "One undo for each alignment: \(fixture.store.documentText)")
+        undoManager.undo()
+        undoManager.undo()
+        let original = await waitUntil { fixture.store.documentText == source }
+        XCTAssertTrue(original, fixture.store.documentText)
+    }
+
+    /// The format bar's alignment button and the block menu's Align › list the three alignments with
+    /// the block's checked, and choosing one aligns that block.
+    func testFormatBarAndBlockMenuAlignTheBlock() async throws {
+        let source = "One\n\nTwo words\n"
+        let fixture = try await makeFixture(markdown: source)
+        let words = (source as NSString).range(of: "words").location
+        try await fixture.setSelection(words, words + 5)
+        _ = try await fixture.evaluate("document.getElementById('content').dispatchEvent(new MouseEvent('mouseup', {bubbles: true})); true")
+        let barShown = await waitUntil { ((try? await fixture.evaluate("Boolean(document.querySelector('.mk-toolbar.mk-visible button[aria-label=\"Align\"]:not(:disabled)'))")) as? Bool) == true }
+        XCTAssertTrue(barShown, "The format bar offers the block's alignment")
+        _ = try await fixture.evaluate("document.querySelector('.mk-toolbar.mk-visible button[aria-label=\"Align\"]').click(); true")
+        let rows = try await fixture.evaluate(Self.alignMenuRows) as? String
+        XCTAssertEqual(rows, "Left ✓,Center,Right", "Its menu lists the alignments, the block's checked")
+        _ = try await fixture.evaluate(Self.clickAlignRow("Right"))
+        let right = "One\n\n<div align=\"right\">\n\nTwo words\n\n</div>\n"
+        let aligned = await waitUntil { fixture.store.documentText == right }
+        XCTAssertTrue(aligned, fixture.store.documentText)
+        let selected = try await fixture.evaluate("window.getSelection().toString()") as? String
+        XCTAssertEqual(selected, "words", "The selection stays on the words")
+
+        try await fixture.hoverBlock(containing: "Two words")
+        try await fixture.openBlockMenu()
+        let labels = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-row-label')].map(e => e.textContent).join(',')") as? String
+        XCTAssertEqual(labels, "Turn into,Align,Duplicate,Copy,Move up,Delete")
+        _ = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-menu-row')].find(r => r.textContent.includes('Align')).click(); true")
+        let submenu = await waitUntil { ((try? await fixture.evaluate(Self.alignMenuRows)) as? String) == "Left,Center,Right ✓" }
+        XCTAssertTrue(submenu, "Align opens beside the menu with the block's alignment checked")
+        _ = try await fixture.evaluate(Self.clickAlignRow("Center"))
+        let centered = await waitUntil { fixture.store.documentText == "One\n\n<div align=\"center\">\n\nTwo words\n\n</div>\n" }
+        XCTAssertTrue(centered, fixture.store.documentText)
+
+        try await fixture.hoverBlock(containing: "Two words")
+        try await fixture.openBlockMenu()
+        _ = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-menu-row')].find(r => r.textContent.includes('Align')).click(); true")
+        _ = await waitUntil { ((try? await fixture.evaluate(Self.alignMenuRows)) as? String) != nil }
+        _ = try await fixture.evaluate(Self.clickAlignRow("Left"))
+        let left = await waitUntil { fixture.store.documentText == source }
+        XCTAssertTrue(left, fixture.store.documentText)
+    }
+
+    /// The pointer over an image shows a bar of its alignments; choosing one aligns the image's
+    /// paragraph, and the image stays selected with the bar showing the new alignment.
+    func testMediaBarAlignsAnImage() async throws {
+        let source = "Intro\n\n![Chart](chart.png)\n"
+        let fixture = try await makeFixture(markdown: source, images: ["chart.png": CGSize(width: 320, height: 160)])
+        try await fixture.hoverImage()
+        let pressed = try await fixture.evaluate(Self.mediaBarPressed) as? String
+        XCTAssertEqual(pressed, "Align left")
+        _ = try await fixture.evaluate("document.querySelector('.mk-media-bar button[aria-label=\"Center\"]').click(); true")
+        let centered = "Intro\n\n<div align=\"center\">\n\n![Chart](chart.png)\n\n</div>\n"
+        let aligned = await waitUntil { fixture.store.documentText == centered }
+        XCTAssertTrue(aligned, fixture.store.documentText)
+        let followed = await waitUntil { ((try? await fixture.evaluate(Self.mediaBarPressed)) as? String) == "Center" }
+        XCTAssertTrue(followed, "The bar stays on the image and shows its alignment")
+        let selected = try await fixture.evaluate("(() => { const r = window.getSelection().getRangeAt(0); return r.startContainer.childNodes[r.startOffset]?.tagName ?? ''; })()") as? String
+        XCTAssertEqual(selected, "IMG", "The image stays selected")
+        let formatBar = try await fixture.evaluate("Boolean(document.querySelector('.mk-toolbar.mk-visible:not(.mk-media-bar)'))") as? Bool
+        XCTAssertEqual(formatBar, false, "A selected image has the media bar, not the format bar")
+        let center = try await fixture.evaluate("(() => { const img = document.querySelector('#content img').getBoundingClientRect(); const p = img && document.querySelector('#content img').parentElement.getBoundingClientRect(); return Math.abs((img.left + img.right) / 2 - (p.left + p.right) / 2) < 1; })()") as? Bool
+        XCTAssertEqual(center, true, "The image sits in the middle of the column")
+
+        _ = try await fixture.evaluate("document.querySelector('.mk-media-bar button[aria-label=\"Align left\"]').click(); true")
+        let back = await waitUntil { fixture.store.documentText == source }
+        XCTAssertTrue(back, fixture.store.documentText)
+    }
+
+    /// Dragging an image's side handle resizes it at once, shows its size and writes the width as
+    /// one undo step when it lets go; Esc puts it back, a centred image grows from both sides, the
+    /// width stays between 80 and the column, and a double-click gives the image its own size.
+    func testDraggingAMediaHandleResizesAsOneUndoStep() async throws {
+        let source = "![Chart](chart.png)\n"
+        let fixture = try await makeFixture(markdown: source, images: ["chart.png": CGSize(width: 400, height: 200)])
+        try await fixture.hoverImage()
+        let grips = try await fixture.evaluate("document.querySelectorAll('.mk-resize-handle.mk-visible').length") as? Int
+        XCTAssertEqual(grips, 2, "A handle on each side")
+
+        let live = try await fixture.evaluate(Self.dragGrip("right", by: 60, release: false)) as? String
+        XCTAssertEqual(live, "460px|460 × 230", "The image follows the pointer and shows its size")
+        XCTAssertEqual(fixture.store.documentText, source, "Nothing is written until the handle lets go")
+        _ = try await fixture.evaluate("document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 })); true")
+        let resized = await waitUntil { fixture.store.documentText == "![Chart|460](chart.png)\n" }
+        XCTAssertTrue(resized, fixture.store.documentText)
+        let width = try await fixture.evaluate("document.querySelector('#content img').getBoundingClientRect().width") as? Double
+        XCTAssertEqual(width ?? 0, 460, accuracy: 0.5)
+        let undoManager = try XCTUnwrap(fixture.webView.undoManager)
+        XCTAssertEqual(undoManager.undoActionName, "Resize")
+        undoManager.undo()
+        let undone = await waitUntil { fixture.store.documentText == source }
+        XCTAssertTrue(undone, "One undo takes the whole drag back: \(fixture.store.documentText)")
+
+        // Esc while dragging puts the image back as it was.
+        try await fixture.hoverImage()
+        _ = try await fixture.evaluate(Self.dragGrip("right", by: 50, release: false))
+        let cancelled = try await fixture.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 })); document.querySelector('#content img').style.width") as? String
+        XCTAssertEqual(cancelled, "", "Esc puts the image back")
+        XCTAssertEqual(fixture.store.documentText, source)
+
+        // Never narrower than 80 px, never wider than the column.
+        try await fixture.hoverImage()
+        _ = try await fixture.evaluate(Self.dragGrip("left", by: 1000, release: true))
+        let narrow = await waitUntil { fixture.store.documentText == "![Chart|80](chart.png)\n" }
+        XCTAssertTrue(narrow, fixture.store.documentText)
+        try await fixture.hoverImage()
+        _ = try await fixture.evaluate(Self.dragGrip("right", by: 2000, release: true))
+        let column = try await fixture.evaluate("Math.round(document.querySelector('#content p').clientWidth)") as? Int
+        let wide = await waitUntil { fixture.store.documentText == "![Chart|\(column ?? 0)](chart.png)\n" }
+        XCTAssertTrue(wide, "\(fixture.store.documentText) for a column of \(column ?? 0)")
+
+        // Centred, the image grows from both sides: the handle's edge follows the pointer.
+        try await fixture.setImageWidth(200)
+        try await fixture.hoverImage()
+        _ = try await fixture.evaluate("document.querySelector('.mk-media-bar button[aria-label=\"Center\"]').click(); true")
+        _ = await waitUntil { fixture.store.documentText.hasPrefix("<div align=\"center\">") }
+        try await fixture.hoverImage()
+        let grown = try await fixture.evaluate(Self.dragGrip("right", by: 30, release: false)) as? String
+        XCTAssertEqual(grown?.components(separatedBy: "|").first, "260px")
+        _ = try await fixture.evaluate("document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 })); true")
+        let centred = await waitUntil { fixture.store.documentText == "<div align=\"center\">\n\n![Chart|260](chart.png)\n\n</div>\n" }
+        XCTAssertTrue(centred, fixture.store.documentText)
+
+        try await fixture.hoverImage()
+        _ = try await fixture.evaluate("document.querySelector('.mk-resize-handle[data-side=\"left\"]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })); true")
+        let original = await waitUntil { fixture.store.documentText == "<div align=\"center\">\n\n![Chart](chart.png)\n\n</div>\n" }
+        XCTAssertTrue(original, fixture.store.documentText)
+        XCTAssertEqual(undoManager.undoActionName, "Original Size")
+    }
+
+    /// Writing on in an aligned block: Return keeps the alignment for the next line, the next line's
+    /// text gets a blank line before `</div>`, Return on the empty last line leaves the alignment,
+    /// and the line after it reads left aligned again.
+    func testReturnInAlignedTextKeepsTheAlignmentUntilAnEmptyLine() async throws {
+        let source = "Title\n"
+        let fixture = try await makeFixture(markdown: source)
+        try await fixture.setSelection(5)
+        fixture.press(.character("e"), modifiers: [.command, .shift])
+        let centered = await waitUntil { fixture.store.documentText == "<div align=\"center\">\n\nTitle\n\n</div>\n" }
+        XCTAssertTrue(centered, fixture.store.documentText)
+        fixture.press(.return)
+        fixture.type("Sub")
+        let typed = await waitUntil { fixture.store.documentText == "<div align=\"center\">\n\nTitle\n\nSub\n\n</div>\n" }
+        XCTAssertTrue(typed, fixture.store.documentText)
+        let subAlignment = try await fixture.evaluate(Self.textAlign(of: "Sub")) as? String
+        XCTAssertEqual(subAlignment, "-webkit-center", "The new line is centred as the one above")
+        fixture.press(.return)
+        fixture.press(.return)
+        fixture.type("Body")
+        let left = await waitUntil { fixture.store.documentText == "<div align=\"center\">\n\nTitle\n\nSub\n\n</div>\n\nBody\n" }
+        XCTAssertTrue(left, "Return on the empty last line leaves the alignment: \(fixture.store.documentText)")
+        let bodyAlignment = try await fixture.evaluate(Self.textAlign(of: "Body")) as? String
+        XCTAssertEqual(bodyAlignment, "start")
+    }
+
+    /// Return after an aligned image starts a line of text after it, left aligned, whether the image
+    /// is selected (as the media bar leaves it) or the caret is after it; it never replaces the image.
+    func testReturnAfterAnAlignedImageStartsATextLine() async throws {
+        let source = "Intro\n\n![Chart](chart.png)\n\nAfter\n"
+        let fixture = try await makeFixture(markdown: source, images: ["chart.png": CGSize(width: 320, height: 160)])
+        try await fixture.hoverImage()
+        _ = try await fixture.evaluate("document.querySelector('.mk-media-bar button[aria-label=\"Center\"]').click(); true")
+        let centered = "Intro\n\n<div align=\"center\">\n\n![Chart](chart.png)\n\n</div>\n\nAfter\n"
+        let aligned = await waitUntil { fixture.store.documentText == centered }
+        XCTAssertTrue(aligned, fixture.store.documentText)
+        let selected = await waitUntil { ((try? await fixture.evaluate("window.getSelection().toString() === '' && !window.getSelection().isCollapsed")) as? Bool) == true }
+        XCTAssertTrue(selected, "The image is selected")
+        fixture.press(.return)
+        fixture.type("Caption")
+        let captioned = "Intro\n\n<div align=\"center\">\n\n![Chart](chart.png)\n\n</div>\n\nCaption\n\nAfter\n"
+        let typed = await waitUntil { fixture.store.documentText == captioned }
+        XCTAssertTrue(typed, "Return with the image selected keeps it and starts a line after it: \(fixture.store.documentText)")
+        let alignment = try await fixture.evaluate(Self.textAlign(of: "Caption")) as? String
+        XCTAssertEqual(alignment, "start")
+
+        // The caret right after the image: the same.
+        let image = (captioned as NSString).range(of: "![Chart](chart.png)")
+        try await fixture.setSelection(image.location + image.length)
+        fixture.press(.return)
+        fixture.type("Note")
+        let noted = await waitUntil { fixture.store.documentText == "Intro\n\n<div align=\"center\">\n\n![Chart](chart.png)\n\n</div>\n\nNote\n\nCaption\n\nAfter\n" }
+        XCTAssertTrue(noted, fixture.store.documentText)
+    }
+
+    /// An empty line takes an alignment to type in: the placeholder sits where the caret does, the
+    /// typed text is centred, and ⌫ on the empty centred line takes it away as it would any line.
+    func testAnEmptyLineTakesAnAlignmentToTypeIn() async throws {
+        let source = "Intro\n\n\n\nAfter\n"
+        let fixture = try await makeFixture(markdown: source)
+        try await fixture.setSelection(7)
+        fixture.press(.character("e"), modifiers: [.command, .shift])
+        let wrapped = "Intro\n\n<div align=\"center\">\n\n</div>\n\n\nAfter\n"
+        let centered = await waitUntil { fixture.store.documentText == wrapped }
+        XCTAssertTrue(centered, fixture.store.documentText)
+        let placeholder = try await fixture.evaluate("(() => { const line = document.querySelector('#content div[align=center] .mk-empty'); return line ? Math.abs(parseFloat(getComputedStyle(line, '::before').left) - line.clientWidth / 2) < 1 : false; })()") as? Bool
+        XCTAssertEqual(placeholder, true, "The placeholder starts at the caret, in the middle of the line")
+        fixture.press(.backspace)
+        let removed = await waitUntil { fixture.store.documentText == "Intro\n\n\nAfter\n" }
+        XCTAssertTrue(removed, "⌫ takes the empty centred line away: \(fixture.store.documentText)")
+        let undoManager = try XCTUnwrap(fixture.webView.undoManager)
+        undoManager.undo()
+        let back = await waitUntil { fixture.store.documentText == wrapped }
+        XCTAssertTrue(back, fixture.store.documentText)
+        try await fixture.setSelection((wrapped as NSString).range(of: "<div align=\"center\">\n").upperBound)
+        fixture.type("Centered")
+        let typed = await waitUntil { fixture.store.documentText == "Intro\n\n<div align=\"center\">\n\nCentered\n\n</div>\n\n\nAfter\n" }
+        XCTAssertTrue(typed, fixture.store.documentText)
+        let alignment = try await fixture.evaluate(Self.textAlign(of: "Centered")) as? String
+        XCTAssertEqual(alignment, "-webkit-center")
+    }
+
+    /// ⌫ at the start of the line after an aligned block and ⌦ at the end of its last line join the
+    /// two as they would any two lines; the joined text keeps the aligned block's alignment.
+    func testBackspaceAndDeleteJoinAcrossAnAlignedBlock() async throws {
+        let source = "<div align=\"center\">\n\nAlpha\n\n</div>\n\nBeta\n"
+        let fixture = try await makeFixture(markdown: source)
+        try await fixture.setSelection((source as NSString).range(of: "Beta").location)
+        fixture.press(.backspace)
+        let joined = "<div align=\"center\">\n\nAlphaBeta\n\n</div>\n"
+        let backspaced = await waitUntil { fixture.store.documentText == joined }
+        XCTAssertTrue(backspaced, fixture.store.documentText)
+        fixture.type(" ")
+        let caret = await waitUntil { fixture.store.documentText == "<div align=\"center\">\n\nAlpha Beta\n\n</div>\n" }
+        XCTAssertTrue(caret, "The caret stays where the two met: \(fixture.store.documentText)")
+        let undoManager = try XCTUnwrap(fixture.webView.undoManager)
+        undoManager.undo()
+        undoManager.undo()
+        let restored = await waitUntil { fixture.store.documentText == source }
+        XCTAssertTrue(restored, fixture.store.documentText)
+
+        try await fixture.setSelection((source as NSString).range(of: "Alpha").upperBound)
+        fixture.press(.forwardDelete)
+        let forward = await waitUntil { fixture.store.documentText == joined }
+        XCTAssertTrue(forward, fixture.store.documentText)
+    }
+
+    /// A selected aligned image deleted with ⌫ leaves an empty centred line; ⌫ again takes the line
+    /// and its alignment away.
+    func testDeletingASelectedAlignedImage() async throws {
+        let source = "Intro\n\n<div align=\"center\">\n\n![Chart](chart.png)\n\n</div>\n\nAfter\n"
+        let fixture = try await makeFixture(markdown: source, images: ["chart.png": CGSize(width: 320, height: 160)])
+        try await fixture.hoverImage()
+        _ = try await fixture.evaluate("(() => { const img = document.querySelector('#content img'); const box = img.getBoundingClientRect(); img.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: box.left + 10, clientY: box.top + 10, button: 0 })); return true; })()")
+        let selected = await waitUntil { ((try? await fixture.evaluate("Boolean(document.querySelector('.mk-media-bar.mk-visible'))")) as? Bool) == true }
+        XCTAssertTrue(selected, "Clicking the image selects it and shows its bar")
+        fixture.press(.backspace)
+        let emptied = await waitUntil { fixture.store.documentText == "Intro\n\n<div align=\"center\">\n\n\n\n</div>\n\nAfter\n" }
+        XCTAssertTrue(emptied, fixture.store.documentText)
+        fixture.press(.backspace)
+        let gone = await waitUntil { fixture.store.documentText == "Intro\n\nAfter\n" }
+        XCTAssertTrue(gone, fixture.store.documentText)
+    }
+
+    private static func textAlign(of text: String) -> String {
+        "getComputedStyle([...document.querySelectorAll('#content p, #content h1, #content h2')].find(e => e.textContent === '\(text)')).textAlign"
+    }
+
+    private static let alignMenuRows = """
+    (() => {
+      const menu = document.querySelector('.mk-menu.mk-visible[aria-label="Align"]');
+      return menu ? [...menu.querySelectorAll('.mk-menu-row')].map(r => r.querySelector('.mk-row-label').textContent + (r.querySelector('.mk-row-check:not(.mk-row-unchecked)') ? ' ✓' : '')).join(',') : null;
+    })()
+    """
+
+    private static func clickAlignRow(_ label: String) -> String {
+        "[...document.querySelectorAll('.mk-menu.mk-visible[aria-label=\"Align\"] .mk-menu-row')].find(r => r.querySelector('.mk-row-label').textContent === '\(label)').click(); true"
+    }
+
+    private static let mediaBarPressed = "[...document.querySelectorAll('.mk-media-bar.mk-visible .mk-tool.mk-on')].map(b => b.getAttribute('aria-label')).join(',')"
+
+    /// Presses a resize handle and moves the pointer `by` points outward (inward for the left one),
+    /// letting go when `release`. Returns the image's inline width and the size shown.
+    fileprivate static func dragGrip(_ side: String, by distance: Int, release: Bool) -> String {
+        """
+        (() => {
+          const grip = document.querySelector('.mk-resize-handle[data-side="\(side)"]');
+          const box = grip.getBoundingClientRect();
+          const x = box.left + box.width / 2;
+          const y = box.top + box.height / 2;
+          const at = (type, clientX, element) => (element || document).dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY: y, button: 0 }));
+          at('mousedown', x, grip);
+          at('mousemove', x + \(distance));
+          const shown = document.querySelector('#content img').style.width + '|' + [...document.querySelectorAll('.mk-tooltip.mk-visible')].map(e => e.textContent).join('');
+          if (\(release)) at('mouseup', x + \(distance));
+          return shown;
+        })()
+        """
     }
 
     private static let slashMenuShown = "Boolean(document.querySelector('.mk-menu.mk-visible[aria-label=\"Insert block\"]'))"
@@ -1760,6 +2085,87 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         }
     }
 
+    /// Aligned blocks, a sized image with its bar and handles, a resize under way, and the alignment
+    /// menus, in both themes and a narrow window, into `MONKNOT_EDITOR_SNAPSHOT_DIR` for review
+    /// (`MONKNOT_EDITOR_SNAPSHOT_ZOOM` for another zoom). It skips otherwise.
+    func testAlignmentAndMediaSnapshots() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MONKNOT_EDITOR_SNAPSHOT_DIR"] else {
+            throw XCTSkip("Set MONKNOT_EDITOR_SNAPSHOT_DIR to capture alignment and media sizing")
+        }
+        let directory = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let markdown = """
+        # Launch notes
+
+        <div align="center">
+
+        ## A centred heading
+
+        A centred paragraph under it, set in the middle of the column.
+
+        </div>
+
+        <div align="right">
+
+        Signed, the team
+
+        </div>
+
+        <div align="center">
+
+        ![Chart|360](chart.png)
+
+        </div>
+
+        Text after the image.
+
+        """
+        let zoom = ProcessInfo.processInfo.environment["MONKNOT_EDITOR_SNAPSHOT_ZOOM"].map { "-zoom\($0)" } ?? ""
+        for (name, theme, width) in [("light", AppTheme.defaultLight, 900.0), ("dark", AppTheme.defaultDark, 900.0), ("narrow", AppTheme.defaultLight, 420.0)] {
+            let fixture = try await makeFixture(markdown: markdown, theme: theme, width: width, images: ["chart.png": CGSize(width: 480, height: 240)])
+            _ = try await fixture.evaluate("(() => { const s = document.createElement('style'); s.textContent = '*, *::before, *::after { transition: none !important; }'; document.head.appendChild(s); return true; })()")
+            func shot(_ label: String) async throws {
+                try await Task.sleep(nanoseconds: 250_000_000)
+                try await fixture.snapshot(to: directory.appendingPathComponent("align-\(name)\(zoom)-\(label).png"))
+            }
+            try await fixture.hoverImage()
+            try await shot("media-bar")
+            _ = try await fixture.evaluate(Self.dragGrip("right", by: 40, release: false))
+            try await shot("resizing")
+            _ = try await fixture.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 })); true")
+
+            _ = try await fixture.evaluate("document.querySelector('#content h1').dispatchEvent(new MouseEvent('mousemove', { bubbles: true })); true")
+            try await Task.sleep(nanoseconds: 300_000_000)
+            let words = (markdown as NSString).range(of: "centred paragraph").location
+            try await fixture.setSelection(words, words + 17)
+            _ = try await fixture.evaluate("document.getElementById('content').dispatchEvent(new MouseEvent('mouseup', {bubbles: true})); true")
+            try await shot("format-bar")
+            _ = try await fixture.evaluate("document.querySelector('.mk-toolbar.mk-visible button[aria-label=\"Align\"]')?.click(); true")
+            try await shot("format-bar-align")
+            fixture.press(.escape)
+
+            // Return at the end of a right-aligned and a centred line: an empty aligned line.
+            for (label, line) in [("new-line-right", "Signed, the team"), ("new-line-center", "middle of the column.")] {
+                let end = (markdown as NSString).range(of: line)
+                try await fixture.setSelection(end.location + end.length)
+                fixture.press(.return)
+                try await shot(label)
+                let empty = await waitUntil { fixture.store.documentText == markdown.replacingOccurrences(of: line + "\n\n", with: line + "\n\n\n") }
+                XCTAssertTrue(empty, "\(name): Return makes an empty aligned line")
+                try XCTUnwrap(fixture.webView.undoManager).undo()
+                _ = await waitUntil { fixture.store.documentText == markdown }
+            }
+
+            try await fixture.hoverBlock(containing: "Signed, the team")
+            try await fixture.openBlockMenu()
+            _ = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-menu-row')].find(r => r.textContent.includes('Align'))?.click(); true")
+            try await shot("block-menu-align")
+            fixture.press(.escape)
+            fixture.press(.escape)
+            fixture.close()
+        }
+    }
+
     // MARK: - Fixture
 
     private func makeFixture(
@@ -1768,11 +2174,15 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         width: CGFloat = 800,
         timeout: TimeInterval = 10,
         notes: [String] = [],
+        images: [String: CGSize] = [:],
         viewportState: DocumentViewportState? = nil
     ) async throws -> Fixture {
         let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotVisualEditor")
         let file = root.appendingPathComponent("Note.md")
         try markdown.write(to: file, atomically: true, encoding: .utf8)
+        for (name, size) in images {
+            try Self.png(size).write(to: root.appendingPathComponent(name))
+        }
         for note in notes {
             let url = root.appendingPathComponent(note)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -1808,6 +2218,28 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         let fixture = Fixture(store: store, harness: harness, window: window, host: host, test: self)
         _ = try await fixture.waitForEditor(timeout: timeout)
         return fixture
+    }
+
+    /// A PNG of one colour, `size` pixels at one pixel per point.
+    private static func png(_ size: CGSize) throws -> Data {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(size.width),
+            pixelsHigh: Int(size.height),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        NSColor.systemTeal.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
     }
 
     fileprivate func waitUntil(
@@ -1931,6 +2363,51 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
             XCTAssertTrue(shown, "Hovering \(text) shows its handles")
         }
 
+        /// Moves the pointer over the document's image, once it has loaded, until its handles show.
+        func hoverImage() async throws {
+            let loaded = await test.waitUntil {
+                ((try? await self.evaluate("(() => { const img = document.querySelector('#content img'); return Boolean(img && img.complete && img.naturalWidth > 0); })()")) as? Bool) == true
+            }
+            XCTAssertTrue(loaded, "The image loads")
+            _ = try await evaluate("""
+            (() => {
+              const img = document.querySelector('#content img');
+              const box = img.getBoundingClientRect();
+              img.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 }));
+              return true;
+            })()
+            """)
+            let shown = await test.waitUntil {
+                ((try? await self.evaluate("document.querySelectorAll('.mk-resize-handle.mk-visible').length")) as? Int) == 2
+            }
+            XCTAssertTrue(shown, "Hovering the image shows its handles")
+        }
+
+        /// Drags the left-aligned image's right handle until the image is `width` wide.
+        func setImageWidth(_ width: Int) async throws {
+            try await hoverImage()
+            let current = try await evaluate("Math.round(document.querySelector('#content img').getBoundingClientRect().width)") as? Int ?? width
+            _ = try await evaluate(MarkdownVisualEditorTests.dragGrip("right", by: width - current, release: true))
+            let written = await test.waitUntil { self.store.documentText.contains("|\(width)]") }
+            XCTAssertTrue(written, self.store.documentText)
+        }
+
+        /// A click on the grip of the block the pointer is over: its block menu.
+        func openBlockMenu() async throws {
+            _ = try await evaluate("""
+            (() => {
+              const grip = document.querySelector('.mk-handle-drag');
+              grip.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+              document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }));
+              return true;
+            })()
+            """)
+            let opened = await test.waitUntil {
+                ((try? await self.evaluate("Boolean(document.querySelector('.mk-menu.mk-visible[aria-label=\"Block\"]'))")) as? Bool) == true
+            }
+            XCTAssertTrue(opened, "The grip opens the block menu")
+        }
+
         /// The wikilink menu's rows once they satisfy `condition` (the app answers each query
         /// asynchronously), or whatever it shows when the wait runs out.
         func wikilinkRows(matching condition: @escaping ([String]) -> Bool) async -> [String] {
@@ -1945,6 +2422,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         enum Key {
             case `return`
             case backspace
+            case forwardDelete
             case escape
             case tab
             case down
@@ -1954,6 +2432,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
                 switch self {
                 case .return: return "\r"
                 case .backspace: return "\u{7F}"
+                case .forwardDelete: return String(UnicodeScalar(NSDeleteFunctionKey)!)
                 case .escape: return "\u{1B}"
                 case .tab: return "\t"
                 case .down: return String(UnicodeScalar(NSDownArrowFunctionKey)!)
@@ -1965,10 +2444,11 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
                 switch self {
                 case .return: return 36
                 case .backspace: return 51
+                case .forwardDelete: return 117
                 case .escape: return 53
                 case .tab: return 48
                 case .down: return 125
-                case .character(let value): return value == "k" ? 40 : value == "d" ? 2 : 0
+                case .character(let value): return ["k": 40, "d": 2, "e": 14, "l": 37, "r": 15][value] ?? 0
                 }
             }
         }

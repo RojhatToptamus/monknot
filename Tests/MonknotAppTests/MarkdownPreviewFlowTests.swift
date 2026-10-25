@@ -1181,7 +1181,9 @@ final class PreviewFlowFixture {
         window.makeFirstResponder(webView)
         let ok = try await evaluate("window.MonknotEditor.setSelection(\(anchor), \(head ?? anchor))") as? Bool
         XCTAssertEqual(ok, true)
-        try await Task.sleep(nanoseconds: 60_000_000)
+        // The page reports a selection from a 16 ms timer, which a busy machine runs late; once a later
+        // timer has run, the report has reached the app.
+        _ = try await webView.callAsyncJavaScript("await new Promise((resolve) => setTimeout(resolve, 32)); return true", contentWorld: .page)
     }
 
     func flowState() async -> PreviewFlowPageState? {

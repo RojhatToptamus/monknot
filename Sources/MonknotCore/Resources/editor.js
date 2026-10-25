@@ -284,7 +284,7 @@
         if (start < from) states.set(start, block.viewOpen);
         else if (start >= to) states.set(start + delta, block.viewOpen);
       }
-      for (const child of block.children || []) if (child.type === "toggle" || child.type === "quote") collect(child);
+      for (const child of block.children || []) if (isBlockContainer(child)) collect(child);
     };
     removed.forEach(collect);
     // A toggle just inserted from a menu opens, so its body is there to type into.
@@ -295,9 +295,14 @@
     if (states.size === 0) return;
     const assign = (block) => {
       if (block.type === "toggle" && states.has(block.start)) block.viewOpen = states.get(block.start);
-      for (const child of block.children || []) if (child.type === "toggle" || child.type === "quote") assign(child);
+      for (const child of block.children || []) if (isBlockContainer(child)) assign(child);
     };
     inserted.forEach(assign);
+  }
+
+  /// A container of blocks: a toggle (its body), a quote or an alignment div.
+  function isBlockContainer(block) {
+    return block.type === "toggle" || block.type === "quote" || block.type === "align";
   }
 
   /// The footnotes and link references once `inserted` takes the place of `count` blocks at `index`.
@@ -487,11 +492,16 @@
     return low - 1;
   }
 
-  /// Where a toggle's body lines or a quote's lines end, the line after them: a toggle's
-  /// `</details>`, or the line after the last.
+  /// Where a toggle's or alignment div's body lines or a quote's lines end, the line after them: a
+  /// toggle's `</details>`, a div's `</div>`, or the line after the last.
   function containerLinesEnd(source, node) {
-    if (node.type === "toggle" && node.close) return parsedLineStart(source, atNode(node, node.close.start));
+    if (node.type !== "quote" && node.close) return parsedLineStart(source, atNode(node, node.close.start));
     return lineAfter(source, bEnd(node));
+  }
+
+  /// The line a toggle's or alignment div's body starts after: the toggle's title, the div's opening.
+  function bodyHead(node) {
+    return node.type === "toggle" ? node.summaryView : node.openView;
   }
 
   /// The containers holding the changed lines, outermost first, with the list items between a list
@@ -523,16 +533,18 @@
     const startStays = () => !quotes.length
       || (region.oldLines.length > 0 && region.newLines.length > 0
         && seenThrough(quotes, region.oldLines[0]).start === seenThrough(quotes, region.newLines[0]).start);
-    if (node.type === "toggle") {
+    if (node.type === "toggle" || node.type === "align") {
       if (node.children.length === 1 && node.children[0].virtual) return false;
-      const bodyStart = lineAfter(source, atNode(node, node.summaryView.end));
+      const bodyStart = lineAfter(source, atNode(node, bodyHead(node).end));
       const bodyEnd = containerLinesEnd(source, node);
       if (region.start < bodyStart || region.oldEnd > bodyEnd) return false;
       if (region.start === bodyStart && region.oldEnd === bodyEnd && region.newLines.length === 0) return false;
-      // A fence or a `<details>` line changes which `</details>` closes the toggle.
+      // A fence or a `<details>` line changes which `</details>` closes the toggle; a `<div>` line,
+      // which `</div>` closes the div.
+      const [opens, closes] = node.type === "toggle" ? [P.detailsOpen, P.detailsClose] : [P.divOpen, P.divClose];
       return !lines.some((line) => {
         const text = seen(line);
-        return P.fenceMarker.test(text) || P.detailsOpen.test(text) || P.detailsClose.test(text);
+        return P.fenceMarker.test(text) || opens.test(text) || closes.test(text);
       });
     }
     if (node.type === "quote") {
@@ -589,7 +601,7 @@
     let context = { definitions: true, top: true, editing: true, anchor: 0 };
     for (let index = 0; index <= depth; index += 1) {
       const node = chain[index];
-      if (node.type === "toggle") context = { ...context, definitions: false, top: false, separators: true, virtual: null };
+      if (node.type === "toggle" || node.type === "align") context = { ...context, definitions: false, top: false, separators: true, virtual: null };
       else if (node.type === "quote") context = { ...context, definitions: false, top: false, separators: false, virtual: null };
     }
     return context;
@@ -612,16 +624,17 @@
   }
 
   /// The source end of the lines the blocks of `chain[depth]` were read from (the end of the
-  /// toggle's body or the quote holding a list), after the edit.
+  /// toggle's or div's body or the quote holding a list), after the edit.
   function linesEndAfter(model, edit, chain, depth) {
     for (let index = depth; index >= 0; index -= 1) {
       const node = chain[index];
-      if (node.type === "toggle" || node.type === "quote") return containerLinesEnd(model.source, node) + edit.delta;
+      if (isBlockContainer(node)) return containerLinesEnd(model.source, node) + edit.delta;
     }
     return edit.source.length;
   }
 
-  /// Re-parses the blocks of the toggle or quote `chain[depth]` from the block before the edit.
+  /// Re-parses the blocks of the toggle, alignment div or quote `chain[depth]` from the block before
+  /// the edit.
   function reparseBlocks(model, edit, chain, depth) {
     const container = chain[depth];
     const kids = container.children;
@@ -635,9 +648,10 @@
     if (restart >= 0) {
       parseStart = parsedLineStart(source, bStart(kids[restart]));
       parseLine = bLine(kids[restart]);
-    } else if (container.type === "toggle") {
-      parseStart = lineAfter(source, atNode(container, container.summaryView.end));
-      parseLine = container.summaryView.line + nodeLineShift(container) + 1;
+    } else if (container.type !== "quote") {
+      const head = bodyHead(container);
+      parseStart = lineAfter(source, atNode(container, head.end));
+      parseLine = head.line + nodeLineShift(container) + 1;
     } else {
       parseStart = parsedLineStart(source, bStart(container));
       parseLine = bLine(container);
@@ -747,8 +761,8 @@
     const top = chain[0];
     const kids = childNodes(container);
 
-    // How a toggle's or quote's last line ends now: further along by the edit, or where the last
-    // changed line ends when it was that line.
+    // How a toggle's, div's or quote's last line ends now: further along by the edit, or where the
+    // last changed line ends when it was that line.
     const endAfter = (node) => {
       const end = bEnd(node);
       if (parsedLineStart(source, end) >= region.oldEnd) return node.end + delta;
@@ -759,7 +773,7 @@
     const ends = new Map();
     for (let level = 0; level <= depth; level += 1) {
       const node = chain[level];
-      if (node.type === "toggle" || node.type === "quote") ends.set(node, endAfter(node));
+      if (isBlockContainer(node)) ends.set(node, endAfter(node));
     }
 
     // The removed nodes' units: a run of the top block's, which are in the order they render in.
@@ -815,7 +829,7 @@
         node.end = itemSubtreeEnd(node.items[node.items.length - 1]) - nodeShift(node);
       } else if (ends.has(node)) {
         node.end = ends.get(node);
-        if (node.type === "toggle" && node.close) {
+        if (node.type !== "quote" && node.close) {
           const close = node.close;
           node.close = { ...close, start: close.start + delta, end: close.end + delta, next: close.next + delta, line: close.line + lineDelta };
         }
@@ -833,8 +847,8 @@
     let outer = null;
     for (let level = depth; level >= 0 && (!scope || !outer); level -= 1) {
       const node = chain[level];
-      if (!scope && node.type === "toggle") scope = node;
-      if (!outer && level < depth && (node.type === "toggle" || node.type === "quote")) outer = node;
+      if (!scope && (node.type === "toggle" || node.type === "align")) scope = node;
+      if (!outer && level < depth && isBlockContainer(node)) outer = node;
     }
     render.scope = scope;
     for (const node of inserted) {
@@ -1778,6 +1792,11 @@
       const insert = unit.region.j + eol + prefix + eol + prefix + "```";
       return { from: start, to: unitEnd(unit), insert, select: caretAt(start + unit.region.j.length + eol.length + prefix.length), kind: "enter", label: "Code Block" };
     }
+    // After an aligned image or video that ends its div, the new line is text after the div.
+    const div = alignDivOf(unit.block);
+    if (after === "" && div && unit.role === "paragraph" && holdsOnlyMedia(model, unit) && isLastInDiv(model, unit, div)) {
+      return { ...insertEmptyAt(model, bEnd(div), quotePrefixOfLine(source, bEnd(div))), kind: "enter" };
+    }
     if (after === "" || options.exitBlock) return { ...insertEmptyAfter(model, unit), kind: "enter" };
     if (before === "") return { ...insertEmptyBefore(model, unit, position), kind: "enter" };
     const separator = prefix ? eol + blank + eol + prefix : eol + eol;
@@ -1789,9 +1808,7 @@
     const eol = model.eol;
     const block = unit.block;
     const next = nextUnit(model, unit);
-    if (unit.scope && unit.scope.type === "toggle" && (!next || next.scope !== unit.scope)) {
-      return leaveToggle(model, unit);
-    }
+    if (unit.scope && (!next || next.scope !== unit.scope)) return leaveScope(model, unit);
     if (!block.view) {
       const anchor = unitStart(unit);
       return { from: anchor, to: anchor, insert: eol, select: (next) => caretOnFirstEmptyAfter(next, anchor + 1), kind: "enter" };
@@ -1846,15 +1863,17 @@
     return { from: at, to: at, insert, select: (next) => caretOnFirstEmptyAfter(next, at + 1), kind: "enter" };
   }
 
-  /// Return on the empty last line of a toggle's body leaves the toggle, as on a quote's.
-  function leaveToggle(model, unit) {
-    const toggle = unit.scope;
+  /// Return on the empty last line of a toggle's body or an alignment div leaves it, as on a quote's.
+  function leaveScope(model, unit) {
+    const scope = unit.scope;
     const source = model.source;
     const eol = model.eol;
-    const end = bEnd(toggle);
+    const end = bEnd(scope);
     const parts = [];
     const previous = previousUnit(model, unit);
-    const onlyLine = !previous || previous.role === "summary";
+    const onlyLine = !previous || previous.role === "summary" || unitEnd(previous) < bStart(scope);
+    // A div with nothing else in it is only an alignment for the empty line: the line stays, the div goes.
+    if (scope.type === "align" && onlyLine && scope.children.every((child) => child.type === "empty")) return { ...dropEmptyDiv(model, scope, true), kind: "enter" };
     let removed = 0;
     if (unit.block.view && !onlyLine) {
       const lineStart = lineStartOf(source, S(unit, unit.block.view.start));
@@ -1961,6 +1980,13 @@
     if (unit.role === "summary") return unwrapToggle(model, unit);
     const callout = calloutOf(unit);
     if (callout && isFirstInContainer(model, unit)) return calloutToQuote(model, unit, callout);
+    // At the start of an alignment div, ⌫ takes the alignment away first, as it does a heading's
+    // level; a div left holding only empty lines goes.
+    const div = alignDivOf(unit.block);
+    if (div && isFirstInDiv(model, unit, div)) {
+      if (div.children.every((child) => child.type === "empty")) return { ...dropEmptyDiv(model, div, false), kind: "delete" };
+      if (unit.role === "paragraph") return planAlign(model, withOrder(position, position), "left");
+    }
     if (unit.kind === "empty") {
       const block = unit.block;
       if (!block.view) {
@@ -2063,6 +2089,11 @@
     }
     if (!previous) return null;
     if (!canJoin(previous, unit) || isHiddenUnit(previous)) {
+      // Text right after an alignment div joins the text block the div ends with.
+      const div = alignDivOf(previous.block);
+      if (div && isAlignable(previous) && isAlignable(unit) && unit.block.parent === div.parent && isLastInDiv(model, previous, div)) {
+        return joinIntoDiv(model, previous, unit, div);
+      }
       const target = visiblePrevious(model, unit);
       return target ? { move: true, select: caretAt(unitEnd(target)) } : null;
     }
@@ -2099,7 +2130,19 @@
       const after = model.blocks[topIndex + 2];
       return { from: bStart(nextTop), to: after ? bStart(after) : bEnd(nextTop), insert: "", select: caretAt(position), kind: "delete", label: atomBlockLabel(nextTop) };
     }
-    if (!canJoin(unit, next) || isHiddenUnit(next)) return null;
+    if (!canJoin(unit, next) || isHiddenUnit(next)) {
+      if (!isAlignable(unit) || !isAlignable(next)) return null;
+      // At the end of an alignment div's last block the text after the div joins it; right before a
+      // div, the div's first block loses its alignment first, as ⌫ at its start takes it away.
+      const div = alignDivOf(unit.block);
+      if (div && next.block.parent === div.parent && isLastInDiv(model, unit, div)) return joinIntoDiv(model, unit, next, div);
+      const nextDiv = alignDivOf(next.block);
+      if (nextDiv && unit.block.parent === nextDiv.parent && isFirstInDiv(model, next, nextDiv)) {
+        const op = planAlign(model, withOrder(unitStart(next), unitStart(next)), "left");
+        return op && { ...op, select: caretAt(position) };
+      }
+      return null;
+    }
     if (next.kind === "empty") {
       const block = next.block;
       if (!block.view) return null;
@@ -3512,6 +3555,241 @@
   }
 
   // ---------------------------------------------------------------------
+  // Alignment and media size
+  //
+  // Paragraphs and headings (an image or video is in a paragraph) are left aligned; a
+  // `<div align="center">` or `<div align="right">` around them, a blank line inside each edge,
+  // aligns them as GitHub does. Setting an alignment regroups the blocks from the first to the last
+  // it changes into runs of one alignment, a div around each centred or right-aligned run, and writes
+  // only the div lines: every block keeps its own lines, so taking an alignment away gives back the
+  // source it had. An image's or video's width is a number after a bar at the end of its alt text.
+  // ---------------------------------------------------------------------
+
+  const ALIGNMENTS = { left: "Align Left", center: "Center", right: "Align Right" };
+
+  function isAlignable(unit) {
+    return Boolean(unit) && (unit.role === "paragraph" || unit.role === "heading");
+  }
+
+  /// The alignment div right around `block`, or null.
+  function alignDivOf(block) {
+    return block.parent && block.parent.type === "align" ? block.parent : null;
+  }
+
+  /// How the block holding `unit` is aligned, or null when it cannot be.
+  function alignmentOf(unit) {
+    if (!isAlignable(unit)) return null;
+    const div = alignDivOf(unit.block);
+    return div ? div.align : "left";
+  }
+
+  /// Aligns the blocks `range` touches where its first paragraph or heading sits (directly in its
+  /// container, or in an alignment div there): that paragraph, and every block beside it the range
+  /// reaches, a list or code between included. On an empty line it aligns the line, to type in. The
+  /// page keeps `keep` selected.
+  function planAlign(model, range, align, keep = range) {
+    if (!ALIGNMENTS[align]) return null;
+    const units = unitsBetween(model, range.from, range.to);
+    const anchor = units.find(isAlignable);
+    if (!anchor) return units.length === 1 && units[0].kind === "empty" ? alignEmptyLine(model, units[0], align) : null;
+    const holder = (block) => alignDivOf(block) || block;
+    const level = holder(anchor.block).parent;
+    const siblings = level ? childNodes(level) : model.blocks;
+    const touched = (block) => bStart(block) <= range.to && bEnd(block) >= range.from;
+    let first = siblings.findIndex(touched);
+    let last = siblings.findLastIndex(touched);
+    // A div of the same alignment right beside takes the blocks in.
+    const joins = (sibling) => align !== "left" && Boolean(sibling) && sibling.type === "align" && sibling.align === align;
+    if (joins(siblings[first - 1])) first -= 1;
+    if (joins(siblings[last + 1])) last += 1;
+    // Every block from the first sibling to the last, aligned as it will be. An empty line goes with
+    // the block before it (the first block's, at the start), so it never makes a div of its own.
+    const items = [];
+    for (let index = first; index <= last; index += 1) {
+      const div = siblings[index].type === "align" ? siblings[index] : null;
+      for (const block of div ? div.children : [siblings[index]]) {
+        // An empty div's line stands in for its body and has no line of its own.
+        if (block.type === "empty" && !block.view) continue;
+        items.push({ block, div, align: touched(block) ? align : div ? div.align : "left" });
+      }
+    }
+    let carried = items.find((item) => item.block.type !== "empty").align;
+    for (const item of items) {
+      if (item.block.type === "empty") item.align = carried;
+      else carried = item.align;
+    }
+
+    const source = model.source;
+    const eol = model.eol;
+    const from = lineStartOf(source, bStart(siblings[first]));
+    const to = bEnd(siblings[last]);
+    const prefix = quotePrefixOfLine(source, from);
+    const gap = eol + prefix.trimEnd() + eol;
+    const open = (value) => `${prefix}<div align="${value}">${gap}`;
+    const close = `${gap}${prefix}</div>`;
+    let insert = "";
+    items.forEach((item, index) => {
+      const previous = items[index - 1];
+      const start = lineStartOf(source, bStart(item.block));
+      if (!previous) insert += item.align === "left" ? "" : open(item.align);
+      else if (previous.align !== item.align) insert += (previous.align === "left" ? "" : close) + gap + (item.align === "left" ? "" : open(item.align));
+      // Blocks that were side by side keep the lines between them; a div's edge between them leaves a blank line.
+      else insert += previous.div === item.div ? source.slice(bEnd(previous.block), start) : gap;
+      insert += source.slice(start, bEnd(item.block));
+    });
+    const lastItem = items[items.length - 1];
+    if (lastItem.align !== "left") insert += close;
+    // A paragraph or list right above takes in a paragraph that no div starts any more, and a
+    // paragraph right below runs on from one that no div ends; a div ends with a blank line after it.
+    const above = siblings[first - 1];
+    const below = siblings[last + 1];
+    const runsInto = (block, types) => Boolean(block) && types.includes(block.type);
+    const before = items[0].align === "left" && items[0].block.type === "paragraph" && runsInto(above, ["paragraph", "list"])
+      && bEnd(above) === previousLineEnd(source, from) ? prefix.trimEnd() + eol : "";
+    const after = below && lineStartOf(source, bStart(below)) === nextLineStart(source, to)
+      && (lastItem.align !== "left" || (lastItem.block.type === "paragraph" && below.type === "paragraph")) ? eol + prefix.trimEnd() : "";
+    insert = before + insert + after;
+    if (insert === source.slice(from, to)) return null;
+    const described = describeSelection(model, keep, unitsBetween(model, from, to));
+    return {
+      from,
+      to,
+      insert,
+      select: (next) => restoreDescribedSelection(next, described, from),
+      kind: "format",
+      label: ALIGNMENTS[align]
+    };
+  }
+
+  /// An empty line takes an alignment, to be typed in: a div around it, a blank line its body. A div
+  /// holding nothing else changes its alignment, or goes for left; the last empty line of a div with
+  /// text in it leaves the div for left, as Return does there.
+  function alignEmptyLine(model, unit, align) {
+    const block = unit.block;
+    if (!block.view) return null;
+    const source = model.source;
+    const eol = model.eol;
+    const div = alignDivOf(block);
+    if (div) {
+      if (align === div.align) return null;
+      if (!div.children.every((child) => child.type === "empty")) {
+        return align === "left" && isLastInDiv(model, unit, div) ? { ...leaveScope(model, unit), kind: "format", label: ALIGNMENTS.left } : null;
+      }
+      if (align === "left") return { ...dropEmptyDiv(model, div, true), kind: "format", label: ALIGNMENTS.left };
+      const from = atNode(div, div.openView.start);
+      const to = atNode(div, div.openView.end);
+      const insert = source.slice(from, to).replace(/align=(["']?)\w+\1/i, `align="${align}"`);
+      return { from, to, insert, select: (next) => caretOnFirstEmptyAfter(next, from), kind: "format", label: ALIGNMENTS[align] };
+    }
+    if (align === "left") return null;
+    const start = lineStartOf(source, S(unit, block.view.start));
+    const end = S(unit, block.view.end);
+    const prefix = quotePrefixOfLine(source, start);
+    const blank = prefix.trimEnd();
+    // The line was the blank line before the block above or after the block below too: one stays.
+    const before = block.needsSeparatorBefore ? blank + eol : "";
+    const next = nextLineStart(source, end);
+    const after = next > end && next < source.length ? eol + blank : "";
+    const insert = `${before}${prefix}<div align="${align}">${eol}${blank}${eol}${prefix}</div>${after}`;
+    return { from: start, to: end, insert, select: (nextModel) => caretOnFirstEmptyAfter(nextModel, start + before.length + 1), kind: "format", label: ALIGNMENTS[align] };
+  }
+
+  /// A div holding nothing but empty lines goes. With `keepLine` (Return, Align Left) one empty line
+  /// stays where it was; without (⌫) the line goes too, as ⌫ takes an empty line away.
+  function dropEmptyDiv(model, div, keepLine) {
+    const source = model.source;
+    const start = lineStartOf(source, bStart(div));
+    const end = bEnd(div);
+    const prefix = quotePrefixOfLine(source, start);
+    // The blank line after the div, which its alignment wrote, is part of its line.
+    const next = nextLineStart(source, end);
+    const blankAfter = next > end && next < source.length && isBlankLineIn(source, next, prefix);
+    if (keepLine) {
+      // The empty line that stays is the blank line after the div, or else the one before it, or
+      // else the div's own first line.
+      const blankBefore = start > 0 && isBlankLineIn(source, lineStartOf(source, previousLineEnd(source, start)), prefix);
+      const to = blankAfter || (blankBefore && next > end) ? next : end;
+      return { from: start, to, insert: "", select: (nextModel) => caretAt(closestUnitPosition(nextModel, start)) };
+    }
+    const lineEnd = blankAfter ? lineEndOf(source, next) : end;
+    const previousEnd = previousLineEnd(source, start);
+    const from = previousEnd >= 0 ? previousEnd : start;
+    const to = previousEnd >= 0 ? lineEnd : nextLineStart(source, lineEnd);
+    return {
+      from,
+      to,
+      insert: "",
+      select: (nextModel) => {
+        const target = unitAt(nextModel, Math.max(0, from), "left");
+        return caretAt(target ? (from > 0 ? unitEnd(target) : unitStart(target)) : 0);
+      }
+    };
+  }
+
+  /// Whether `unit` is the first of its alignment div's: nothing before it in the div can take its text.
+  function isFirstInDiv(model, unit, div) {
+    const previous = previousUnit(model, unit);
+    return !previous || unitEnd(previous) < bStart(div);
+  }
+
+  /// Whether `unit` is the last of its alignment div's.
+  function isLastInDiv(model, unit, div) {
+    const next = nextUnit(model, unit);
+    return !next || unitStart(next) > bEnd(div);
+  }
+
+  /// Text right after an alignment div joins the div's last paragraph or heading, as it would the
+  /// block above it: `after`'s text moves up to the end of `before`, inside the div.
+  function joinIntoDiv(model, before, after, div) {
+    const source = model.source;
+    const from = unitEnd(before);
+    const insert = source.slice(unitStart(after), unitEnd(after)) + source.slice(from, bEnd(div));
+    return keepingBackslashes(model, { from, to: lineEndOf(source, unitEnd(after)), insert, select: caretAt(from), kind: "delete" });
+  }
+
+  /// Whether a paragraph holds images or video and nothing else to read.
+  function holdsOnlyMedia(model, unit) {
+    const map = visibleMap(model, unit);
+    let media = false;
+    for (const segment of map.segments) {
+      if (!segment.atom) {
+        if (map.visible.slice(segment.v, segment.v + segment.len).trim()) return false;
+      } else if (model.source.startsWith("![", rawOf(unit, segment.s))) {
+        media = true;
+      } else {
+        return false;
+      }
+    }
+    return media;
+  }
+
+  /// The image or video whose Markdown holds `raw`: its source range, where its width is written (or
+  /// would be) before the alt text's `]`, and the width, 0 when it has none.
+  function mediaAt(model, raw) {
+    const unit = unitAt(model, raw, "right");
+    if (!unit || unit.kind !== "inline") return null;
+    const j = jOf(unit, raw);
+    const atom = visibleMap(model, unit).segments.find((segment) => segment.atom && segment.s <= j && j < segment.e);
+    if (!atom) return null;
+    const from = rawOf(unit, atom.s);
+    const text = model.source.slice(from, rawOf(unit, atom.e));
+    if (!text.startsWith("![")) return null;
+    // The alt text ends at its first `]`: the image syntax takes none inside it.
+    const altEnd = from + text.indexOf("]");
+    const size = MD.patterns.mediaWidth.exec(model.source.slice(from + 2, altEnd));
+    return { unit, from, to: from + text.length, sizeFrom: size ? from + 2 + size.index : altEnd, sizeTo: altEnd, width: size ? Number(size[1]) : 0 };
+  }
+
+  /// Sizes the image or video at `raw` `width` pixels wide, or with 0 to its file's own size.
+  function planMediaWidth(model, raw, width) {
+    const media = mediaAt(model, raw);
+    if (!media) return null;
+    const insert = width > 0 ? `|${Math.round(width)}` : "";
+    if (model.source.slice(media.sizeFrom, media.sizeTo) === insert) return null;
+    return { from: media.sizeFrom, to: media.sizeTo, insert, select: null, kind: "format", label: width > 0 ? "Resize" : "Original Size" };
+  }
+
+  // ---------------------------------------------------------------------
   // HTML to Markdown (paste from other apps)
   // ---------------------------------------------------------------------
 
@@ -3635,12 +3913,12 @@
   }
 
   /// A line of text that Markdown would read as the start of a heading, quote, list item, divider,
-  /// code fence, toggle, table of contents or definition keeps reading as text: `2020. A year`
-  /// becomes `2020\. A year`, and `[a]: b` becomes `[a]\: b`. With `definitions` false, for a line
-  /// in a quote or toggle, which never reads one, a definition stays as it is.
+  /// code fence, toggle, alignment div, table of contents or definition keeps reading as text:
+  /// `2020. A year` becomes `2020\. A year`, and `[a]: b` becomes `[a]\: b`. With `definitions`
+  /// false, for a line in a quote or toggle, which never reads one, a definition stays as it is.
   function escapeLineStart(line, definitions = true) {
     const escaped = line
-      .replace(/^([ \t]*)(?=#{1,6}(?:[ \t]|$)|[-+*](?:[ \t]|$)|>|([-*_])(?:[ \t]*\2){2,}[ \t]*$|(?:`{3,}|~{3,})[ \t]*[\w.+-]*[ \t]*$|<details(?:[ \t]+open)?[ \t]*>[ \t]*$|\[toc\][ \t]*$)/i, "$1\\")
+      .replace(/^([ \t]*)(?=#{1,6}(?:[ \t]|$)|[-+*](?:[ \t]|$)|>|([-*_])(?:[ \t]*\2){2,}[ \t]*$|(?:`{3,}|~{3,})[ \t]*[\w.+-]*[ \t]*$|<details(?:[ \t]+open)?[ \t]*>[ \t]*$|<div[ \t]+align=(["']?)(?:left|center|right)\3[ \t]*>[ \t]*$|\[toc\][ \t]*$)/i, "$1\\")
       .replace(/^([ \t]*\d+)([.)])(?=[ \t]|$)/, "$1\\$2");
     return definitions ? escaped.replace(/^([ \t]*\[[^\]\r\n]+\]):/, "$1\\:") : escaped;
   }
@@ -3800,7 +4078,11 @@
     planCalloutKind,
     planUnwrapQuote,
     insertEmptyBeforeBlock,
-    insertItemNear
+    insertItemNear,
+    alignmentOf,
+    planAlign,
+    mediaAt,
+    planMediaWidth
   };
   window.MonknotEditorCore = Core;
 
@@ -3907,14 +4189,17 @@
     listen(document, "keyup", onDocumentKeyUp, true);
     listen(window, "resize", () => {
       UI.reposition();
+      Media.reposition();
       Flow.onResize();
     });
     listen(window, "scroll", () => {
       UI.reposition();
       Handles.update();
+      Media.reposition();
       Flow.onScroll();
     }, { passive: true });
     listen(document, "mousemove", Handles.onPointerMove, { passive: true });
+    listen(document, "mousemove", Media.onPointerMove, { passive: true });
     listen(document.documentElement, "mouseleave", () => Handles.hide());
     listen(window, "blur", () => setCommandKey(false));
     // The web view became first responder (a click on its edge, the window regaining focus):
@@ -3935,6 +4220,7 @@
     if (!active) return;
     Handles.cancelDrag();
     Handles.hide();
+    Media.cancel();
     UI.closeAll();
     Flow.forget();
     while (listeners.length) listeners.pop()();
@@ -4001,13 +4287,13 @@
     for (let index = 0; index < kids.length; index += 1) bindElements(kids[index], elements[index]);
   }
 
-  /// The elements of a node's children: in a toggle's body, a quote (after a callout's title), a
-  /// list, or after an item's text (and a to-do's box).
+  /// The elements of a node's children: in a toggle's body, a quote (after a callout's title), an
+  /// alignment div, a list, or after an item's text (and a to-do's box).
   function childElements(node) {
     const element = node.el;
     if (node.type === "toggle") return element.lastElementChild ? element.lastElementChild.children : [];
     if (node.type === "quote") return node.callout ? Array.prototype.slice.call(element.children, 1) : element.children;
-    if (node.type === "list") return element.children;
+    if (node.type === "list" || node.type === "align") return element.children;
     return Array.prototype.slice.call(element.children, node.task ? 2 : 1);
   }
 
@@ -4495,6 +4781,7 @@
     const update = applyPatch(model, op.from, op.to, op.insert);
     const t1 = profile ? performance.now() : 0;
     applyUpdate(update);
+    Media.afterEdit();
     const t2 = profile ? performance.now() : 0;
     version += 1;
     const end = op.from + op.insert.length;
@@ -4677,7 +4964,11 @@
 
   function enter(selection, options) {
     const group = newGroup();
-    if (selection.from !== selection.to) {
+    // With an image, video or audio player selected, Return starts a line after it instead of
+    // replacing it.
+    if (selectedMediaElement()) {
+      selection = withOrder(selection.to, selection.to);
+    } else if (selection.from !== selection.to) {
       apply(planDelete(model, selection.from, selection.to), { group });
       selection = readSelection() || withOrder(selection.from, selection.from);
     }
@@ -4846,9 +5137,15 @@
 
   // Keys ----------------------------------------------------------------
 
+  /// ⇧⌘L, ⇧⌘E and ⇧⌘R align the block, as in word processors.
+  const ALIGN_KEYS = { l: "left", e: "center", r: "right" };
+
   function onKeyDown(event) {
     if (!active) return;
-    if (!["Meta", "Shift", "Alt", "Control", "CapsLock"].includes(event.key)) Handles.suppress();
+    if (!["Meta", "Shift", "Alt", "Control", "CapsLock"].includes(event.key)) {
+      Handles.suppress();
+      Media.suppress();
+    }
     // Keys that pick or commit marked text belong to the input method.
     if (composing || event.isComposing) return;
     if (UI.handleKeyDown(event)) return;
@@ -4902,6 +5199,11 @@
       if (lower === "x" && event.shiftKey) {
         event.preventDefault();
         command("strikethrough");
+        return;
+      }
+      if (event.shiftKey && ALIGN_KEYS[lower]) {
+        event.preventDefault();
+        command("align", ALIGN_KEYS[lower]);
         return;
       }
       if (key === "Enter") {
@@ -5087,6 +5389,8 @@
       case "image":
         post({ type: "requestFile", kind: "image", selection: { anchor: selection.anchor, head: selection.head } });
         return true;
+      case "align":
+        return apply(planAlign(model, selection, value), { coalesce: false });
       case "indent":
         return apply(planIndent(model, selection, 1));
       case "outdent":
@@ -5125,6 +5429,7 @@
 
   function reportSelectionNow() {
     if (!active || !model || composing) return;
+    Media.selectionChanged();
     const selection = readSelection();
     if (!selection) {
       UI.selectionChanged(null);
@@ -5149,6 +5454,7 @@
       code: state.code,
       link: Boolean(state.link),
       canFormat: Boolean(unit && unit.kind === "inline"),
+      align: alignmentOf(unitAt(model, selection.from, "right")),
       v: version,
       focused: document.activeElement === root,
       cell: Boolean(unit && unit.role === "cell"),
@@ -5683,7 +5989,7 @@
   // Menu ----------------------------------------------------------------
 
   /// A list of choices with keyboard and pointer selection: the slash menu, the block menu and its
-  /// Turn Into submenu, wikilinks, callout kinds, table actions and code languages. An item is
+  /// Turn Into and Align submenus, wikilinks, callout kinds, table actions and code languages. An item is
   /// { id, label, icon | tag, hint, checked, destructive, keywords, group, submenu } or
   /// { separator: true }. With `ranked`, items arrive already ranked for the query.
   function createMenu(options) {
@@ -5753,6 +6059,8 @@
       let group = null;
       // A menu of plain names (code languages) starts its labels at the row's edge.
       const glyphs = state.visible.some((item) => item.icon || item.tag);
+      // In a list of values every row keeps the check's room, so its hints and labels never shift.
+      const checkable = state.visible.some((item) => item.checked);
       state.visible.forEach((item, index) => {
         if (item.separator) {
           if (query || index === 0 || index === state.visible.length - 1) return;
@@ -5795,9 +6103,9 @@
           hint.textContent = item.hint;
           row.appendChild(hint);
         }
-        if (item.checked) {
+        if (item.checked || checkable) {
           const check = document.createElement("span");
-          check.className = "mk-row-check";
+          check.className = item.checked ? "mk-row-check" : "mk-row-check mk-row-unchecked";
           check.appendChild(icon("checkmark", "small"));
           row.appendChild(check);
         }
@@ -5875,6 +6183,8 @@
     };
 
     const open = (items, rect, settings = {}) => {
+      // A menu that lists different things names what it lists this time.
+      element.setAttribute("aria-label", settings.label || options.label || "Menu");
       state.items = items;
       state.query = settings.query || "";
       const checked = items.findIndex((item) => item.checked);
@@ -6087,6 +6397,17 @@
     { id: "callout", label: "Callout", icon: "text.bubble" }
   ];
 
+  const ALIGN_CHOICES = [
+    { id: "left", label: "Left", icon: "text.alignleft", hint: "⇧⌘L" },
+    { id: "center", label: "Center", icon: "text.aligncenter", hint: "⇧⌘E" },
+    { id: "right", label: "Right", icon: "text.alignright", hint: "⇧⌘R" }
+  ];
+
+  /// The alignments as menu rows, the block's own checked.
+  function alignChoices(current) {
+    return ALIGN_CHOICES.map((item) => ({ ...item, checked: item.id === current }));
+  }
+
   const CALLOUT_KINDS = [
     { id: "note", label: "Note", icon: "info.circle" },
     { id: "tip", label: "Tip", icon: "lightbulb" },
@@ -6135,6 +6456,22 @@
     if (id === "paragraph" && (current === "toggle" || current === "quote" || current === "callout")) return true;
     const next = readSelection() || selection;
     return apply(planBlockType(model, next, id), meta);
+  }
+
+  /// How a handle's block is aligned: a paragraph's or heading's own, an alignment div's; null for
+  /// any other block.
+  function targetAlignment(target) {
+    const block = target.kind === "block" ? target.block : null;
+    if (!block || !["paragraph", "heading", "align"].includes(block.type)) return null;
+    return alignmentOf(unitsOf(block).find(isAlignable));
+  }
+
+  /// Aligns a handle's block, an alignment div with all it holds; a caret in it stays where it was.
+  function alignTarget(target, align) {
+    const range = withOrder(bStart(target.block), bEnd(target.block));
+    const selection = readSelection() || lastSelection;
+    const keep = selection && selection.from >= range.from && selection.to <= range.to ? selection : caretAt(range.from);
+    return apply(planAlign(model, range, align, keep), { coalesce: false });
   }
 
   function blockTarget(target) {
@@ -6233,6 +6570,23 @@
     if (name === "up") return moveTarget(target, -1);
     if (name === "down") return moveTarget(target, 1);
     return false;
+  }
+
+  /// A 28 pt toolbar button holding one glyph; it never takes focus, so the text keeps its selection.
+  function button(name, label, shortcut, onPress) {
+    const element = document.createElement("button");
+    element.type = "button";
+    element.className = "mk-tool";
+    element.tabIndex = -1;
+    element.title = shortcut ? `${label} (${shortcut})` : label;
+    element.setAttribute("aria-label", label);
+    element.appendChild(icon(name, "tool"));
+    element.addEventListener("mousedown", (event) => event.preventDefault());
+    element.addEventListener("click", (event) => {
+      event.preventDefault();
+      onPress(element);
+    });
+    return element;
   }
 
   // Block handles ------------------------------------------------------------
@@ -6636,6 +6990,314 @@
     };
   })();
 
+  // Media: alignment and size ----------------------------------------------------
+
+  const MEDIA = "img[data-mk-atom], video[data-mk-atom], audio[data-mk-atom]";
+
+  /// The image, video or audio player the selection holds and nothing else, or null.
+  function selectedMediaElement() {
+    const selection = window.getSelection();
+    if (!selection.rangeCount || selection.isCollapsed) return null;
+    const range = selection.getRangeAt(0);
+    if (range.startContainer !== range.endContainer || range.endOffset !== range.startOffset + 1) return null;
+    const node = range.startContainer.childNodes[range.startOffset];
+    return node && node.nodeType === ELEMENT && node.matches(MEDIA) && root.contains(node) ? node : null;
+  }
+
+  /// Where an image, video or audio element on the page is written (`mediaAt`), or null.
+  function mediaOfElement(element) {
+    if (!element || !element.isConnected) return null;
+    const unitElement = unitElementFor(element);
+    const unit = unitForElement(unitElement);
+    if (!unit) return null;
+    const v = visibleOffsetOf(unitElement, element, 0);
+    const atom = visibleMap(model, unit).segments.find((segment) => segment.atom && segment.v === v);
+    return atom ? mediaAt(model, rawOf(unit, atom.s)) : null;
+  }
+
+  /// The image, video or audio element written at `raw`, once the page shows it.
+  function mediaElementAt(raw) {
+    const point = rawToDom(raw, "right");
+    const node = point ? point.node.childNodes[point.offset] : null;
+    return node && node.nodeType === ELEMENT && node.matches(MEDIA) ? node : null;
+  }
+
+  /// Over the image, video or audio player under the pointer, or selected, a bar of its block's
+  /// alignments; on an image's or video's sides two handles that resize it. Dragged, a handle resizes
+  /// the media at once and shows its size under it (a centred one grows from both sides, so its edge
+  /// follows the pointer), and letting go writes the width as one patch; a double-click on a handle
+  /// gives the media its file's own size again.
+  const Media = (() => {
+    // The narrowest a drag makes an image or video, unless it is narrower already.
+    const MIN_WIDTH = 80;
+    let bar = null;
+    let alignButtons = null;
+    let grips = [];
+    let readout = null;
+    // The media shown, and whether the selection holds it (then it stays without the pointer).
+    let current = null;
+    let leaveTimer = 0;
+    let drag = null;
+
+    function build() {
+      if (bar) return;
+      ensureLayer();
+      bar = document.createElement("div");
+      bar.className = "mk-floating mk-toolbar mk-media-bar mk-hidden";
+      bar.setAttribute("role", "toolbar");
+      bar.setAttribute("aria-label", "Media");
+      alignButtons = {
+        left: button("text.alignleft", "Align left", "⇧⌘L", () => align("left")),
+        center: button("text.aligncenter", "Center", "⇧⌘E", () => align("center")),
+        right: button("text.alignright", "Align right", "⇧⌘R", () => align("right"))
+      };
+      bar.append(alignButtons.left, alignButtons.center, alignButtons.right);
+      grips = ["left", "right"].map((side) => {
+        const grip = document.createElement("div");
+        grip.className = "mk-resize-handle";
+        grip.dataset.side = side;
+        grip.addEventListener("mousedown", (event) => startResize(event, side));
+        grip.addEventListener("dblclick", (event) => {
+          event.preventDefault();
+          originalSize();
+        });
+        return grip;
+      });
+      readout = document.createElement("div");
+      readout.className = "mk-tooltip";
+      layer.append(bar, ...grips, readout);
+      for (const element of [bar, ...grips]) element.addEventListener("mouseenter", cancelLeave);
+    }
+
+    function onPointerMove(event) {
+      if (!active || drag) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target && target.closest(".mk-media-bar, .mk-resize-handle")) return;
+      const element = target && root.contains(target) ? target.closest(MEDIA) : null;
+      if (element) reveal(element, false);
+      else if (current && !current.selected) scheduleLeave();
+    }
+
+    function selectionChanged() {
+      const element = selectedMediaElement();
+      if (element) {
+        reveal(element, true);
+      } else if (current && current.selected) {
+        current.selected = false;
+        scheduleLeave();
+      }
+    }
+
+    /// The pointer has a moment to cross from the media to its bar.
+    function scheduleLeave() {
+      if (leaveTimer) return;
+      leaveTimer = window.setTimeout(() => {
+        leaveTimer = 0;
+        const hovered = current && [current.element, bar, ...grips].some((element) => element.matches(":hover"));
+        if (current && !current.selected && !hovered) conceal();
+      }, 250);
+    }
+
+    function cancelLeave() {
+      window.clearTimeout(leaveTimer);
+      leaveTimer = 0;
+    }
+
+    function reveal(element, selected) {
+      build();
+      cancelLeave();
+      if (current && current.element === element) {
+        current.selected = current.selected || selected;
+        return;
+      }
+      const media = mediaOfElement(element);
+      if (!media) {
+        conceal();
+        return;
+      }
+      current = { element, selected };
+      const alignment = alignmentOf(media.unit);
+      for (const [value, control] of Object.entries(alignButtons)) {
+        control.classList.toggle("mk-on", value === alignment);
+        control.setAttribute("aria-pressed", value === alignment ? "true" : "false");
+      }
+      // An image in a list item or a table cell has no alignment of its own: only its handles show.
+      if (alignment) show(bar);
+      else hide(bar);
+      const resizable = element.tagName !== "AUDIO";
+      for (const grip of grips) grip.classList.toggle("mk-visible", resizable);
+      position();
+    }
+
+    function conceal() {
+      cancelLeave();
+      current = null;
+      if (!bar) return;
+      hide(bar);
+      for (const grip of grips) grip.classList.remove("mk-visible");
+    }
+
+    /// The bar inside a picture's top-right corner when there is room, above a smaller one and an
+    /// audio player, whose controls fill it; the handles on the media's sides, centred on its height.
+    function position() {
+      if (!current) return;
+      const element = current.element;
+      if (!element.isConnected) {
+        conceal();
+        return;
+      }
+      const rect = element.getBoundingClientRect();
+      const z = zoom();
+      const inset = 8 * z;
+      const width = bar.offsetWidth;
+      const height = bar.offsetHeight;
+      const inside = element.tagName !== "AUDIO" && rect.width >= width + 2 * inset && rect.height >= 3 * height;
+      let top = inside ? rect.top + inset : rect.top - height - 6 * z;
+      if (!inside && top < inset) top = rect.bottom + 6 * z;
+      const left = Math.max(inset, Math.min(rect.right - width - (inside ? inset : 0), document.documentElement.clientWidth - width - inset));
+      bar.style.left = `${Math.round(left + window.scrollX)}px`;
+      bar.style.top = `${Math.round(top + window.scrollY)}px`;
+      for (const grip of grips) {
+        const gripHeight = Math.min(48 * z, Math.max(16 * z, rect.height * 0.4));
+        const x = grip.dataset.side === "left" ? rect.left + 2 * z : rect.right - 2 * z - grip.offsetWidth;
+        grip.style.height = `${Math.round(gripHeight)}px`;
+        grip.style.left = `${Math.round(x + window.scrollX)}px`;
+        grip.style.top = `${Math.round(rect.top + rect.height / 2 - gripHeight / 2 + window.scrollY)}px`;
+      }
+    }
+
+    function align(value) {
+      const media = current && mediaOfElement(current.element);
+      if (!media) return;
+      root.focus({ preventScroll: true });
+      // The media stays selected, so its bar shows the new alignment.
+      apply(planAlign(model, withOrder(media.from, media.to), value), { coalesce: false });
+    }
+
+    function originalSize() {
+      const media = current && mediaOfElement(current.element);
+      if (!media) return;
+      root.focus({ preventScroll: true });
+      if (apply(planMediaWidth(model, media.from, 0), { coalesce: false })) showAgain(media.from);
+    }
+
+    /// After an edit draws the media again, its bar and handles follow the new element.
+    function showAgain(raw) {
+      const selected = Boolean(current && current.selected);
+      conceal();
+      const element = mediaElementAt(raw);
+      if (element) reveal(element, selected);
+    }
+
+    /// The width of the column the media sits in: the most a drag makes it.
+    function columnWidth(element) {
+      let block = element.parentElement;
+      while (block && block !== root && window.getComputedStyle(block).display.startsWith("inline")) block = block.parentElement;
+      return block ? block.clientWidth : 0;
+    }
+
+    function startResize(event, side) {
+      if (event.button !== 0 || !current) return;
+      event.preventDefault();
+      const media = mediaOfElement(current.element);
+      if (!media) return;
+      const element = current.element;
+      const rect = element.getBoundingClientRect();
+      drag = {
+        element,
+        side,
+        from: media.from,
+        startX: event.clientX,
+        startWidth: Math.round(rect.width),
+        width: Math.round(rect.width),
+        ratio: rect.height / rect.width,
+        factor: alignmentOf(media.unit) === "center" ? 2 : 1,
+        min: Math.min(MIN_WIDTH, rect.width),
+        max: Math.max(rect.width, columnWidth(element))
+      };
+      document.documentElement.classList.add("mk-resizing");
+      for (const grip of grips) grip.classList.toggle("mk-on", grip.dataset.side === side);
+      hide(bar);
+      Handles.hide();
+      UI.closeTransient();
+      document.addEventListener("mousemove", onDrag, true);
+      document.addEventListener("mouseup", onDrop, true);
+      document.addEventListener("keydown", onDragKey, true);
+    }
+
+    function onDrag(event) {
+      // The block handles do not follow the pointer while it resizes.
+      event.stopPropagation();
+      const delta = (event.clientX - drag.startX) * (drag.side === "right" ? 1 : -1) * drag.factor;
+      drag.width = Math.round(Math.max(drag.min, Math.min(drag.max, drag.startWidth + delta)));
+      drag.element.style.width = `${drag.width}px`;
+      readout.textContent = `${drag.width} × ${Math.round(drag.width * drag.ratio)}`;
+      readout.classList.add("mk-visible");
+      position();
+      placeReadout();
+    }
+
+    /// The size, centred under the media; inside its bottom edge where the window ends.
+    function placeReadout() {
+      const rect = drag.element.getBoundingClientRect();
+      const z = zoom();
+      const height = readout.offsetHeight;
+      let top = rect.bottom + 6 * z;
+      if (top + height > window.innerHeight - 8 * z) top = rect.bottom - height - 8 * z;
+      readout.style.left = `${Math.round(rect.left + rect.width / 2 - readout.offsetWidth / 2 + window.scrollX)}px`;
+      readout.style.top = `${Math.round(top + window.scrollY)}px`;
+    }
+
+    function onDrop(event) {
+      event.stopPropagation();
+      finishResize(true);
+    }
+
+    function onDragKey(event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      finishResize(false);
+    }
+
+    function finishResize(commit) {
+      if (!drag) return;
+      const state = drag;
+      drag = null;
+      document.removeEventListener("mousemove", onDrag, true);
+      document.removeEventListener("mouseup", onDrop, true);
+      document.removeEventListener("keydown", onDragKey, true);
+      document.documentElement.classList.remove("mk-resizing");
+      readout.classList.remove("mk-visible");
+      for (const grip of grips) grip.classList.remove("mk-on");
+      state.element.style.width = "";
+      if (commit && state.width !== state.startWidth) {
+        root.focus({ preventScroll: true });
+        apply(planMediaWidth(model, state.from, state.width), { coalesce: false });
+      }
+      showAgain(state.from);
+    }
+
+    return {
+      onPointerMove,
+      selectionChanged,
+      reposition() {
+        position();
+        if (drag) placeReadout();
+      },
+      afterEdit() {
+        if (current && !current.element.isConnected) conceal();
+      },
+      suppress() {
+        if (current && !current.selected) conceal();
+      },
+      cancel() {
+        finishResize(false);
+        conceal();
+      }
+    };
+  })();
+
   const UI = (() => {
     let slashMenu = null;
     let slash = null;
@@ -6647,10 +7309,10 @@
     let blockMenu = null;
     let blockMenuTarget = null;
     let pickedElement = null;
-    let turnIntoMenu = null;
-    let turnContext = null;
-    // The pointer on its way from Turn into to its submenu crosses other rows: the submenu waits
-    // this long before it closes for them, and stays once the pointer reaches it.
+    let choiceMenu = null;
+    let choiceContext = null;
+    // The pointer on its way from Turn into or Align to its submenu crosses other rows: the submenu
+    // waits this long before it closes for them, and stays once the pointer reaches it.
     let submenuCloseTimer = 0;
     let calloutMenu = null;
     let calloutUnit = null;
@@ -6662,6 +7324,8 @@
     let formatBar = null;
     let formatButtons = {};
     let turnIntoButton = null;
+    let alignButton = null;
+    let alignGlyph = null;
     let linkCard = null;
     let linkCardAnchor = null;
     let linkEditor = null;
@@ -6712,54 +7376,67 @@
         emptyText: "No matching actions",
         searchItems: (items) => [
           ...items.filter((item) => !item.separator && !item.submenu),
-          ...(items.some((item) => item.submenu) ? TURN_INTO.map((item) => ({ ...item, id: `turn:${item.id}`, label: `Turn into ${item.label}`, keywords: [item.label] })) : [])
+          ...(items.some((item) => item.id === "turnInto") ? TURN_INTO.map((item) => ({ ...item, id: `turn:${item.id}`, label: `Turn into ${item.label}`, keywords: [item.label] })) : []),
+          ...(items.some((item) => item.id === "align") ? ALIGN_CHOICES.map((item) => ({ ...item, id: `align:${item.id}`, label: `Align ${item.label.toLowerCase()}`, keywords: [item.label] })) : [])
         ],
-        onSubmenu: (item, row, pointer) => openTurnIntoForBlock(row, pointer),
+        onSubmenu: (item, row, pointer) => (item.id === "align" ? openAlignForBlock(row, pointer) : openTurnIntoForBlock(row, pointer)),
         onHoverRow: (item) => {
-          if (item.submenu || !turnIntoMenu.isOpen) {
+          if (item.submenu || !choiceMenu.isOpen) {
             cancelSubmenuClose();
             return;
           }
           if (submenuCloseTimer) return;
           submenuCloseTimer = window.setTimeout(() => {
             submenuCloseTimer = 0;
-            turnIntoMenu.close("back");
+            choiceMenu.close("back");
           }, 120);
         },
         onQuery: () => {
-          if (turnIntoMenu.isOpen) turnIntoMenu.close("back");
+          if (choiceMenu.isOpen) choiceMenu.close("back");
         },
         onFieldKey: (event) => {
-          if (!turnIntoMenu.isOpen) return false;
-          if (turnIntoMenu.handleNavigation(event)) return true;
+          if (!choiceMenu.isOpen) return false;
+          if (choiceMenu.handleNavigation(event)) return true;
           if (event.key === "ArrowLeft" || event.key === "Escape") {
             event.preventDefault();
-            turnIntoMenu.close("back");
+            choiceMenu.close("back");
             return true;
           }
-          // → is the submenu's already: it must not choose Turn into again under it.
+          // → is the submenu's already: it must not choose the submenu's row again under it.
           if (event.key === "ArrowRight") {
             event.preventDefault();
             return true;
           }
           return false;
         },
-        keepsFocus: () => turnIntoMenu.isOpen,
+        keepsFocus: () => choiceMenu.isOpen,
         onChoose: (item) => runBlockAction(item.id),
         onClose: (reason) => {
-          if (turnIntoMenu.isOpen && reason !== "choose") turnIntoMenu.close("parent");
+          if (choiceMenu.isOpen && reason !== "choose") choiceMenu.close("parent");
           endBlockMenu(reason);
         }
       });
-      turnIntoMenu = createMenu({
+      // Turn Into's blocks or the alignments: beside the block menu's row, or below the format bar's
+      // selector. `choiceContext.list` says which.
+      choiceMenu = createMenu({
         label: "Turn into",
         narrow: true,
         onChoose: (item) => {
-          const context = turnContext;
-          turnContext = null;
+          const context = choiceContext;
+          choiceContext = null;
           if (blockMenu.isOpen) blockMenu.close("choose");
           if (!context) return;
           root.focus({ preventScroll: true });
+          if (context.list === "align") {
+            const target = context.kind === "block" ? blockTarget(context.target) : null;
+            if (target) {
+              alignTarget(target, item.id);
+            } else if (context.kind === "selection") {
+              setSelection(context.selection.anchor, context.selection.head, { reveal: false });
+              command("align", item.id);
+            }
+            return;
+          }
           if (context.kind === "block") {
             const target = blockTarget(context.target);
             if (!target) return;
@@ -6776,10 +7453,10 @@
           cancelSubmenuClose();
           blockMenu?.closeSubmenuMark();
           if (reason === "back" || reason === "parent") return;
-          if (reason !== "choose") turnContext = null;
+          if (reason !== "choose") choiceContext = null;
         }
       });
-      turnIntoMenu.element.addEventListener("mouseenter", cancelSubmenuClose);
+      choiceMenu.element.addEventListener("mouseenter", cancelSubmenuClose);
       calloutMenu = createMenu({
         label: "Callout type",
         narrow: true,
@@ -6835,41 +7512,31 @@
       submenuCloseTimer = 0;
     }
 
-    /// One menu at a time: opening `menu` closes every other one and the link field. (Turn Into
-    /// opened from the block menu is its submenu and leaves it open.)
+    /// One menu at a time: opening `menu` closes every other one and the link field. (Turn Into or
+    /// Align opened from the block menu is its submenu and leaves it open.)
     function closeMenusFor(menu) {
-      for (const other of [blockMenu, turnIntoMenu, calloutMenu, languageMenu, tableMenu, slashMenu]) {
+      for (const other of [blockMenu, choiceMenu, calloutMenu, languageMenu, tableMenu, slashMenu]) {
         if (other !== menu) other.close("menu");
       }
       if (menu !== wikilinkMenu) endWikilink("menu");
       closeLinkEditor(false);
     }
 
-    function button(name, label, shortcut, onPress) {
-      const element = document.createElement("button");
-      element.type = "button";
-      element.className = "mk-tool";
-      element.tabIndex = -1;
-      element.title = shortcut ? `${label} (${shortcut})` : label;
-      element.setAttribute("aria-label", label);
-      element.appendChild(icon(name, "tool"));
-      element.addEventListener("mousedown", (event) => event.preventDefault());
-      element.addEventListener("click", (event) => {
-        event.preventDefault();
-        onPress(element);
-      });
-      return element;
-    }
-
-    function menuButton(text, onPress) {
+    /// A button that opens a menu: a word, or a glyph, and a chevron.
+    function menuButton(face, onPress) {
       const element = document.createElement("button");
       element.type = "button";
       element.className = "mk-tool mk-tool-menu";
       element.tabIndex = -1;
       element.setAttribute("aria-haspopup", "listbox");
-      const label = document.createElement("span");
-      label.className = "mk-tool-label";
-      label.textContent = text;
+      let label = face;
+      if (typeof face === "string") {
+        label = document.createElement("span");
+        label.className = "mk-tool-label";
+        label.textContent = face;
+      } else {
+        element.classList.add("mk-tool-glyph-menu");
+      }
       const chevron = document.createElement("span");
       chevron.className = "mk-tool-chevron";
       chevron.appendChild(icon("chevron.down", "small"));
@@ -6897,13 +7564,25 @@
       turnIntoButton = menuButton("Text", (element) => {
         const selection = lastSelection;
         if (!selection) return;
-        closeMenusFor(turnIntoMenu);
-        turnContext = { kind: "selection", selection: { anchor: selection.anchor, head: selection.head } };
+        closeMenusFor(choiceMenu);
+        choiceContext = { kind: "selection", selection: { anchor: selection.anchor, head: selection.head } };
         const current = lastState ? lastState.block : "paragraph";
-        turnIntoMenu.open(TURN_INTO.map((item) => ({ ...item, checked: item.id === current })), element.getBoundingClientRect(), { preference: "below", align: "start", animate: true, owner: element });
+        choiceMenu.open(TURN_INTO.map((item) => ({ ...item, checked: item.id === current })), element.getBoundingClientRect(), { preference: "below", align: "start", animate: true, owner: element, label: "Turn into" });
       });
       turnIntoButton.title = "Turn into";
       formatBar.appendChild(turnIntoButton);
+      // The block's alignment shows as its glyph; its menu lists the three.
+      alignGlyph = icon("text.alignleft", "tool");
+      alignButton = menuButton(alignGlyph, (element) => {
+        const selection = lastSelection;
+        if (!selection) return;
+        closeMenusFor(choiceMenu);
+        choiceContext = { kind: "selection", list: "align", selection: { anchor: selection.anchor, head: selection.head } };
+        choiceMenu.open(alignChoices(lastState && lastState.align), element.getBoundingClientRect(), { preference: "below", align: "start", animate: true, owner: element, label: "Align" });
+      });
+      alignButton.title = "Align";
+      alignButton.setAttribute("aria-label", "Align");
+      formatBar.appendChild(alignButton);
       formatBar.appendChild(divider());
       formatButtons.strong = button("bold", "Bold", "⌘B", () => command("bold"));
       formatButtons.em = button("italic", "Italic", "⌘I", () => command("italic"));
@@ -7217,6 +7896,8 @@
       const last = target.kind === "item" ? target.list.items.indexOf(target.item) === target.list.items.length - 1 : target.index === model.blocks.length - 1;
       const items = [];
       if (canTurn) items.push({ id: "turnInto", label: "Turn into", icon: "arrow.triangle.2.circlepath", submenu: true });
+      const alignment = targetAlignment(target);
+      if (alignment) items.push({ id: "align", label: "Align", icon: ALIGN_CHOICES.find((choice) => choice.id === alignment).icon, submenu: true });
       items.push({ id: "duplicate", label: "Duplicate", icon: "plus.square.on.square", hint: "⌘D" });
       items.push({ id: "copy", label: "Copy", icon: "doc.on.doc" });
       if (!first || !last) items.push({ separator: true });
@@ -7234,12 +7915,21 @@
       const target = blockTarget(blockMenuTarget);
       if (!target) return;
       cancelSubmenuClose();
-      turnContext = { kind: "block", target };
+      choiceContext = { kind: "block", target };
       const caret = targetCaret(target);
       const unit = caret ? unitAt(model, caret.head, "right") : null;
       const current = blockTypeOf(unit);
       const items = TURN_INTO.map((item) => ({ ...item, checked: item.id === current }));
-      turnIntoMenu.open(items, row.getBoundingClientRect(), { preference: "right", animate, follow: () => (row.isConnected ? row.getBoundingClientRect() : null) });
+      choiceMenu.open(items, row.getBoundingClientRect(), { preference: "right", animate, label: "Turn into", follow: () => (row.isConnected ? row.getBoundingClientRect() : null) });
+    }
+
+    /// Align beside the block menu's row, as Turn Into opens.
+    function openAlignForBlock(row, animate) {
+      const target = blockTarget(blockMenuTarget);
+      if (!target) return;
+      cancelSubmenuClose();
+      choiceContext = { kind: "block", list: "align", target };
+      choiceMenu.open(alignChoices(targetAlignment(target)), row.getBoundingClientRect(), { preference: "right", animate, label: "Align", follow: () => (row.isConnected ? row.getBoundingClientRect() : null) });
     }
 
     function endBlockMenu(reason) {
@@ -7265,6 +7955,10 @@
         const caret = targetCaret(target);
         if (caret) setSelection(caret.anchor, caret.head, { reveal: false });
         turnInto(id.slice(5), readSelection() || caret);
+        return;
+      }
+      if (id.startsWith("align:")) {
+        alignTarget(target, id.slice(6));
         return;
       }
       switch (id) {
@@ -7358,6 +8052,8 @@
       if (!active || formatBarSuppressed || slash || wikilink || blockMenu.isOpen || Handles.dragging) return;
       const selection = readSelection();
       if (!selection || selection.from === selection.to) return;
+      // A selected image, video or audio player has the media bar instead.
+      if (selectedMediaElement()) return;
       const first = unitAt(model, selection.from, "right");
       const last = unitAt(model, selection.to, "left");
       if (!first || !last) return;
@@ -7384,11 +8080,14 @@
       }
       turnIntoButton.querySelector(".mk-tool-label").textContent = BLOCK_NAMES[report.block] || "Text";
       turnIntoButton.disabled = report.block === "table";
+      alignButton.disabled = !report.align;
+      alignGlyph.dataset.mkIcon = `tool:${ALIGN_CHOICES.find((choice) => choice.id === (report.align || "left")).icon}`;
+      applyIcon(alignGlyph);
     }
 
     function hideFormatBar() {
       if (formatBar) hide(formatBar);
-      if (turnIntoMenu && turnIntoMenu.isOpen && turnContext && turnContext.kind === "selection") turnIntoMenu.close("hide");
+      if (choiceMenu && choiceMenu.isOpen && choiceContext && choiceContext.kind === "selection") choiceMenu.close("hide");
     }
 
     // Link card and editor ------------------------------------------------
@@ -7560,16 +8259,16 @@
 
     function handleKeyDown(event) {
       build();
-      for (const menu of [turnIntoMenu, calloutMenu, slashMenu, wikilinkMenu, tableMenu]) {
+      for (const menu of [choiceMenu, calloutMenu, slashMenu, wikilinkMenu, tableMenu]) {
         if (!menu.isOpen) continue;
         if (menu.handleNavigation(event)) return true;
-        if (event.key === "Escape" || (menu === turnIntoMenu && event.key === "ArrowLeft" && blockMenu.isOpen)) {
+        if (event.key === "Escape" || (menu === choiceMenu && event.key === "ArrowLeft" && blockMenu.isOpen)) {
           event.preventDefault();
-          menu.close(menu === turnIntoMenu && blockMenu.isOpen ? "back" : "escape");
-          if (menu === turnIntoMenu && blockMenu.isOpen) blockMenu.focusField();
+          menu.close(menu === choiceMenu && blockMenu.isOpen ? "back" : "escape");
+          if (menu === choiceMenu && blockMenu.isOpen) blockMenu.focusField();
           return true;
         }
-        if (menu === turnIntoMenu || menu === calloutMenu || menu === tableMenu) {
+        if (menu === choiceMenu || menu === calloutMenu || menu === tableMenu) {
           // A pointer-opened menu takes the keys meant for it and lets typing close it.
           menu.close("typing");
         }
@@ -7601,7 +8300,7 @@
       if (!slashMenu) return;
       slashMenu.close("blur");
       endWikilink("blur");
-      turnIntoMenu.close("blur");
+      choiceMenu.close("blur");
       calloutMenu.close("blur");
       tableMenu.close("blur");
       if (blockMenu.isOpen && !blockMenu.element.contains(document.activeElement)) blockMenu.close("blur");
@@ -7645,8 +8344,9 @@
       if (tableUnit && visible(tableBar)) placeTableBar();
       if (slashMenu.isOpen) slashMenu.reposition(caretRect());
       if (wikilinkMenu.isOpen) wikilinkMenu.reposition(caretRect());
-      // Turn Into last: it sits beside the block menu's row, or below the format bar's selector.
-      for (const menu of [blockMenu, calloutMenu, languageMenu, tableMenu, turnIntoMenu]) menu.reposition();
+      // Turn Into or Align last: it sits beside the block menu's row, or below the format bar's
+      // selector.
+      for (const menu of [blockMenu, calloutMenu, languageMenu, tableMenu, choiceMenu]) menu.reposition();
     }
 
     return {
@@ -7668,7 +8368,7 @@
       get blockMenuOpen() { return Boolean(blockMenu && blockMenu.isOpen); },
       get anyMenuOpen() {
         if (!slashMenu) return false;
-        return [slashMenu, wikilinkMenu, blockMenu, turnIntoMenu, calloutMenu, languageMenu, tableMenu].some((menu) => menu.isOpen)
+        return [slashMenu, wikilinkMenu, blockMenu, choiceMenu, calloutMenu, languageMenu, tableMenu].some((menu) => menu.isOpen)
           || linkEditor.classList.contains("mk-visible");
       }
     };

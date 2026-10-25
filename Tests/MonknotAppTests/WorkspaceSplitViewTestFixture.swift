@@ -6,6 +6,19 @@ import XCTest
 
 @MainActor
 class WorkspaceSplitViewTestCase: XCTestCase {
+    /// A split mounted through SwiftUI saves its dividers under the app's own autosave name, which the
+    /// whole test process shares: each test starts with none saved, as the app's first window does,
+    /// and leaves none for the next.
+    override func setUp() async throws {
+        try await super.setUp()
+        removeSplitAutosaveDefaults(named: WorkspaceSplitMetrics.autosaveName)
+    }
+
+    override func tearDown() async throws {
+        removeSplitAutosaveDefaults(named: WorkspaceSplitMetrics.autosaveName)
+        try await super.tearDown()
+    }
+
     func makeController(
         sidebarPresented: Bool = true,
         terminalPresented: Bool = true,

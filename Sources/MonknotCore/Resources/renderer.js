@@ -29,6 +29,14 @@
   const RE_DETAILS_CLOSE = /^ {0,3}<\/details>\s*$/i;
   const RE_SUMMARY = /^(\s*<summary>)(.*?)<\/summary>\s*$/i;
   const RE_TOC = /^ {0,3}\[toc\]\s*$/i;
+  // Blocks between `<div align="center">` (or "right") and `</div>` are aligned, as GitHub renders
+  // them; the blank lines inside let GitHub read the Markdown between. Any `<div>` line nests.
+  const RE_ALIGN_OPEN = /^ {0,3}<div\s+align=(["']?)(left|center|right)\1\s*>\s*$/i;
+  const RE_DIV_OPEN = /^ {0,3}<div(?:\s[^>]*)?>\s*$/i;
+  const RE_DIV_CLOSE = /^ {0,3}<\/div>\s*$/i;
+  // A width after a bar at the end of an image's alt text sizes it, as Obsidian writes it:
+  // `![Diagram|480](diagram.png)`, or `|480x270`, whose height the image's own proportions replace.
+  const RE_MEDIA_WIDTH = /(?<!\\)\|(\d+)(?:x\d+)?$/;
   const RE_FENCE_MARKER = /^ {0,3}(`{3,}|~{3,})(.*)$/;
   const RE_VIDEO = /\.(mp4|m4v|mov|webm)(?:[?#].*)?$/i;
   const RE_AUDIO = /\.(mp3|m4a|aac|wav|aiff?|caf|flac|ogg|oga)(?:[?#].*)?$/i;
@@ -160,6 +168,7 @@
       || isListLine(text)
       || isTableStart(reader, index)
       || RE_DETAILS_OPEN.test(text)
+      || RE_ALIGN_OPEN.test(text)
       || RE_TOC.test(text)
       || (context.definitions && definitionOf(text) !== null);
   }
@@ -218,6 +227,9 @@
       const toggle = parseToggle(reader, index, context, Boolean(details[1]));
       if (toggle) return toggle;
     }
+
+    const align = RE_ALIGN_OPEN.exec(text);
+    if (align) return parseAlign(reader, index, context, align[2].toLowerCase());
 
     const heading = RE_HEADING.exec(text);
     if (heading) {
@@ -334,33 +346,9 @@
     if (!summaryView) return null;
     const summary = RE_SUMMARY.exec(summaryView.text);
     if (!summary) return null;
-    let depth = 1;
-    let cursor = index + 2;
-    const body = [];
-    let close = null;
-    let fence = null;
-    while (reader.at(cursor)) {
-      const view = reader.at(cursor);
-      const marker = RE_FENCE_MARKER.exec(view.text);
-      if (fence) {
-        if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
-      } else if (marker) {
-        fence = marker[1];
-      } else if (RE_DETAILS_OPEN.test(view.text)) {
-        depth += 1;
-      } else if (RE_DETAILS_CLOSE.test(view.text)) {
-        depth -= 1;
-        if (depth === 0) {
-          close = view;
-          cursor += 1;
-          break;
-        }
-      }
-      body.push(view);
-      cursor += 1;
-    }
     // Without `</details>` the toggle runs to the end, as HTML closes it there. That also keeps an
     // edit's effect local: typing the closing line never changes how lines far above it parse.
+    const { body, close, next } = containerBody(reader, index + 2, RE_DETAILS_OPEN, RE_DETAILS_CLOSE);
     const summaryStart = summaryView.start + summary[1].length;
     const childContext = {
       ...context,
@@ -386,8 +374,67 @@
         end: close ? close.end : (body.length ? body[body.length - 1].end : summaryView.end),
         line: open.line
       },
-      next: cursor
+      next
     };
+  }
+
+  /// `<div align="…">`, a body and `</div>`: blocks aligned left, centre or right. Like a toggle, it
+  /// runs to the end when nothing closes it.
+  function parseAlign(reader, index, context, align) {
+    const open = reader.at(index);
+    const { body, close, next } = containerBody(reader, index + 1, RE_DIV_OPEN, RE_DIV_CLOSE);
+    const childContext = {
+      ...context,
+      definitions: false,
+      top: false,
+      separators: true,
+      virtual: body.length === 0 ? { anchor: open.end, before: "\n\n", after: "\n" } : null
+    };
+    const children = parseBlockList(arrayReader(body), childContext, false).blocks;
+    return {
+      block: {
+        type: "align",
+        align,
+        openView: open,
+        body,
+        children,
+        close,
+        start: open.start,
+        end: close ? close.end : (body.length ? body[body.length - 1].end : open.end),
+        line: open.line
+      },
+      next
+    };
+  }
+
+  /// The body of an HTML container from line `cursor`: the lines up to the one closing it, where
+  /// `opens` and `closes` count nesting outside fenced code. `close` is null when nothing closes it.
+  function containerBody(reader, cursor, opens, closes) {
+    let depth = 1;
+    const body = [];
+    let close = null;
+    let fence = null;
+    while (reader.at(cursor)) {
+      const view = reader.at(cursor);
+      const marker = RE_FENCE_MARKER.exec(view.text);
+      if (fence) {
+        if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+      } else if (marker) {
+        fence = marker[1];
+      } else if (opens.test(view.text)) {
+        depth += 1;
+      } else if (closes.test(view.text)) {
+        depth -= 1;
+        if (depth === 0) {
+          close = view;
+          cursor += 1;
+          break;
+        }
+      }
+      body.push(view);
+      cursor += 1;
+    }
+    return { body, close, next: cursor };
   }
 
   function indentWidth(whitespace) {
@@ -610,7 +657,8 @@
     for (let index = first; index < count; index += 1) {
       const block = emptyBlock(blanks[index], position, context);
       block.needsSeparatorBefore = blocks.length > 0 && index === 0;
-      block.needsSeparatorAfter = followedByBlock && index === count - 1;
+      // In a toggle's or alignment div's body the closing line needs a blank line before it too.
+      block.needsSeparatorAfter = (followedByBlock || Boolean(context.separators)) && index === count - 1;
       blocks.push(block);
     }
   }
@@ -972,12 +1020,14 @@
       case "br":
         return { from, to, node: { t: "br", s, e } };
       case "image": {
-        const alt = group(1) ? unescapeText(textOf(state, view, group(1)[0], group(1)[1])) : "";
+        let alt = group(1) ? textOf(state, view, group(1)[0], group(1)[1]) : "";
+        const size = RE_MEDIA_WIDTH.exec(alt);
+        if (size) alt = alt.slice(0, size.index);
         const url = unescapeText(textOf(state, view, group(2)[0], group(2)[1]));
         const title = group(3) ? unescapeText(textOf(state, view, group(3)[0], group(3)[1])) : "";
         const safe = sanitizeURL(url, true);
         if (!safe && context.editing) return null;
-        return { from, to, node: { t: "img", s, e, src: safe, alt, title } };
+        return { from, to, node: { t: "img", s, e, src: safe, alt: unescapeText(alt), title, width: size ? Number(size[1]) : 0 } };
       }
       case "link": {
         const [ls, le] = group(1);
@@ -1123,14 +1173,17 @@
         if (!node.src) return "";
         recordAtom(collector, node);
         const titleAttr = node.title ? ` title="${escapeAttr(node.title)}"` : "";
+        const audio = RE_AUDIO.test(node.src);
+        // An audio player keeps its own width.
+        const widthAttr = node.width && !audio ? ` width="${node.width}"` : "";
         // Image syntax pointing at a video or audio file plays it, as GitHub does.
-        if (RE_VIDEO.test(node.src) || RE_AUDIO.test(node.src)) {
-          const tag = RE_VIDEO.test(node.src) ? "video" : "audio";
+        if (RE_VIDEO.test(node.src) || audio) {
+          const tag = audio ? "audio" : "video";
           const extra = editing ? ` contenteditable="false" data-mk-atom` : "";
-          return `<${tag} src="${escapeAttr(node.src)}" controls preload="metadata" aria-label="${escapeAttr(node.alt || node.title || node.src)}"${extra}></${tag}>`;
+          return `<${tag} src="${escapeAttr(node.src)}" controls preload="metadata"${widthAttr} aria-label="${escapeAttr(node.alt || node.title || node.src)}"${extra}></${tag}>`;
         }
         const extra = editing ? ` data-mk-atom draggable="false"` : "";
-        return `<img src="${escapeAttr(node.src)}" alt="${escapeAttr(node.alt)}"${titleAttr}${extra}>`;
+        return `<img src="${escapeAttr(node.src)}" alt="${escapeAttr(node.alt)}"${widthAttr}${titleAttr}${extra}>`;
       }
       case "fn": {
         recordAtom(collector, node);
@@ -1332,6 +1385,15 @@
       }
       case "toggle":
         return renderToggle(block, render, container);
+      case "align": {
+        // Its units are scoped to it, as a toggle's body is: text never joins across its edges.
+        const outer = render.scope || null;
+        block.scopeParent = outer;
+        render.scope = block;
+        const inner = block.children.map((child) => renderBlock(child, render, block)).filter(Boolean).join("\n");
+        render.scope = outer;
+        return `${openTag("div", block.line, ` align="${block.align}"`)}${inner}</div>`;
+      }
       case "toc":
         return renderTableOfContents(block, render);
       case "list":
@@ -1631,7 +1693,8 @@
     isTableDelimiter,
     tableRow,
     slug,
-    // The line patterns that decide where a quote, toggle or list ends, for the editor's re-parse.
+    // The line patterns that decide where a quote, toggle, alignment div or list ends, for the
+    // editor's re-parse, and an image's width, which the editor rewrites.
     patterns: {
       quote: RE_QUOTE,
       callout: RE_CALLOUT,
@@ -1639,7 +1702,10 @@
       item: RE_ITEM,
       fenceMarker: RE_FENCE_MARKER,
       detailsOpen: RE_DETAILS_OPEN,
-      detailsClose: RE_DETAILS_CLOSE
+      detailsClose: RE_DETAILS_CLOSE,
+      divOpen: RE_DIV_OPEN,
+      divClose: RE_DIV_CLOSE,
+      mediaWidth: RE_MEDIA_WIDTH
     }
   };
   window.MonknotMarkdown = MonknotMarkdown;

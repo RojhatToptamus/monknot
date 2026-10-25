@@ -1483,6 +1483,8 @@ CommonMark with tables and task lists renders:
 | Page | a new `Name.md` beside this note, linked here as `[Name](Name.md)` | a link |
 | Link to page | `[[Title]]` | the wikilink menu |
 | Image, Video, Audio, File | `![…](…)` for media, `[…](…)` for a file, through the drop import | an image, a player, a link |
+| Alignment | `<div align="center">` or `<div align="right">`, a blank line inside each edge, around paragraphs, headings and media; left has no div | the blocks centred or right-aligned, as any Markdown reader that renders HTML draws them. Consecutive blocks of one alignment share a div; setting another alignment regroups only the blocks from the first to the last it changes, writing only div lines, so taking it away gives back the file |
+| Image and video size | a width after a bar at the end of the alt text: `![Chart\|480](chart.png)` (`\|480x270` reads as 480 wide) | the media that many pixels wide, its proportions kept, never wider than the column; a reader that does not know the bar shows it at its own size |
 | Web bookmark | `[host/path](url)` | a link |
 | Table of contents | `[TOC]` | the top-level h1–h3, indented by level, each scrolling to its heading; redrawn as headings change |
 | Date, Emoji | today's date as text; the system character palette | text |
@@ -1491,11 +1493,14 @@ CommonMark with tables and task lists renders:
 
 | Surface | Appears | Contents |
 |---|---|---|
-| Format bar | text selected with the pointer or keyboard, centred above the selection (below when there is no room) | Turn Into selector (the block's name and `chevron.down`) · bold, italic, strikethrough, inline code · link |
+| Format bar | text selected with the pointer or keyboard, centred above the selection (below when there is no room); a selected image, video or audio player has the media bar instead | Turn Into selector (the block's name and `chevron.down`) and the alignment selector (the block's alignment glyph and `chevron.down`, disabled outside paragraphs and headings) · bold, italic, strikethrough, inline code · link |
 | Slash menu | `/` at the start of a text block — an empty line, heading or list item. Never after text, in code, a table cell or a toggle title, so a `/` in a sentence stays a slash | the blocks above in four sections (Basic blocks, Media, Advanced blocks, Inline), filtered by what follows the `/`; the Markdown to type instead as a trailing hint; a footer: `↑↓` Choose `↩` Insert `Esc` Close |
 | Block handles | the pointer over a block, in its left gutter; gone while typing | + (a new line below with the slash menu open on it; ⌥ above; Esc takes the line back) and the grip (drag to move; click for the block menu). A tooltip after 450 ms names both gestures |
-| Block menu | a click on the grip, or ⌘/ at the caret | a search field, Turn into ›, Duplicate ⌘D, Copy, Move up ⇧⌘↑, Move down ⇧⌘↓, Delete; the block it acts on is tinted with the selection colour while it is open. Typing in the field lists the Turn Into targets too |
+| Block menu | a click on the grip, or ⌘/ at the caret | a search field, Turn into ›, Align › (a paragraph, heading or aligned group, its row showing the current alignment's glyph), Duplicate ⌘D, Copy, Move up ⇧⌘↑, Move down ⇧⌘↓, Delete; the block it acts on is tinted with the selection colour while it is open. Typing in the field lists the Turn Into targets and the alignments too |
 | Turn Into | the block menu's row (hover, → or ↩) or the format bar's selector | Text, Heading 1–3, the three lists, Toggle list, Code, Quote, Callout, the current one checked; beside the menu, aligned to its row |
+| Align | the block menu's row or the format bar's alignment selector, in the same place as Turn Into | Left ⇧⌘L, Center ⇧⌘E, Right ⇧⌘R with `text.alignleft`, `text.aligncenter`, `text.alignright`, the current one checked. From the block menu it aligns the whole block, an aligned group with everything in it; from the format bar, the blocks the selection reaches |
+| Media bar | the pointer over an image, video or audio player, or one selected; it waits 250 ms after the pointer leaves, so the pointer can reach it | Align left, Center, Align right, the current one on. Inside a picture's top-right corner, 8 in, when the picture is wider than the bar and three times as tall; above it otherwise, and above an audio player, whose controls fill it. Not shown for media in a list item or table cell, which have no alignment of their own. Choosing keeps the media selected |
+| Resize handles | the pointer over an image or video | a 6 wide capsule on each side, 2 in from the edge, 40 % of the media's height between 16 and 48, centred on it, in the tooltip's ink with a 1 pt ring of the page so it reads on any picture; a 14 wide target with the resize cursor |
 | Callout kind | a click on a callout's title | Note, Tip, Important, Warning, Caution |
 | Wikilink menu | `[[` in text, not in code | the workspace's Markdown notes by title, each with `doc.text`, filtered and ordered as Source's ⇥ completion (up to 12); "No matching pages" when none do, closing once the query passes three characters; ↩ or ⇥ replaces `[[` and the query with `[[Title]]` in one patch, caret after it, its own undo step "Insert Link"; `]`, `\|` or moving the caret out closes it |
 | Link card | caret inside a link | the address in 12 `ink2`, Open, Edit, Remove |
@@ -1503,27 +1508,30 @@ CommonMark with tables and task lists renders:
 | Table bar | caret in a table, above it, left-aligned | Row and Column menus, Delete Table |
 | Code language | a code block's top-left label, 12 `ink3` | a searchable language list |
 
-Menus follow the row primitive: the keyboard and the pointer move one highlight, a `selected` fill
-with `ink` label and glyph — neutral, so a menu over selected text never reads as a second selection.
-↑/↓ or ⌃P/⌃N move it, ↩ or ⇥ chooses, → opens a submenu and ← or Esc closes it, Esc closes and keeps
-the typed text. One menu shows at a time: opening one closes any other (a submenu keeps its parent),
-and a table's menu closes with its bar or when the caret moves to another table. The list shows its
-scroll thumb only while it scrolls. Section headers are sentence-case captions, not eyebrows. A menu above its anchor
+A list of values (Turn Into, Align, callout kinds, code languages) checks the current one and keeps
+the check's room in every row, so labels and hints never shift. Menus follow the row primitive: the
+keyboard and the pointer move one highlight, a `selected` fill with `ink` label and glyph — neutral,
+so a menu over selected text never reads as a second selection. ↑/↓ or ⌃P/⌃N move it, ↩ or ⇥
+chooses, → opens a submenu and ← or Esc closes it, Esc closes and keeps the typed text. One menu
+shows at a time: opening one closes any other (a submenu keeps its parent), and a table's menu
+closes with its bar or when the caret moves to another table. The list shows its scroll thumb only
+while it scrolls. Section headers are sentence-case captions, not eyebrows. A menu above its anchor
 stays attached by its bottom edge while filtering shrinks it; only the list scrolls, never the page.
 Buttons and handles never take focus, so the text selection survives every click. The caret's cell
-in a table carries an inset `ink3` ring; placeholders are `ink4`: "Type / to insert a block"
-on the empty line holding the caret, the heading level on an empty heading, "List", "To-do" and
-"Toggle" on empty items and titles, "Empty toggle" in an open toggle with nothing in it.
+in a table carries an inset `ink3` ring; placeholders are `ink4`: "Type / to insert a block" on the
+empty line holding the caret, the heading level on an empty heading, "List", "To-do" and "Toggle" on
+empty items and titles, "Empty toggle" in an open toggle with nothing in it.
 
-**Moving blocks.** A handle belongs to a top-level block (a quote, callout, toggle or table moves
-whole) or to a list item with the items nested under it. Dragging fades the block to 35 %, carries an
-80 % copy on the page colour (hairline ring, soft shadow, radius 6, 8 pt beside and 4 pt above and below the block's own
-edges so its text stays under the pointer) that fades out at its cut edge only when the block is
-taller than 160 pt, draws a 3 pt line in the caret's colour at the nearest gap (between
-top-level blocks, or between the items of the item's own list) and scrolls the page near the window
-edge; Esc cancels. A drop where the block already is does nothing. The move is one patch and one undo
-step ("Move"); blocks keep their own lines, a blank line goes on each side, ordered markers stay in
-their places, and the moved block flashes the selection tint for 900 ms.
+**Moving blocks.** A handle belongs to a top-level block (a quote, callout, toggle, table or aligned
+group moves whole) or to a list item with the items nested under it. Dragging fades the block to
+35 %, carries an 80 % copy on the page colour (hairline ring, soft shadow, radius 6, 8 pt beside and
+4 pt above and below the block's own edges so its text stays under the pointer) that fades out at
+its cut edge only when the block is taller than 160 pt, draws a 3 pt line in the caret's colour at
+the nearest gap (between top-level blocks, or between the items of the item's own list) and scrolls
+the page near the window edge; Esc cancels. A drop where the block already is does nothing. The move
+is one patch and one undo step ("Move"); blocks keep their own lines, a blank line goes on each
+side, ordered markers stay in their places, and the moved block flashes the selection tint for
+900 ms.
 
 **Keys.** ↩ splits a block or starts the next list item; on an empty item or an empty last quote,
 callout or toggle line it leaves the list, quote or toggle. ↩ in a toggle's title goes into its body
@@ -1532,11 +1540,32 @@ line inside a paragraph; at its end it starts a new block, as ↩ does. ⌫ at t
 then joins with the block above; a nested item steps out a level before it loses its marker, and an
 item or heading made into text (by ⌫ or Turn Into) gets a blank line on each side, so Markdown never
 reads it as more of the item or paragraph above; at the start of a callout's text it makes the callout a quote; at the
-start of a toggle's title it unwraps the toggle into a paragraph followed by its body. Text never joins
-across a toggle's edge, so its markup cannot break; ⌫ or ⌦ there moves the caret instead. ⌫ after a
-divider or table of contents deletes it. ⇥/⇧⇥ indent and outdent list items, move between table cells
-(adding a row after the last) and indent code. ⌘↩ leaves a code block. ⌘/ opens the block menu, ⌘D
-duplicates the block, ⇧⌘↑/⇧⌘↓ move it. ⌘B ⌘I ⌘E ⇧⌘X ⌘K and ⌥⌘0–6 format. ⌘-click opens a link.
+start of a toggle's title it unwraps the toggle into a paragraph followed by its body; at the start
+of an aligned group's first block it takes that block's alignment away (a heading loses its level
+first), and an aligned group left with only empty lines goes with its line. Text never joins across
+a toggle's edge, so its markup cannot break; ⌫ or ⌦ there moves the caret instead. Across an aligned
+group's edge text joins as anywhere: ⌫ at the start of the block after it, or ⌦ at the end of its
+last block, brings that text into the group's last paragraph or heading; ⌦ right before a group
+takes its first block's alignment away first. ↩ at the end of aligned text starts a line with the
+same alignment, and the typed line keeps a blank line before `</div>`; ↩ on the group's empty last
+line leaves it. ↩ after an aligned image or video that ends its group starts a left-aligned line
+after the group, and ↩ with an image, video or audio player selected starts a line after it instead
+of replacing it. ⌫ after a divider or table of contents deletes it. ⇥/⇧⇥ indent and outdent list
+items, move between table cells (adding a row after the last) and indent code. ⌘↩ leaves a code
+block. ⌘/ opens the block menu, ⌘D duplicates the block, ⇧⌘↑/⇧⌘↓ move it. ⌘B ⌘I ⌘E ⇧⌘X ⌘K and ⌥⌘0–6
+format; ⇧⌘L, ⇧⌘E and ⇧⌘R align the blocks in the selection left, centre and right: from its first
+paragraph or heading, every block it reaches beside it, a list or code between included (no app or
+editor shortcut used them). On an empty line they align the line, so the next words are typed
+centred or right-aligned; its placeholder starts at the caret in the middle of a centred line and
+ends at it on a right-aligned one. ⌘-click opens a link.
+
+**Resizing media.** Dragging a resize handle draws the image or video at its new width on every
+move, its width and height in a tooltip centred under it (inside its bottom edge where the window
+ends); nothing is written until the handle lets go, and then the width is one patch and one undo
+step ("Resize"). A centred one grows from both sides, so the dragged edge stays under the pointer.
+The width stays between 80 (or the width the drag started from, if that is narrower) and the column.
+Esc while dragging puts the media back; a double-click on a handle takes the width away ("Original
+Size").
 
 **Clipboard.** Copy puts the selection's Markdown on the pasteboard as plain text (markers balanced at
 cut emphasis) and its rendering as HTML, so a paste into a rich-text app stays formatted and a paste into Source
@@ -1596,18 +1625,19 @@ assistance on, Preview offers its own completion instead; Source never shows the
 | Render of a 1 MB document | within 10 % of the read-only preview | ~100 ms in JavaScriptCore |
 | Opening a 1 MB document editable | ≤ 1 s | 0.6–0.9 s |
 
-**Motion.** A surface the pointer opens (the block menu and Turn Into, the callout and language menus,
-the table menus, the format bar after a mouse selection) grows in from its trigger: scale 0.97 → 1
-with opacity over 150 ms, `cubic-bezier(0.23, 1, 0.32, 1)`, origin at the side that faces the anchor.
-A surface the keyboard opens (the slash and wikilink menus, ⌘/, ⌘K) appears at once — typing is
-never made to wait for an animation. Everything leaves in a 90 ms fade, never a shrink, as a context
-menu does. Handles fade 120 ms; the toggle triangle turns in 120 ms ease-out, as a sidebar chevron
-does; a pressed button or handle fills with `press` and keeps its size. Only transform, opacity and
-the 120 ms state colours animate, with one exception shared with Source: the mark on a fix just applied rises and
-settles over a second, and words a completion inserts fade from a tint over 520 ms (a dead key or input
-method used meanwhile takes the tint off at once, and nothing drawn changes while it composes). With Reduce Motion
-nothing scales, entrances are a 120 ms ease-out fade, the moved-block flash is off, and a fix's mark holds still
-at its settled strength. Nothing animates while typing.
+**Motion.** A surface the pointer opens (the block menu, Turn Into and Align, the callout and
+language menus, the table menus, the format bar after a mouse selection) grows in from its trigger:
+scale 0.97 → 1 with opacity over 150 ms, `cubic-bezier(0.23, 1, 0.32, 1)`, origin at the side that
+faces the anchor. A surface the keyboard opens (the slash and wikilink menus, ⌘/, ⌘K) appears at
+once — typing is never made to wait for an animation. Everything leaves in a 90 ms fade, never a
+shrink, as a context menu does. Handles, the media bar and the resize handles fade 120 ms; the
+toggle triangle turns in 120 ms ease-out, as a sidebar chevron does; a pressed button or handle
+fills with `press` and keeps its size. Only transform, opacity and the 120 ms state colours animate,
+with one exception shared with Source: the mark on a fix just applied rises and settles over a
+second, and words a completion inserts fade from a tint over 520 ms (a dead key or input method used
+meanwhile takes the tint off at once, and nothing drawn changes while it composes). With Reduce
+Motion nothing scales, entrances are a 120 ms ease-out fade, the moved-block flash is off, and a
+fix's mark holds still at its settled strength. Nothing animates while typing.
 
 
 ### 10.11 The document column

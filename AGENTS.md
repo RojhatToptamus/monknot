@@ -223,19 +223,36 @@ Shorter and more specific is preferable to polished but meaningless copy.
 - `MarkdownVisualEditingSession` is owned by `EditorPaneView`, so Preview's undo history survives a
   switch to Source and back; steps verify the text they change. `MarkdownEditorWebView` hands the Edit
   menu that undo manager and drops WebKit's own undo registrations.
-- Menus (slash, block menu with its Turn Into submenu, callout kind, wikilinks, table, code language),
-  the floating format bar, link card and editor, and table bar live in the page (`editor.js` `UI`);
-  the block handles and drag-and-drop are `editor.js` `Handles`. All are styled by `editor.css` from
-  theme tokens; SF Symbols come from `MarkdownEditorSymbolAssets` as mask images, and
+- Menus (slash, block menu with its Turn Into and Align submenus, callout kind, wikilinks, table,
+  code language), the floating format bar, link card and editor, and table bar live in the page
+  (`editor.js` `UI`); the media bar and resize handles are `editor.js` `Media`; the block handles
+  and drag-and-drop are `editor.js` `Handles`. All are styled by `editor.css` from theme tokens;
+  SF Symbols come from `MarkdownEditorSymbolAssets` as mask images, and
   `MarkdownPresentationTokenTests` checks the glyphs the page asks for and the glyphs drawn match,
-  both ways. There is no docked
-  Markdown toolbar in any view mode; the word count is `MarkdownWordCountLabel` in the editor's corner.
-  design.md §10.10 is the interaction spec.
+  both ways. There is no docked Markdown toolbar in any view mode; the word count is
+  `MarkdownWordCountLabel` in the editor's corner. design.md §10.10 is the interaction spec.
 - Notion's blocks map to Markdown the renderer parses: toggles are `<details>`/`<summary>` (an unclosed
   one runs to the end, which keeps re-parsing local), callouts are `> [!KIND]` quotes, `[TOC]` lists the
   top-level h1–h3. A toggle's open state on the page is view state carried across re-parses
   (`carryToggleState`), never written to the file. Units carry `scope` (the toggle whose body holds
   them); joins never cross it, so toggle markup cannot be broken by Delete or Backspace.
+- Alignment is `<div align="center">` or `<div align="right">` around blocks, a blank line inside
+  each edge, as GitHub renders it; left has no div. `renderer.js` parses it as an `align` container
+  like a toggle's body (`containerBody`, units scoped to it, re-parsed inside by `applyInside`), so
+  text never joins across its edges. `planAlign` regroups the blocks from the first to the last it
+  changes into runs of one alignment and writes only div lines, so taking an alignment away gives
+  back the file; an empty line is aligned on its own (`alignEmptyLine`, a div whose body is one
+  blank line). ⌫ at the start of a div's first block takes its alignment away, ⌫ after a div and ⌦
+  at its end join text into it (`joinIntoDiv`), and ↩ after an aligned image that ends its div
+  starts a line after the div. A toggle's or div's last empty line writes a blank line before the
+  closing tag when typed in. ⇧⌘L / ⇧⌘E / ⇧⌘R, the format bar's alignment selector, the block menu's
+  Align › (one `choiceMenu` lists Turn Into's blocks or the alignments) and the media bar all run
+  it.
+- An image's or video's width is a number after a bar at the end of its alt text, as Obsidian writes
+  it: `![Chart|480](chart.png)` (`RE_MEDIA_WIDTH`, read by the renderer as the `width` attribute).
+  `mediaAt` finds an image's Markdown and `planMediaWidth` writes or removes the number. The page's
+  `Media` module (beside `Handles`) shows the media bar and the side handles: a drag resizes the
+  element live and writes one patch when it lets go, a double-click removes the width.
 - Whole-block operations (`planMoveBlock`, `planDuplicateBlock`, `planDeleteBlock`, `planWrapToggle`,
   `planWrapCallout`, `planUnwrapQuote`) move source lines: a top-level block, or a list item with its
   nested items. The page messages `requestFile` (image, video, audio, file), `createPage`,
@@ -584,7 +601,7 @@ Current XCTest coverage focuses on `MonknotCore`:
 - `MarkdownPreviewFlowTests` (app target): writing assistance in Preview in real WebKit with fake checker and models: a certain fix as one undo step that ⌫ takes back (only while its hint shows; a refused revert still deletes), a declined fix offered again, fixes after emoji and in list items and headings, reviewed repairs (Tab, →, Esc, a trailing space), Apple Intelligence's reviewed repair, completions (gating by setting and availability, Tab word and hold, typing that consumes, Esc, a dead-key composition right after a taken word), stale checks, Return, code, link addresses and table cells, nothing checked or asked of the models while a menu is open, a decline for an old caret, Ignore Spelling in the page's menu, Tab's list/table/menu meanings, settings off, Check Document Now and Show Writing Tools.
 - `EditorFlowRepairPolicyTests` (app target): the shared repair decisions without an editor: which fixes wait for review, issues overlapping protected Markdown, validation sentence offsets, routing after a check, the model cooldowns and the protected-range rebase.
 - `EditorFlowPipelineTests` (app target): the shared pipeline with a stand-in host: protected ranges count only for the text they were scanned from, a paused or suspended editor asks the checker nothing, a clean check clears the gate, and a check whose sentence changed ends stale for its own token.
-- `MarkdownVisualEditorTests` (app target): Preview editing in real WebKit: typing, Return and Delete, Markdown shortcuts, Edit-menu undo and redo (also across a switch to Source, after a Source edit or a change on disk, and refused without half-applying), an outside change racing a typed character, composition through `NSTextInputClient`, a click below the last block, smart dashes in code, a dropped file, formatting, tasks, links, paste and copy, composition, tables, external changes, the slash rule, toggles, callouts, the + handle, drag-and-drop, the block menu and its shortcuts, 50 KB and 1 MB keystroke timing (budgets four times larger when `CI` is set), and, with `MONKNOT_EDITOR_SNAPSHOT_DIR` set, theme and narrow-window snapshots of the page, menus and handles.
+- `MarkdownVisualEditorTests` (app target): Preview editing in real WebKit: typing, Return and Delete, Markdown shortcuts, Edit-menu undo and redo (also across a switch to Source, after a Source edit or a change on disk, and refused without half-applying), an outside change racing a typed character, composition through `NSTextInputClient`, a click below the last block, smart dashes in code, a dropped file, formatting, tasks, links, paste and copy, composition, tables, external changes, the slash rule, toggles, callouts, the + handle, drag-and-drop, the block menu and its shortcuts, 50 KB and 1 MB keystroke timing (budgets four times larger when `CI` is set), alignment from its keys, the format bar, the block menu and the media bar (each one undo step), resizing an image by its side handles (live, one undo step, Esc, the 80 px and column limits, a centred image growing from both sides, double-click for its own size), and, with `MONKNOT_EDITOR_SNAPSHOT_DIR` set, theme and narrow-window snapshots of the page, menus, handles, alignment and media sizing.
 - `MarkdownEditorMenuTests` (app target): the Preview editor's menus in real WebKit: one menu at a time, the table menu and bar, the code language, the link card, Turn Into's timing and every surface following a moved column.
 - `MonknotPopUpMenuTests` (app target): a real `MonknotPopUpButton` clicked open: Monknot's menu below it (above it at the screen's bottom) with the value checked and highlighted, ↓ and ↩ choosing, Esc choosing nothing, a value missing from the list, a 300-item list scrolling with Home, End and type-select keeping the row in view and the thumb fading, Settings-style previews restored on Esc, a menu button's commands, and a pop-up inside a popover leaving the popover open. With `MONKNOT_POPUP_MENU_SNAPSHOT_DIR` set, renders the zoom, colour, tool and long font menus off screen.
 - `MonknotContextMenuTests` (app target): real right-clicks over the real sidebar open Monknot's menu with the row's items, Control-click too; choosing acts on the clicked row; a quick release over a row only highlights it and a release never runs Move to Trash; the keys (↑↓, ⌃N ⌃P, Home/End, type-select, ↩, Esc); a click elsewhere only closes; a right-click elsewhere opens there; scrolling and losing key close it; text views and unreported windows keep the system's menu; layout at every zoom; placement and flipping; every command's glyph. With `MONKNOT_CONTEXT_MENU_SNAPSHOT_DIR` set, renders the surface off screen and captures it on screen.
