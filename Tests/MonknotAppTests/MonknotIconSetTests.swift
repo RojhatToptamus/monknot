@@ -21,13 +21,15 @@ final class MonknotIconSetTests: XCTestCase {
                          "underline", "strikethrough", "character.textbox", "textformat", "ellipsis",
                          MonknotWorkspaceIcons.save]),
         ("PDF modes", 16, ["cursorarrow", "highlighter", "pencil.tip", "eraser"]),
+        ("PDF page appearance", 16, PDFPageAppearance.allCases.map(\.systemImage)),
         ("PDF navigator", 16, ["rectangle.stack", MonknotWorkspaceIcons.outline, "note.text"]),
         ("Text Style", 16, ["bold", "italic", "text.alignleft", "text.aligncenter", "text.alignright"]),
         ("panel headers", 17, ["xmark", "arrow.clockwise"]),
         ("format bar and link card", 17, MarkdownEditorSymbolAssets.toolSymbols),
         ("small buttons", 13, ["textformat", "character.cursor.ibeam", "chevron.up", "chevron.down", "xmark",
                                "minus", "plus", "doc.on.doc", "checkmark", "magnifyingglass"]),
-        ("menus", 15, MonknotMenuCommand.allCases.map(\.systemImage) + MarkdownEditorSymbolAssets.menuSymbols),
+        ("menus", 15, MonknotMenuCommand.allCases.map(\.systemImage) + MarkdownEditorSymbolAssets.menuSymbols
+            + PDFPageAppearance.allCases.map(\.systemImage)),
         ("file glyphs", 15, WorkspaceFileGlyph.allCases.map(\.systemImage)
             + ["folder", "folder.fill", MonknotWorkspaceIcons.newFolder, MonknotWorkspaceIcons.settings,
                MonknotWorkspaceIcons.terminal, MonknotWorkspaceIcons.dragItems]),

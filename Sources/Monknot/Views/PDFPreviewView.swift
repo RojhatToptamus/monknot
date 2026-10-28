@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage.CIFilterBuiltins
 import MonknotCore
 import PDFKit
 import SwiftUI
@@ -31,6 +32,9 @@ struct PDFPreviewView: View {
     let onViewportStateChange: (PDFDocumentViewportState) -> Void
     let updateAnnotationUndoState: (Bool, Bool) -> Void
 
+    @AppStorage(PDFPageAppearance.preferenceKey) private var pageAppearance = PDFPageAppearance.original
+    /// The appearance the bar's menu highlights, shown until it closes (design.md §5.8).
+    @State private var previewedPageAppearance: PDFPageAppearance?
     @State private var interactionMode: PDFAnnotationInteractionMode = .select
     @State private var selectedColor: PDFAnnotationPaletteColor = .yellow
     @State private var strokeWidth = 3.0
@@ -73,6 +77,8 @@ struct PDFPreviewView: View {
                 pageStatus: pageStatus,
                 zoomStatus: zoomStatus,
                 runZoom: runZoom(_:),
+                pageAppearance: $pageAppearance,
+                previewedPageAppearance: $previewedPageAppearance,
                 saveDocument: saveDocument,
                 isNavigatorPresented: isNavigatorPresented,
                 toggleNavigator: toggleNavigator,
@@ -90,6 +96,7 @@ struct PDFPreviewView: View {
                     savedEditCheckpoint: savedEditCheckpoint,
                     contentVersion: contentVersion,
                     theme: theme,
+                    pageAppearance: previewedPageAppearance ?? pageAppearance,
                     viewportState: viewportState,
                     viewportCaptureBridge: viewportCaptureBridge,
                     annotationMode: interactionMode,
@@ -764,6 +771,8 @@ private struct PDFAnnotationToolbar: View {
     let pageStatus: PDFPageStatus
     let zoomStatus: PDFZoomStatus
     let runZoom: (PDFZoomCommand) -> Void
+    @Binding var pageAppearance: PDFPageAppearance
+    @Binding var previewedPageAppearance: PDFPageAppearance?
     let saveDocument: () -> Void
     let isNavigatorPresented: Bool
     let toggleNavigator: () -> Void
@@ -783,8 +792,8 @@ private struct PDFAnnotationToolbar: View {
     }
 
     var body: some View {
-        // Zoom and Save sit outside the layouts, so changing tools, selecting text or dirtying the
-        // document never moves them.
+        // The page appearance, zoom and Save sit outside the layouts, so changing tools, selecting
+        // text or dirtying the document never moves them.
         MonknotBar(theme: theme, zoomScale: zoomScale) {
             ViewThatFits(in: .horizontal) {
                 toolbar(.regular)
@@ -795,6 +804,10 @@ private struct PDFAnnotationToolbar: View {
 
             MonknotBarGroupGap(theme: theme, zoomScale: zoomScale)
 
+            // How the pages look and how large: one group, the view's.
+            if !isImage {
+                pageAppearancePopUp
+            }
             PDFZoomToolbarGroup(
                 status: zoomStatus,
                 theme: theme,
@@ -1155,6 +1168,40 @@ private struct PDFAnnotationToolbar: View {
             zoomScale: zoomScale,
             commands: commands
         )
+    }
+
+    /// Original, Dim or Dark pages (design.md §10.7a), for every PDF: the current one's glyph, and a
+    /// menu that shows the pages in the one it highlights until it closes. An image always shows as it
+    /// is, so its bar has none.
+    private var pageAppearancePopUp: some View {
+        MonknotPopUpButton(
+            label: "Page Appearance",
+            selection: Binding(
+                get: { pageAppearance.rawValue },
+                set: { id in
+                    previewedPageAppearance = nil
+                    if let appearance = PDFPageAppearance(rawValue: id) {
+                        pageAppearance = appearance
+                    }
+                }
+            ),
+            items: PDFPageAppearance.allCases.map {
+                MonknotPopUpItem(id: $0.rawValue, title: $0.title, systemImage: $0.systemImage)
+            },
+            theme: theme,
+            zoomScale: zoomScale,
+            leadingPaddingBase: 8,
+            previewsSelection: true,
+            onPreviewSelection: { previewedPageAppearance = PDFPageAppearance(rawValue: $0) },
+            onCancelPreview: { previewedPageAppearance = nil }
+        ) { shown in
+            MonknotPopUpGlyph(
+                systemImage: (PDFPageAppearance(rawValue: shown) ?? pageAppearance).systemImage,
+                theme: theme,
+                zoomScale: zoomScale
+            )
+        }
+        .accessibilityValue(pageAppearance.title)
     }
 
     /// Always laid out; disabled while there is nothing to save, and carrying the unsaved dot when there
@@ -1840,6 +1887,20 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         showSelectedSection()
     }
 
+    /// Shows the thumbnails as the page appearance shows the pages (design.md §10.7a). PDFKit lays
+    /// them out with their labels in a collection view that it keeps for the thumbnail view's life;
+    /// the filters go on that view alone, so the scroll bar and the panel's surface keep the theme's
+    /// colours, and its labels are drawn in `labelAppearance`, whose text the filters turn into the
+    /// theme's own.
+    func applyPageAppearance(_ filters: [CIFilter], labelAppearance: NSAppearance?) {
+        guard let thumbnails = Self.firstScrollView(in: thumbnailView)?.documentView else { return }
+        if thumbnails.contentFilters != filters {
+            thumbnails.wantsLayer = true
+            thumbnails.contentFilters = filters
+        }
+        thumbnails.appearance = labelAppearance
+    }
+
     func applyMetrics(_ metrics: PDFNavigatorMetrics, theme: AppTheme, panelWidth: CGFloat) {
         guard self.metrics != metrics || appliedTheme != theme else {
             updatePanelWidth(panelWidth)
@@ -2396,6 +2457,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
     let savedEditCheckpoint: PDFAnnotationEditCheckpoint?
     let contentVersion: Int
     let theme: AppTheme
+    let pageAppearance: PDFPageAppearance
     let viewportState: PDFDocumentViewportState?
     let viewportCaptureBridge: PDFViewportCaptureBridge
     fileprivate let annotationMode: PDFAnnotationInteractionMode
@@ -2430,6 +2492,11 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         Coordinator()
     }
 
+    /// An image is a picture, which Dark would show as its negative, so it always shows as it is.
+    private var shownPageAppearance: PDFPageAppearance {
+        isImage ? .original : pageAppearance
+    }
+
     func makeNSView(context: Context) -> PDFPreviewContainerView {
         let container = PDFPreviewContainerView()
         let pdfView = container.pdfView
@@ -2437,13 +2504,14 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
         pdfView.displaysPageBreaks = true
-        pdfView.pageShadowsEnabled = true
         pdfView.autoScales = false
         pdfView.scaleFactor = 1
         context.coordinator.applyAppearance(
             theme: theme,
+            pageAppearance: shownPageAppearance,
             workspaceZoomScale: workspaceZoomScale,
-            in: pdfView
+            in: pdfView,
+            navigator: container.navigatorView
         )
         container.applyNavigatorMetrics(theme: theme, workspaceZoomScale: workspaceZoomScale)
         container.setNavigatorPresented(isNavigatorPresented)
@@ -2609,8 +2677,10 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         )
         context.coordinator.applyAppearance(
             theme: theme,
+            pageAppearance: shownPageAppearance,
             workspaceZoomScale: workspaceZoomScale,
-            in: pdfView
+            in: pdfView,
+            navigator: container.navigatorView
         )
         let hasMatchingPageRequest = pageNavigationRequest?.documentID == documentID
         context.coordinator.restoreViewportStateIfNeeded(
@@ -2660,6 +2730,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         var onPageNavigationRequestConsumed: (PDFPageNavigationRequest) -> Void = { _ in }
         private var documentLoadIdentity: PDFDocumentLoadIdentity?
         private var lastAppliedTheme: AppTheme?
+        private var lastAppliedPageAppearance: PDFPageAppearance?
         private var lastAppliedWorkspaceZoomScale: Double?
         private var lastSearchRequest: DocumentSearchRequest?
         private var lastSearchHighlightTheme: SearchHighlightTheme?
@@ -2856,15 +2927,27 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
 
         func applyAppearance(
             theme: AppTheme,
+            pageAppearance: PDFPageAppearance,
             workspaceZoomScale: Double,
-            in pdfView: AnnotatingPDFView
+            in pdfView: AnnotatingPDFView,
+            navigator: PDFNavigatorView? = nil
         ) {
             let clampedZoomScale = WorkspaceZoomPolicy.clamp(workspaceZoomScale)
             guard lastAppliedTheme != theme
+                    || lastAppliedPageAppearance != pageAppearance
                     || lastAppliedWorkspaceZoomScale != clampedZoomScale
             else { return }
             lastAppliedTheme = theme
+            lastAppliedPageAppearance = pageAppearance
             lastAppliedWorkspaceZoomScale = clampedZoomScale
+            pdfView.pageAppearanceFilters = pageAppearance.colorTransform(in: theme)?.contentFilters ?? []
+            // Dark would turn a page's shadow into a glow of ink; its paper stands off the canvas by
+            // tone alone.
+            pdfView.pageShadowsEnabled = pageAppearance != .dark
+            navigator?.applyPageAppearance(
+                pdfView.pageAppearanceFilters,
+                labelAppearance: pageAppearance.thumbnailLabelAppearance(in: theme)
+            )
             // The pages sit on the card's surface tinted by the control `track`, laid opaquely over
             // it, so a white page stands off it in every theme.
             let track = NSColor(theme.controlTrackFillColor).usingColorSpace(.sRGB)
@@ -4058,6 +4141,39 @@ private final class PDFFreeTextSelectionOverlay: NSView {
     }
 }
 
+extension PDFPageColorTransform {
+    /// The transform as filters for a layer. Core Image works in linear light, so the sRGB tone
+    /// curves around the matrix make it act on the sRGB values it is written in, and a mid grey
+    /// stays mid grey.
+    var contentFilters: [CIFilter] {
+        let colorMatrix = CIFilter.colorMatrix()
+        colorMatrix.rVector = CIVector(x: matrix[0][0], y: matrix[0][1], z: matrix[0][2], w: 0)
+        colorMatrix.gVector = CIVector(x: matrix[1][0], y: matrix[1][1], z: matrix[1][2], w: 0)
+        colorMatrix.bVector = CIVector(x: matrix[2][0], y: matrix[2][1], z: matrix[2][2], w: 0)
+        colorMatrix.aVector = CIVector(x: 0, y: 0, z: 0, w: 1)
+        colorMatrix.biasVector = CIVector(x: bias[0], y: bias[1], z: bias[2], w: 0)
+        return [CIFilter.linearToSRGBToneCurve(), colorMatrix, CIFilter.sRGBToneCurveToLinear()]
+    }
+}
+
+extension PDFPageAppearance {
+    /// A brightness scale: the brightness keys' two suns, then a moon.
+    var systemImage: String {
+        switch self {
+        case .original: return "sun.max"
+        case .dim: return "sun.min"
+        case .dark: return "moon"
+        }
+    }
+
+    /// The appearance the navigator draws its page labels in under this appearance's filters. Dark
+    /// turns light text dark and dark text light, so its labels take the theme's opposite and come
+    /// out in the theme's own text colour.
+    func thumbnailLabelAppearance(in theme: AppTheme) -> NSAppearance? {
+        self == .dark ? NSAppearance(named: theme.isDark ? .aqua : .darkAqua) : nil
+    }
+}
+
 final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     var annotationMode: PDFAnnotationInteractionMode = .select {
         didSet {
@@ -4092,6 +4208,16 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
             freeTextSelectionOverlay?.metrics = freeTextOverlayMetrics
             window?.invalidateCursorRects(for: self)
         }
+    }
+    /// The page appearance (design.md §10.7a), applied to the pages and to a text box being edited
+    /// as the screen composites them. Nothing is drawn into a page, because PDFKit draws pages to
+    /// save them too: the document and every save keep the pages as they are.
+    var pageAppearanceFilters: [CIFilter] = [] {
+        didSet { applyPageAppearanceFilters() }
+    }
+    /// PDFKit shows a new document in a new document view, which starts without the filters.
+    override var document: PDFDocument? {
+        didSet { applyPageAppearanceFilters() }
     }
     var onEdited: (Data?, Data, PDFAnnotationEditCheckpoint) -> Void = { _, _, _ in }
     var onRestoreSavedEditCheckpoint: (PDFAnnotationEditCheckpoint) -> Bool = { _ in false }
@@ -4175,6 +4301,16 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
             window?.invalidateCursorRects(for: self)
         }
         onLayout()
+    }
+
+    /// The document view holds the pages (and not the canvas, which its scroll view draws behind
+    /// it); the editor is a text box being edited, whose text must look like the page around it.
+    private func applyPageAppearanceFilters() {
+        for view in [documentView, freeTextEditorScrollView].compactMap({ $0 })
+        where view.contentFilters != pageAppearanceFilters {
+            view.wantsLayer = true
+            view.contentFilters = pageAppearanceFilters
+        }
     }
 
     /// PDFKit zooms only with a trackpad pinch, so a mouse could not zoom a PDF at all. ⌘-scroll
@@ -4985,6 +5121,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         addSubview(scrollView)
 
         freeTextEditorScrollView = scrollView
+        applyPageAppearanceFilters()
         freeTextEditor = editor
         freeTextEditorBeforeSnapshot = beforeSnapshot
         freeTextEditorBaselineData = baselineData

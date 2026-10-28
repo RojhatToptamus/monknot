@@ -1,4 +1,5 @@
 import AppKit
+import MonknotCore
 import SwiftUI
 
 struct MonknotCommandActions {
@@ -103,6 +104,8 @@ struct MonknotCommandMenu: Commands {
     private var checksSpelling = EditorTextCheckingOptions.defaultChecksSpelling
     @AppStorage(EditorTextCheckingOptions.grammarPreferenceKey)
     private var checksGrammar = EditorTextCheckingOptions.defaultChecksGrammar
+    @AppStorage(PDFPageAppearance.preferenceKey)
+    private var pdfPageAppearance = PDFPageAppearance.original
 
     private var undoDestination: MonknotUndoCommandDestination {
         monknotUndoCommandDestination(
@@ -422,6 +425,12 @@ struct MonknotCommandMenu: Commands {
                 actions?.togglePDFNavigator()
             }
             .disabled(actions?.canTogglePDFNavigator != true)
+
+            Picker("PDF Pages", selection: $pdfPageAppearance) {
+                ForEach(PDFPageAppearance.allCases, id: \.self) { appearance in
+                    Text(appearance.title).tag(appearance)
+                }
+            }
 
             Divider()
 

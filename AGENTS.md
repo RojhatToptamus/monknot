@@ -327,6 +327,8 @@ Prefer putting logic in `MonknotCore` when it can be tested without SwiftUI/AppK
   - `MarkdownOutlineItem` and `MarkdownSourceLocation`: outline/source-jump models.
 - PDF export options:
   - `MarkdownPDFExportOptions`: page size, margins, theme mode, scale, clamping, and last-used persistence.
+- PDF page appearance:
+  - `PDFPageAppearance`: Original, Dim or Dark pages in the PDF viewer (`Monknot.pdfPageAppearance`), and `PDFPageColorTransform`, the sRGB matrix the app turns into Core Image filters (Dark's paper and ink are the theme's base colours).
 - Document column:
   - `DocumentMeasure`: the comfortable line length shared by Source (`ContentWidthPreference.textColumnWidth`, points) and Preview (`--content-measure`, `em`); the Content Width setting scales it and 100 % removes it. Both modes centre the same width so text starts at the same x (design.md §10.11).
 
@@ -357,6 +359,7 @@ App-layer code should stay in `Sources/Monknot` when it uses SwiftUI state, AppK
 Use Apple-native APIs where they fit the feature:
 
 - PDF viewing: `PDFPreviewView` renders PDFs in-app with PDFKit, including annotation/search state. Generic Quick Look preview remains disabled for file-switching performance.
+- PDF page appearance (the PDF bar's pop-up beside zoom, View › PDF Pages, Settings › Appearance; the bar's menu previews the row it highlights through `PDFPreviewView`'s `previewedPageAppearance`): only what the screen composites changes. `AnnotatingPDFView.pageAppearanceFilters` puts the filters on PDFKit's document view (again for each new document, which gets a new one) and on a text box being edited, and `PDFNavigatorView.applyPageAppearance` on the collection view holding the thumbnails. Never draw it into a page: PDFKit draws pages the same way to save them, so it would be written into the file. Images show as they are.
 - Image viewing and markup: images reuse `PDFPreviewView` through a `PDFPage` subclass (`ImageMarkupPage`) that draws the decoded `CGImage`; `PDFPage(image:)` is not used because PDFKit recompresses the pixels. Decoding, orientation, DPI and saving go through ImageIO (`CGImageSource` / `CGImageDestination`). Unsaved markup travels as a small annotations-only PDF; never serialize the image into it on each edit. `WorkspaceDocumentKind.opensInPDFViewer` covers both kinds in the store and commands.
 - PDF search/text extraction: `PDFDocument` and `PDFSelection` in `WorkspaceSearchService`; keep this out of the file-selection/render hot path.
 - Markdown preview/export rendering: `WKWebView`; the HTML shell comes from `MarkdownRenderService`.
@@ -586,6 +589,8 @@ Current XCTest coverage focuses on `MonknotCore`:
 - `MarkdownOutlineParserTests`: Markdown heading extraction behavior.
 - `JupyterNotebookMarkdownTests`: notebook cells, outputs, fences, attachments, nbformat 3 and unreadable files.
 - `MarkdownPDFExportOptionsTests`: export option defaults, clamping, persistence behavior.
+- `PDFPageAppearanceTests`: the stored values, Dim's brightness, Dark's paper and ink from every bundled theme, and Dark flipping lightness while keeping hue.
+- `PDFPageAppearanceViewTests` (app target): the filters on the pages and not the canvas, each colour as Core Image composites it, a new document in the same view, a text box being edited, the navigator's thumbnails and labels, the setting reaching an open PDF live, an image shown as it is (and its bar offering none), the bar's pop-up clicked open (its rows and check, a highlight previewing the pages without storing it, Esc, a choice for every PDF), and a save while Dark keeping the file's colours. With `MONKNOT_PDF_PAGE_APPEARANCE_SNAPSHOT_DIR` set, captures a lecture with a chart, a photo and markup in each appearance, light and dark, at zoom 0.8 and 2, with the navigator open, with a text box being edited and with the bar's menu open.
 - `MarkdownScrollSyncTests`: source line ↔ character offset math for split-view scroll sync.
 - `HTMLScrollSyncTests`: proportional line ↔ scroll fraction math for HTML split-view sync scroll.
 - `DocumentSplitViewPersistenceTests`: per-document split-view storage keys, split ratio persistence/clamping/remap, legacy global fallback, and rename/move key remapping.

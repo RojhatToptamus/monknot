@@ -315,6 +315,7 @@ CORE_SOURCES=(
   "Sources/MonknotCore/Models/DocumentMeasure.swift"
   "Sources/MonknotCore/Models/MarkdownOutlineItem.swift"
   "Sources/MonknotCore/Models/MarkdownPDFExportOptions.swift"
+  "Sources/MonknotCore/Models/PDFPageAppearance.swift"
   "Sources/MonknotCore/Models/MarkdownSourceLocation.swift"
   "Sources/MonknotCore/Models/MonknotKeyboardShortcut.swift"
   "Sources/MonknotCore/Models/MonknotKeyboardShortcutCatalog.swift"

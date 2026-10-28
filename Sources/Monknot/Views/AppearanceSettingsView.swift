@@ -6,6 +6,7 @@ struct AppearanceSettingsView: View {
     let uiTheme: AppTheme
     let zoomScale: Double
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
+    @AppStorage(PDFPageAppearance.preferenceKey) private var pdfPageAppearance = PDFPageAppearance.original
     @ObservedObject private var systemAppearance = SystemAppearanceMonitor.shared
     @State private var lightDraft = ThemeConfiguration(theme: AppTheme.defaultLight)
     @State private var darkDraft = ThemeConfiguration(theme: AppTheme.defaultDark)
@@ -34,8 +35,7 @@ struct AppearanceSettingsView: View {
                 SettingsRow(
                     theme: uiTheme,
                     zoomScale: zoomScale,
-                    title: "Appearance",
-                    showsDivider: false
+                    title: "Appearance"
                 ) {
                     MonknotSegmentedControl(
                         options: ThemePreference.allCases.map { preference in
@@ -48,7 +48,25 @@ struct AppearanceSettingsView: View {
                         theme: uiTheme,
                         zoomScale: zoomScale
                     )
-                    .frame(width: scaled(246))
+                }
+                SettingsRow(
+                    theme: uiTheme,
+                    zoomScale: zoomScale,
+                    title: "PDF pages",
+                    detail: "Never changes the file",
+                    showsDivider: false
+                ) {
+                    MonknotSegmentedControl(
+                        options: PDFPageAppearance.allCases.map { appearance in
+                            MonknotSegmentOption(id: appearance.rawValue, title: appearance.title)
+                        },
+                        selection: Binding(
+                            get: { pdfPageAppearance.rawValue },
+                            set: { pdfPageAppearance = PDFPageAppearance(rawValue: $0) ?? .original }
+                        ),
+                        theme: uiTheme,
+                        zoomScale: zoomScale
+                    )
                 }
             }
 
