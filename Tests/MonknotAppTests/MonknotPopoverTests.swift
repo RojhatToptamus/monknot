@@ -170,6 +170,7 @@ final class MonknotPopoverTests: FileOperationsTestCase {
         // An AppKit control in an active app (a key window, as on CI) tracks a press in a loop of its
         // own until the mouse comes up, and nothing here runs until that loop ends: the mouse-up waits
         // in the app's queue for it.
+        deliverPendingAppKitEvents()
         NSApp.postEvent(up, atStart: false)
         window.sendEvent(down)
         try? await Task.sleep(nanoseconds: 40_000_000)

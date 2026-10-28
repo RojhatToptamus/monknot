@@ -536,6 +536,7 @@ final class PDFPageAppearanceViewTests: PDFNavigatorTestCase {
         }
         // A control in a key window tracks the press in a loop of its own until the mouse comes up,
         // so the release waits in the queue; if nothing tracked the press it is still there.
+        deliverPendingAppKitEvents()
         NSApp.postEvent(events[1], atStart: false)
         window.sendEvent(events[0])
         try await Task.sleep(nanoseconds: 40_000_000)
