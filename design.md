@@ -1380,9 +1380,10 @@ count (12 `ink3`, tabular, as wide as any page of the document); Undo and Redo; 
 — Select, Draw, Erase, and for an image the area Highlight — as one segmented control; the markup
 actions (Highlight, Underline, Strike Through Selection, Add Text Box) as icon buttons; the current
 tool's style, a pop-up showing its colour swatch (with Stroke Width… while drawing) or, for a
-selected text box, Text Style; then, outside the layouts so they never move, the zoom pop-up and Save,
-disabled while clean and carrying the unsaved dot (§1.3) when not. Groups sit 8 apart, nothing is
-`accent`, and nothing is ruled.
+selected text box, Text Style; then, outside the layouts so they never move, the view's group — a
+PDF's page appearance pop-up (below) and the zoom pop-up — and Save, disabled while clean and
+carrying the unsaved dot (§1.3) when not. Groups sit 8 apart, nothing is `accent`, and nothing is
+ruled.
 
 Narrower, the bar folds rather than wraps: first Undo and Redo move into More (`ellipsis`, a menu
 button); then the modes and Add Text Box become one tool pop-up, and Highlight, Underline and Strike
@@ -1390,6 +1391,21 @@ Through Selection join Undo and Redo in More. The pages sit on the card's
 surface tinted by the `track`, so a white page stands off it; the navigator sits on the surface, its
 divider `line2`, its lists the row primitive in the 10 list inset (selection 10 from the edge, text
 18), with the neutral selection.
+
+**Page appearance.** The bar's pop-up shows every PDF's pages as the file has them (Original), dimmed
+or dark. It shows the current one's glyph — `sun.max`, `sun.min` and `moon`, the brightness keys' two
+suns and a moon — and its menu shows the pages in the row it highlights until it closes, as Settings'
+theme preset does (§5.8). View › PDF Pages and Settings › Appearance › PDF pages set the same choice.
+Only the screen changes: the window server composites the pages through colour filters
+(`AnnotatingPDFView.pageAppearanceFilters`, on PDFKit's document view), so the file and every save
+keep its colours (§16). Dim shows every colour at 80 % of its brightness. Dark flips each colour's
+grey level and keeps its hue: white paper takes the theme's darker base colour and black ink its
+lighter one (a dark theme's `surface` and `ink`, a light theme's the other way round), and a yellow
+highlight stays yellow, only darker. A photo inside a page flips too; Dim is for those. Dark pages
+have no shadow, which would show as a glow; they stand off the canvas by tone. A text box being
+edited and the navigator's thumbnails take the same filters, the thumbnails' labels drawn in the
+theme's opposite appearance, which Dark turns back into the theme's text colour. An image file
+always shows as it is.
 
 ### 10.8 Images
 
@@ -1973,3 +1989,6 @@ symptom, so they are worth checking deliberately rather than hoping to notice.
     glyph (§8.2).
 24. **One glyph for every file** — a `.txt`, a `.json` and a `.swift` wearing the Markdown note's page
     read as notes. Give each kind its glyph (`WorkspaceFileGlyph`, §8.7).
+25. **A view setting drawn into the document** — PDFKit draws a page the same way to save it as to
+    show it, so a page appearance drawn into the page is saved into the file. Change only what the
+    screen composites (content filters, §10.7a).

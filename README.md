@@ -70,7 +70,9 @@ short completions.
 - **Search and replace:** Search text files and selectable PDF text across a
   folder. Preview and scope multi-file replacements, then undo the last batch.
 - **PDF:** Add highlights, underlines, strikeouts, drawings, and text boxes.
-  Export annotations to Markdown or save an annotated PDF copy.
+  Export annotations to Markdown or save an annotated PDF copy. Read pages
+  dimmed, or dark with light text in your theme's colours, from the PDF bar;
+  the file is not changed.
 - **Terminal:** Run multiple `zsh` sessions in the active document or workspace
   folder. Search the bounded scrollback for each session.
 

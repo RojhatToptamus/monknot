@@ -14,6 +14,7 @@ final class PDFTextMarkupAppearanceTests: PDFTextMarkupTestCase {
 
         coordinator.applyAppearance(
             theme: lightTheme,
+            pageAppearance: .original,
             workspaceZoomScale: 0.8,
             in: pdfView
         )
@@ -23,6 +24,7 @@ final class PDFTextMarkupAppearanceTests: PDFTextMarkupTestCase {
 
         coordinator.applyAppearance(
             theme: lightTheme,
+            pageAppearance: .original,
             workspaceZoomScale: 1,
             in: pdfView
         )
@@ -31,6 +33,7 @@ final class PDFTextMarkupAppearanceTests: PDFTextMarkupTestCase {
 
         coordinator.applyAppearance(
             theme: darkTheme,
+            pageAppearance: .original,
             workspaceZoomScale: 2,
             in: pdfView
         )

@@ -1,25 +1,16 @@
-# Monknot 0.1.9
+# Monknot 0.1.10
 
-This release edits Markdown in place in Preview, brings writing assistance there, lists every file in the folder, and gives the window a new look.
+This release aligns and resizes images and video in Preview, and shows PDF pages dimmed or dark.
 
 ## Editing in Preview
 
-- Edits Markdown as rendered text in Preview and writes each change to the file as Markdown, so syntax Monknot does not render stays as written.
-- Inserts headings, lists, to-dos, toggles, callouts, quotes, tables, dividers, code, images, video, audio, files, a new page or a table of contents from the `/` menu at the start of a line.
-- Moves a block by dragging its handle; clicking the handle turns the block into another kind, duplicates it or deletes it.
-- Shows a format bar over selected text and lists workspace notes to link after `[[`.
-- Fixes typos and grammar and offers on-device completions while editing in Preview, as in Source. Show Writing Tools switches to Source and opens them there.
+- Centers or right-aligns paragraphs, headings, images, video and audio with Shift-Command-E and Shift-Command-R (Shift-Command-L for left), from the format bar, the block menu or the bar over an image. The file gets `<div align="center">` around those blocks, which GitHub shows the same way.
+- Resizes an image or video by dragging the handles on its sides; double-clicking a handle returns it to its own size. The width is saved in the alt text, as in `![Chart|480](chart.png)`.
 
-## Files and the sidebar
+## PDFs
 
-- Lists every file in the folder except hidden ones, build folders such as `node_modules`, and packages; archives, Office documents and other files open in their default app.
-- Shows a Jupyter notebook's cells and outputs in Preview and its JSON in Source.
-- Selects several items with Shift- and Command-click, moves through the tree with the arrow keys, and copies, moves, duplicates or trashes the whole selection.
-- Undoes and redoes moves, copies, renames and Move to Trash from the Edit menu.
-- Opens a new file in its own tab.
+- Shows PDF pages as they are, dimmed, or dark with light text in the theme's colours, from a menu next to zoom in the PDF bar; moving through the menu previews each choice. View › PDF Pages and Settings › Appearance hold the same choice. The file is never changed.
 
-## Window
+## Writing assistance
 
-- Sets the document and terminal on rounded cards in one window colour, with the same controls, menus and popovers throughout.
-- Keeps the outline rail short in long documents and opens the list of headings when the pointer rests on it.
-- Keeps pinned tabs open on Command-W.
+- Shows a suggestion's hint below the line in Source when it would run past the edge of the text column, instead of cutting it off.
