@@ -16,6 +16,17 @@ final class KeyTestWindow: NSWindow {
     override var isMainWindow: Bool { true }
 }
 
+/// Delivers AppKit's own pending events (a window shown, moved or activated) as the app's event loop
+/// would. A test process runs no event loop, so they wait in the queue, and a long run leaves hundreds
+/// of them; input a test posts goes in behind them, where a lookup that does not wait misses it. Call
+/// it before posting input.
+@MainActor
+func deliverPendingAppKitEvents() {
+    while let event = NSApp.nextEvent(matching: .appKitDefined, until: .distantPast, inMode: .default, dequeue: true) {
+        NSApp.sendEvent(event)
+    }
+}
+
 /// A test that records an animation frame by frame runs where a Mac's display draws the frames. A CI
 /// runner's virtual display drops some of them, and on some runs all of them, so there it skips.
 func skipFrameByFrameRecordingOnCI() throws {

@@ -874,6 +874,7 @@ class WorkspaceSplitViewTestCase: XCTestCase {
             windowNumber: window.windowNumber
         ))
 
+        deliverPendingAppKitEvents()
         NSApp.postEvent(drag, atStart: false)
         NSApp.postEvent(up, atStart: false)
         splitView.mouseDown(with: down)
