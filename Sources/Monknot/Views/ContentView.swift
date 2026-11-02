@@ -3,12 +3,18 @@ import MonknotCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Where keyboard focus goes when a file is chosen in the sidebar.
+/// Where keyboard focus goes when a file is opened from the sidebar.
 enum SidebarDocumentOpenFocus {
-    /// Whether the document takes keyboard focus: one shown for typing does, ready for it. Any
-    /// other file, such as an image, a PDF, a video or an HTML preview, leaves focus in the tree,
-    /// where the Edit menu's Copy, Cut and Paste act on the selected file. Markdown Preview is
-    /// edited in place, so it is shown for typing too.
+    /// A click, on a row or in Recents: focus stays in the tree, as in a Finder window, so the Edit
+    /// menu's Copy, Cut and Paste and the tree's keys act on the file. A click in the document starts
+    /// typing.
+    case tree
+    /// ⌘↓: a document shown for typing takes focus (`movesFocusToDocument`).
+    case document
+
+    /// Whether a document opened with ⌘↓ takes keyboard focus: one shown for typing does, ready for
+    /// it. Any other file, such as an image, a PDF, a video or an HTML preview, leaves focus in the
+    /// tree. Markdown Preview is edited in place, so it is shown for typing too.
     static func movesFocusToDocument(
         _ document: WorkspaceDocument,
         editorMode: EditorMode,
@@ -123,10 +129,38 @@ final class TerminalFocusRestorer: ObservableObject {
         restore(fallbackFrom: window)
     }
 
-    /// Gives the visible document keyboard focus once it has mounted, as after a file is chosen in
-    /// the sidebar.
-    static func focusVisibleDocument(in window: NSWindow?) {
-        focusVisibleDocumentLater(in: window, onlyIfUnfocused: false)
+    /// Gives the document `documentID` keyboard focus once its view shows, as after it was opened
+    /// for typing from the sidebar. A document still loading has no view yet: it takes focus as its
+    /// view mounts (`documentViewDidMount`), unless focus moved meanwhile.
+    static func focusDocumentWhenShown(_ documentID: String, in window: NSWindow?) {
+        guard let window else { return }
+        awaitedDocumentFocus = AwaitedDocumentFocus(documentID: documentID, window: window, responder: window.firstResponder)
+        DispatchQueue.main.async { [weak window] in
+            guard let window,
+                  window.attachedSheet == nil,
+                  let awaited = awaitedDocumentFocus,
+                  awaited.documentID == documentID,
+                  awaited.window === window,
+                  let target = fallbackDocumentFocusTarget(in: window)
+            else {
+                return
+            }
+            awaitedDocumentFocus = nil
+            window.makeFirstResponder(target)
+        }
+    }
+
+    /// A document's view has mounted. It takes keyboard focus if it was asked for while loading and
+    /// focus has not moved since; otherwise only when nothing in the window holds focus.
+    static func documentViewDidMount(_ documentID: String, in window: NSWindow?) {
+        let awaited = awaitedDocumentFocus
+        awaitedDocumentFocus = nil
+        if let awaited, awaited.documentID == documentID, awaited.window === window,
+           window?.firstResponder === awaited.responder {
+            focusVisibleDocumentLater(in: window, onlyIfUnfocused: false)
+        } else {
+            focusDocumentIfUnfocused(in: window)
+        }
     }
 
     /// Gives the visible document keyboard focus when nothing in the window
@@ -134,6 +168,15 @@ final class TerminalFocusRestorer: ObservableObject {
     static func focusDocumentIfUnfocused(in window: NSWindow?) {
         focusVisibleDocumentLater(in: window, onlyIfUnfocused: true)
     }
+
+    /// A document asked for focus before its view mounted, and the responder that held focus then.
+    private struct AwaitedDocumentFocus {
+        let documentID: String
+        weak var window: NSWindow?
+        weak var responder: NSResponder?
+    }
+
+    private static var awaitedDocumentFocus: AwaitedDocumentFocus?
 
     private static func focusVisibleDocumentLater(in window: NSWindow?, onlyIfUnfocused: Bool) {
         DispatchQueue.main.async { [weak window] in
@@ -979,7 +1022,7 @@ struct ContentView: View {
             manageWorkspaces: openWorkspaceSettings,
             newMarkdown: createMarkdownFile,
             exportPDF: exportMarkdownPDF(_:),
-            openDocument: openDocumentFromSidebar(id:),
+            openDocument: openDocumentFromSidebar(id:focus:),
             openWorkspaceSearchResult: openWorkspaceSearchResult(_:),
             showWorkspaceSearch: showWorkspaceSearch,
             dismissWorkspaceSearch: { dismissWorkspaceSearch(restoreFocus: true) },
@@ -1518,16 +1561,18 @@ struct ContentView: View {
         publishOpenTabIDs()
     }
 
-    /// A file chosen in the sidebar opens in its tab; one shown for typing also takes focus.
-    private func openDocumentFromSidebar(id documentID: String) {
+    /// A file chosen in the sidebar opens in its tab; opened with ⌘↓, one shown for typing also takes
+    /// focus.
+    private func openDocumentFromSidebar(id documentID: String, focus: SidebarDocumentOpenFocus) {
         openDocumentTab(id: documentID)
-        if let document = store.document(id: documentID),
+        if focus == .document,
+           let document = store.document(id: documentID),
            SidebarDocumentOpenFocus.movesFocusToDocument(
                document,
                editorMode: editorMode,
                isSplitViewEnabled: DocumentSplitViewPersistence.isEnabled(forDocumentPath: documentID)
            ) {
-            TerminalFocusRestorer.focusVisibleDocument(in: responderWindow)
+            TerminalFocusRestorer.focusDocumentWhenShown(documentID, in: responderWindow)
         }
     }
 
@@ -2905,8 +2950,10 @@ struct ContentView: View {
         }
     }
 
+    /// The main window, else the key window as the Edit menu reads it, which a test points at its own
+    /// window since a test process is never the active app.
     private var responderWindow: NSWindow? {
-        NSApp.mainWindow ?? NSApp.keyWindow
+        NSApp.mainWindow ?? MonknotKeyFocus.window()
     }
 
     private var workspaceSearchOwnsFocus: Bool {

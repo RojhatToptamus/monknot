@@ -22,6 +22,8 @@ final class SidebarMenuHarness {
     var copiedRelativePaths: [URL] = []
     var exportedPDFs: [String] = []
     var openedDocumentIDs: [String] = []
+    /// Where each open asked keyboard focus to go.
+    var openedDocumentFocus: [SidebarDocumentOpenFocus] = []
     private let defaultsSuiteName = "Monknot.SidebarTests.\(UUID().uuidString)"
     /// The saved workspaces the header's switcher lists.
     let library: WorkspaceLibraryStore
@@ -53,7 +55,7 @@ final class SidebarMenuHarness {
         var copiedPathsSink: (URL) -> Void = { _ in }
         var copiedRelativeSink: (URL) -> Void = { _ in }
         var exportSink: (WorkspaceDocument) -> Void = { _ in }
-        var openSink: (String) -> Void = { _ in }
+        var openSink: (String, SidebarDocumentOpenFocus) -> Void = { _, _ in }
         var switcherSink: (SwitcherAction) -> Void = { _ in }
         let view = SidebarView(
             store: store,
@@ -68,7 +70,7 @@ final class SidebarMenuHarness {
             manageWorkspaces: { switcherSink(.manage) },
             newMarkdown: {},
             exportPDF: { exportSink($0) },
-            openDocument: { id in openSink(id) },
+            openDocument: { id, focus in openSink(id, focus) },
             openWorkspaceSearchResult: { _ in },
             showWorkspaceSearch: {},
             dismissWorkspaceSearch: {},
@@ -97,8 +99,9 @@ final class SidebarMenuHarness {
         copiedPathsSink = { [weak self] in self?.copiedPaths.append($0.standardizedFileURL) }
         copiedRelativeSink = { [weak self] in self?.copiedRelativePaths.append($0.standardizedFileURL) }
         exportSink = { [weak self] in self?.exportedPDFs.append($0.id) }
-        openSink = { [weak self] id in
+        openSink = { [weak self] id, focus in
             self?.openedDocumentIDs.append(id)
+            self?.openedDocumentFocus.append(focus)
             _ = store.selectDocument(id: id)
         }
         switcherSink = { [weak self] action in
@@ -554,20 +557,30 @@ extension SidebarMenuHarness {
 
     /// Context menus of the Recents rows, top to bottom (rows answer with an "Open" item).
     func recentsRowMenus() -> [NSMenu] {
+        recentsRows().map(\.menu)
+    }
+
+    /// A point inside each Recents row, top to bottom, in window coordinates.
+    func recentsRowPoints() -> [NSPoint] {
+        recentsRows().map(\.point)
+    }
+
+    private func recentsRows() -> [(point: NSPoint, menu: NSMenu)] {
         guard let tree = treeFrameInWindow() else { return [] }
-        var menus: [NSMenu] = []
+        var rows: [(point: NSPoint, menu: NSMenu)] = []
         var lastRowTop: CGFloat?
         var y = tree.minY - 2
         while y > 34 {
-            if let menu = contextMenu(at: NSPoint(x: tree.midX, y: y)),
+            let point = NSPoint(x: tree.midX, y: y)
+            if let menu = contextMenu(at: point),
                menu.items.contains(where: { $0.title == "Open" }) {
                 if lastRowTop == nil || lastRowTop! - y >= 30 {
-                    menus.append(menu)
+                    rows.append((point, menu))
                     lastRowTop = y
                 }
             }
             y -= 4
         }
-        return menus
+        return rows
     }
 }

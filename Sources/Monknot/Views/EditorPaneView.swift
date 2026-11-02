@@ -250,7 +250,7 @@ struct EditorPaneView: View {
                 } else {
                     editor(for: selectedDocument)
                         .background(
-                            DocumentFocusClaim()
+                            DocumentFocusClaim(documentID: selectedDocument.id)
                                 .id("\(selectedDocument.id)|\(editorMode)|\(isSplitViewEnabled)")
                         )
                 }
@@ -920,22 +920,36 @@ private struct EmptyDetailView: View {
     }
 }
 
-/// Gives a newly shown document keyboard focus when nothing else in the window
-/// holds it. It runs once AppKit attaches the view: a state-change hook runs
-/// before SwiftUI swaps the document views. The `id` remounts it per document
-/// and mode.
+/// Gives a newly shown document keyboard focus when it was opened for typing while it loaded, or
+/// when nothing else in the window holds focus (`TerminalFocusRestorer.documentViewDidMount`). It
+/// runs once AppKit attaches the view: a state-change hook runs before SwiftUI swaps the document
+/// views. The `id` remounts it per document and mode.
 private struct DocumentFocusClaim: NSViewRepresentable {
+    let documentID: String
+
     func makeNSView(context: Context) -> AttachmentView {
-        AttachmentView(frame: .zero)
+        AttachmentView(documentID: documentID)
     }
 
     func updateNSView(_ nsView: AttachmentView, context: Context) {}
 
     final class AttachmentView: NSView {
+        private let documentID: String
+
+        init(documentID: String) {
+            self.documentID = documentID
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             guard window != nil else { return }
-            TerminalFocusRestorer.focusDocumentIfUnfocused(in: window)
+            TerminalFocusRestorer.documentViewDidMount(documentID, in: window)
         }
 
         override func hitTest(_ point: NSPoint) -> NSView? {

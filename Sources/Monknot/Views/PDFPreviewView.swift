@@ -2940,7 +2940,8 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             lastAppliedTheme = theme
             lastAppliedPageAppearance = pageAppearance
             lastAppliedWorkspaceZoomScale = clampedZoomScale
-            pdfView.pageAppearanceFilters = pageAppearance.colorTransform(in: theme)?.contentFilters ?? []
+            let transform = pageAppearance.colorTransform(in: theme)
+            pdfView.pageAppearanceFilters = transform?.contentFilters ?? []
             // Dark would turn a page's shadow into a glow of ink; its paper stands off the canvas by
             // tone alone.
             pdfView.pageShadowsEnabled = pageAppearance != .dark
@@ -2949,13 +2950,20 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 labelAppearance: pageAppearance.thumbnailLabelAppearance(in: theme)
             )
             // The pages sit on the card's surface tinted by the control `track`, laid opaquely over
-            // it, so a white page stands off it in every theme.
+            // it, so a white page stands off it in every theme. The page appearance's lens covers the
+            // canvas too, so the canvas is painted in the colour the lens shows as that surface.
             let track = NSColor(theme.controlTrackFillColor).usingColorSpace(.sRGB)
-            pdfView.backgroundColor = NSColor(hex: AppTheme.blendHex(
+            let canvas = AppTheme.blendHex(
                 theme.background,
                 toward: theme.foreground,
                 amount: Double(track?.alphaComponent ?? 0)
-            ))
+            )
+            if let transform, let rgb = RGBHex(canvas),
+               let painted = transform.preimage(of: [rgb.red, rgb.green, rgb.blue]) {
+                pdfView.backgroundColor = NSColor(srgbRed: painted[0], green: painted[1], blue: painted[2], alpha: 1)
+            } else {
+                pdfView.backgroundColor = NSColor(hex: canvas)
+            }
             pdfView.scrollThumbColor = MonknotScrollbarStyle.thumbColor(for: theme)
             pdfView.freeTextOverlayAppearance = PDFFreeTextOverlayAppearance(theme: theme)
             pdfView.freeTextOverlayMetrics = PDFFreeTextOverlayMetrics(
@@ -4156,6 +4164,37 @@ extension PDFPageColorTransform {
     }
 }
 
+/// The page appearance's lens (design.md §10.7a): a clear view over PDFKit's clip view, under its
+/// scroll bars, whose layer filters what the screen shows behind it. That backdrop is the pages at
+/// the screen's resolution. A filter on PDFKit's own views would render them first, at the 1× their
+/// layers draw at, and blur them. The layer is its own, so AppKit never resets it; the lens takes no
+/// clicks and is no element for accessibility.
+final class PDFPageAppearanceLens: NSView {
+    var filters: [CIFilter] = [] {
+        didSet { layer?.backgroundFilters = filters }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        layer = CALayer()
+        wantsLayer = true
+        // A backdrop filter reaches past its view unless its layer clips to its bounds, which AppKit
+        // sets from this.
+        clipsToBounds = true
+        autoresizingMask = [.width, .height]
+        setAccessibilityElement(false)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+}
+
 extension PDFPageAppearance {
     /// A brightness scale: the brightness keys' two suns, then a moon.
     var systemImage: String {
@@ -4209,16 +4248,13 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
             window?.invalidateCursorRects(for: self)
         }
     }
-    /// The page appearance (design.md §10.7a), applied to the pages and to a text box being edited
-    /// as the screen composites them. Nothing is drawn into a page, because PDFKit draws pages to
-    /// save them too: the document and every save keep the pages as they are.
+    /// The page appearance (design.md §10.7a), shown through `pageAppearanceLens` and on a text box
+    /// being edited as the screen composites them. Nothing is drawn into a page, because PDFKit draws
+    /// pages to save them too: the document and every save keep the pages as they are.
     var pageAppearanceFilters: [CIFilter] = [] {
         didSet { applyPageAppearanceFilters() }
     }
-    /// PDFKit shows a new document in a new document view, which starts without the filters.
-    override var document: PDFDocument? {
-        didSet { applyPageAppearanceFilters() }
-    }
+    let pageAppearanceLens = PDFPageAppearanceLens()
     var onEdited: (Data?, Data, PDFAnnotationEditCheckpoint) -> Void = { _, _, _ in }
     var onRestoreSavedEditCheckpoint: (PDFAnnotationEditCheckpoint) -> Bool = { _ in false }
     var onUndoStateChanged: (Bool, Bool) -> Void = { _, _ in }
@@ -4295,6 +4331,8 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         if let scrollView = documentView?.enclosingScrollView {
             MonknotScrollbarStyle.applyDocument(to: scrollView, thumbColor: scrollThumbColor)
         }
+        // It can retile its scroll view's subviews, too.
+        applyPageAppearanceFilters()
         updateFreeTextSelectionOverlay()
         updateFreeTextEditorFrame()
         if annotationMode == .select {
@@ -4303,13 +4341,27 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         onLayout()
     }
 
-    /// The document view holds the pages (and not the canvas, which its scroll view draws behind
-    /// it); the editor is a text box being edited, whose text must look like the page around it.
+    /// The lens sits right above PDFKit's clip view, under its scroll bars, while there is an
+    /// appearance to show; the editor is a text box being edited, whose text must look like the page
+    /// around it.
     private func applyPageAppearanceFilters() {
-        for view in [documentView, freeTextEditorScrollView].compactMap({ $0 })
-        where view.contentFilters != pageAppearanceFilters {
-            view.wantsLayer = true
-            view.contentFilters = pageAppearanceFilters
+        let lens = pageAppearanceLens
+        if pageAppearanceFilters.isEmpty {
+            lens.removeFromSuperview()
+        } else if let scrollView = documentView?.enclosingScrollView {
+            let subviews = scrollView.subviews
+            if lens.superview !== scrollView
+                || subviews.firstIndex(of: lens) != subviews.firstIndex(of: scrollView.contentView).map({ $0 + 1 }) {
+                lens.frame = scrollView.bounds
+                scrollView.addSubview(lens, positioned: .above, relativeTo: scrollView.contentView)
+            }
+            if lens.filters != pageAppearanceFilters {
+                lens.filters = pageAppearanceFilters
+            }
+        }
+        if let editor = freeTextEditorScrollView, editor.contentFilters != pageAppearanceFilters {
+            editor.wantsLayer = true
+            editor.contentFilters = pageAppearanceFilters
         }
     }
 

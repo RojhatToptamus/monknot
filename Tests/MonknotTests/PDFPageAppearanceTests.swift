@@ -57,6 +57,22 @@ final class PDFPageAppearanceTests: XCTestCase {
         assertColor(themed.apply([0.5, 0.5, 0.5]), halfway, "Mid grey on the theme")
     }
 
+    /// The viewer paints the canvas in the colour the transform shows as the theme's: a blend of its
+    /// two base colours, which Dark can show exactly in every theme.
+    func testThePreimageIsTheColourATransformShowsAsTheOneAsked() throws {
+        for theme in AppTheme.darkThemes + AppTheme.lightThemes {
+            let dark = try XCTUnwrap(PDFPageAppearance.dark.colorTransform(in: theme))
+            let canvas = try components(AppTheme.blendHex(theme.background, toward: theme.foreground, amount: 0.1))
+            let painted = try XCTUnwrap(dark.preimage(of: canvas), theme.name)
+            assertColor(dark.apply(painted), canvas, "\(theme.name): the canvas")
+        }
+        let dim = PDFPageColorTransform(brightness: 0.8)
+        assertColor(try XCTUnwrap(dim.preimage(of: [0.4, 0.2, 0.1])), [0.5, 0.25, 0.125], "Dim undone")
+        // Dim shows nothing brighter than 80 %, so a lighter colour comes as close as it can.
+        assertColor(try XCTUnwrap(dim.preimage(of: [0.95, 0.9, 0.5])), [1, 1, 0.625], "Dim, clamped")
+        XCTAssertNil(PDFPageColorTransform(brightness: 0).preimage(of: [0.5, 0.5, 0.5]), "Nothing undoes black")
+    }
+
     private func components(_ hex: String) throws -> [Double] {
         let rgb = try XCTUnwrap(RGBHex(hex))
         return [rgb.red, rgb.green, rgb.blue]
