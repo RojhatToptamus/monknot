@@ -156,7 +156,7 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             stops += [
                 screen.named("editor-\(name)", tabs: ["notes/route-plan.md"], prepare: Self.openBlockMenu),
                 screen.named("split-\(name)", tabs: ["notes/route-plan.md"], splitView: true),
-                screen.named("pdf-\(name)", document: "Field-note.pdf", tabs: ["README.md"]),
+                screen.named("pdf-\(name)", document: "Field-note.pdf", tabs: ["README.md"], prepare: Self.openPageAppearanceMenu),
                 screen.named("terminal-\(name)", layout: .init(showsSidebar: true, showsTerminal: true), tabs: ["checklist.md"], prepare: Self.runTerminal),
             ]
         }
@@ -280,6 +280,7 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         window.contentView = host
         window.orderFrontRegardless()
         defer {
+            MonknotContextMenuController.shared.close(animated: false)
             window.orderOut(nil)
             window.contentView = nil
         }
@@ -313,8 +314,11 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             XCTFail("Could not capture \(stop.name)")
             return
         }
-        // A popover (the workspace switcher) is a panel of its own: draw it over the window's image.
-        let popovers = NSApp.windows.filter { $0 !== window && $0.isVisible && $0 is MonknotPopoverPanel }
+        // A popover (the workspace switcher) or a menu (PDF pages) is a panel of its own: draw it over
+        // the window's image.
+        let popovers = NSApp.windows.filter {
+            $0 !== window && $0.isVisible && ($0 is MonknotPopoverPanel || $0 is MonknotContextMenuPanel)
+        }
         // `MONKNOT_UI_TOUR_RAW` keeps the window server's own image too, before any snapshot is drawn.
         if ProcessInfo.processInfo.environment["MONKNOT_UI_TOUR_RAW"] != nil {
             try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
@@ -712,6 +716,38 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
     /// A new line after README.md's to-do list, with the block menu filtered by "to".
     private static func openBlockMenu(_ host: NSView, _ window: NSWindow, _ store: WorkspaceStore) async throws {
         try await typeInPreview("\r\r/to", after: "Export the final brief as PDF", host: host, window: window, store: store)
+    }
+
+    /// The PDF bar's page appearance menu open below its pop-up: Original, Dim and Dark.
+    private static func openPageAppearanceMenu(_ host: NSView, _ window: NSWindow, _ store: WorkspaceStore) async throws {
+        func shownPDFView() -> PDFView? {
+            descendants(of: PDFView.self, in: host).first { !$0.isHiddenOrHasHiddenAncestor && $0.document != nil }
+        }
+        let shown = Date().addingTimeInterval(5)
+        while shownPDFView() == nil, Date() < shown {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let pdfView = try XCTUnwrap(shownPDFView())
+        let pages = pdfView.convert(pdfView.bounds, to: nil)
+        let barHeight = MonknotMetrics.interfaceDensity(40, theme: .defaultLight, zoomScale: laptopZoom)
+        let bar = NSRect(x: pages.minX, y: pages.maxY, width: pages.width, height: barHeight)
+        // Each of the bar's pop-ups lays a plain view, its menu's presenter, under itself; the page
+        // appearance is the one before the zoom.
+        var popUps: [NSRect] = []
+        for view in descendants(of: NSView.self, in: host) where type(of: view) == NSView.self && !view.isHiddenOrHasHiddenAncestor {
+            let frame = view.convert(view.bounds, to: nil)
+            if bar.contains(NSPoint(x: frame.midX, y: frame.midY)), frame.width >= 20, frame.height >= 20 {
+                popUps.append(frame)
+            }
+        }
+        popUps.sort { $0.minX < $1.minX }
+        let popUp = try XCTUnwrap(popUps.dropLast().last)
+        click(at: NSPoint(x: popUp.midX, y: popUp.midY), in: window)
+        let deadline = Date().addingTimeInterval(3)
+        while MonknotContextMenuController.shared.openTitles != ["Original", "Dim", "Dark"], Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(MonknotContextMenuController.shared.openTitles, ["Original", "Dim", "Dark"])
     }
 
     /// The terminal's shell run and drawn, with focus in it.

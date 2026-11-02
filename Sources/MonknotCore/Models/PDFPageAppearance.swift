@@ -62,4 +62,22 @@ public struct PDFPageColorTransform: Equatable, Sendable {
         }
         bias = ink
     }
+
+    /// The colour, components clamped to 0…1, that this transform shows as `color`; nil when the
+    /// transform cannot be undone. The viewer paints the canvas around the pages in it, since the
+    /// transform covers the canvas as well as the pages.
+    public func preimage(of color: [Double]) -> [Double]? {
+        let m = matrix
+        let cofactors = [
+            [m[1][1] * m[2][2] - m[1][2] * m[2][1], m[0][2] * m[2][1] - m[0][1] * m[2][2], m[0][1] * m[1][2] - m[0][2] * m[1][1]],
+            [m[1][2] * m[2][0] - m[1][0] * m[2][2], m[0][0] * m[2][2] - m[0][2] * m[2][0], m[0][2] * m[1][0] - m[0][0] * m[1][2]],
+            [m[1][0] * m[2][1] - m[1][1] * m[2][0], m[0][1] * m[2][0] - m[0][0] * m[2][1], m[0][0] * m[1][1] - m[0][1] * m[1][0]],
+        ]
+        let determinant = m[0][0] * cofactors[0][0] + m[0][1] * cofactors[1][0] + m[0][2] * cofactors[2][0]
+        guard color.count == 3, abs(determinant) > 1e-9 else { return nil }
+        let offset = zip(color, bias).map { $0 - $1 }
+        return cofactors.map { row in
+            min(max(zip(row, offset).map(*).reduce(0, +) / determinant, 0), 1)
+        }
+    }
 }

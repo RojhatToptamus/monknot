@@ -15,7 +15,8 @@ struct SidebarView: View {
     let manageWorkspaces: () -> Void
     let newMarkdown: () -> Void
     let exportPDF: (WorkspaceDocument) -> Void
-    let openDocument: (String) -> Void
+    /// Opens a document in its tab, leaving keyboard focus where `SidebarDocumentOpenFocus` says.
+    let openDocument: (String, SidebarDocumentOpenFocus) -> Void
     let openWorkspaceSearchResult: (WorkspaceSearchResult) -> Void
     let showWorkspaceSearch: () -> Void
     let dismissWorkspaceSearch: () -> Void
@@ -326,6 +327,7 @@ struct SidebarView: View {
                         revealedRow: revealedRow(in: nodes),
                         keyDown: handleTreeKeyDown(_:),
                         canPaste: canPaste,
+                        selectNothing: { store.selectSidebarItems(SidebarSelection()) },
                         mouse: treeMouse
                     ) {
                         let selectedRowIDs = selectedRowIDs(in: nodes)
@@ -382,7 +384,7 @@ struct SidebarView: View {
                                 (store.document(id: entry.documentID)?.fileGlyph
                                     ?? WorkspaceFileGlyph(path: entry.documentID)).systemImage
                             },
-                            openDocument: openDocument,
+                            openDocument: openRecentDocument(_:),
                             location: locationActions
                         )
                         .layoutPriority(2)
@@ -654,13 +656,23 @@ struct SidebarView: View {
         refreshVisibleNodes()
     }
 
-    /// A click on a file row opens the file; with ⌘ or ⇧ it only picks the file (`pickRow`).
+    /// A click on a file row opens the file and leaves keyboard focus in the tree; with ⌘ or ⇧ it
+    /// only picks the file (`pickRow`).
     private func clickFile(_ documentID: String) {
         if let row = displayedVisibleNodes.first(where: { $0.node.kind == .file && $0.node.id == documentID }),
            pickRow(row) {
             return
         }
-        openDocument(documentID)
+        openDocument(documentID, .tree)
+    }
+
+    /// A click in Recents opens the document and gives the tree keyboard focus, as a click on its
+    /// row does.
+    private func openRecentDocument(_ documentID: String) {
+        if let tree = treeMouse.treeView {
+            tree.window?.makeFirstResponder(tree)
+        }
+        openDocument(documentID, .tree)
     }
 
     /// ⌘-click adds the row's item to the selection or takes it out; ⇧-click selects the rows from
@@ -900,7 +912,7 @@ struct SidebarView: View {
             }
         }
         expandFolders(folderIDs)
-        documentIDs.forEach(openDocument)
+        documentIDs.forEach { openDocument($0, .document) }
     }
 
     /// The items a row's menu acts on: every selected item when the row is one of several selected,
@@ -2523,6 +2535,8 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
     let revealedRow: SidebarRevealedRow?
     let keyDown: (NSEvent) -> Bool
     let canPaste: () -> Bool
+    /// A plain click below the rows.
+    let selectNothing: () -> Void
     let mouse: SidebarTreeMouse
     let content: Content
 
@@ -2531,6 +2545,7 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
         revealedRow: SidebarRevealedRow?,
         keyDown: @escaping (NSEvent) -> Bool,
         canPaste: @escaping () -> Bool,
+        selectNothing: @escaping () -> Void,
         mouse: SidebarTreeMouse,
         @ViewBuilder content: () -> Content
     ) {
@@ -2538,6 +2553,7 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
         self.revealedRow = revealedRow
         self.keyDown = keyDown
         self.canPaste = canPaste
+        self.selectNothing = selectNothing
         self.mouse = mouse
         self.content = content()
     }
@@ -2578,6 +2594,7 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
         hostingView.mouse = mouse
         mouse.treeView = hostingView
         scrollView.thumbColor = thumbColor
+        (scrollView.contentView as? SidebarClipView)?.selectNothing = selectNothing
 
         // A new selection scrolls into view once, after the rows that show it are laid out.
         guard let revealedRow, revealedRow.id != context.coordinator.revealedRowID else { return }
@@ -2763,9 +2780,28 @@ enum SidebarNewItemRequest: Equatable {
     case folder
 }
 
+/// Takes the clicks below the tree's last row, which the tree leaves. Such a click gives the tree
+/// keyboard focus, as a click on a row does, so Paste and the tree's keys act on the workspace rather
+/// than the open document. A plain one also selects nothing, as a click on a Finder window's
+/// background does, so Paste and New put items in the workspace's top folder, where the
+/// background's own menu puts them.
 private final class SidebarClipView: NSClipView {
+    var selectNothing: () -> Void = {}
+
     override var mouseDownCanMoveWindow: Bool {
         false
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        // A Control-click opens the context menu.
+        guard let tree = documentView, !event.modifierFlags.contains(.control) else {
+            super.mouseDown(with: event)
+            return
+        }
+        window?.makeFirstResponder(tree)
+        if event.modifierFlags.isDisjoint(with: [.shift, .command]) {
+            selectNothing()
+        }
     }
 }
 

@@ -232,17 +232,16 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         XCTAssertNil(fixture.store.selectedFolderID, "Opening a document moves the selection to it")
         XCTAssertEqual(fixture.store.selectedDocumentID, fixture.path("docs/b.md"))
         XCTAssertEqual(fixture.store.sidebarTargetFolderURL?.path, fixture.path("docs"))
-
-        // The window's open action hands focus on to a document shown for typing.
+        // A click leaves focus in the tree, so ⌘C, ⌘X and ⌘V act on the file.
         XCTAssertTrue(fixture.treeHasFocus())
-        let document = try XCTUnwrap(fixture.store.selectedDocument)
-        XCTAssertTrue(SidebarDocumentOpenFocus.movesFocusToDocument(document, editorMode: .source, isSplitViewEnabled: false))
-        TerminalFocusRestorer.focusVisibleDocument(in: fixture.window)
-        let editorFocused = await waitUntil { fixture.window.firstResponder === fixture.editor }
-        XCTAssertTrue(editorFocused)
+        XCTAssertEqual(fixture.openedDocuments.last?.focus, .tree)
+
+        fixture.press("\u{F701}", keyCode: 125, modifiers: .command)
+        XCTAssertEqual(fixture.openedDocuments.last?.id, fixture.path("docs/b.md"))
+        XCTAssertEqual(fixture.openedDocuments.last?.focus, .document, "⌘↓ opens the note for typing")
     }
 
-    /// Only a document shown for typing takes focus from the tree when chosen there. Anything else
+    /// Only a document shown for typing takes focus from the tree when opened with ⌘↓. Anything else
     /// leaves focus in the tree, where ⌘C, ⌘X and ⌘V act on the selected file.
     func testOnlyADocumentShownForTypingTakesFocusFromTheTree() {
         let root = URL(fileURLWithPath: "/workspace", isDirectory: true)
@@ -383,6 +382,51 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         XCTAssertFalse(fixture.treeHasFocus())
     }
 
+    /// A click in the empty sidebar below the rows takes keyboard focus from the editor too, so Paste
+    /// no longer goes to the open note, which put an image in the note's `assets` folder. A plain
+    /// click also selects nothing, so Paste puts the clipboard's image in the workspace's top folder,
+    /// as the background's own menu does; a ⌘-click keeps the selection.
+    func testClickingBelowTheRowsTakesFocusAndPastesIntoTheTopFolder() async throws {
+        let fixture = try await makeSidebarFixture()
+        defer { fixture.close() }
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotSidebarBackground-\(UUID().uuidString)"))
+        defer {
+            pasteboard.clearContents()
+            pasteboard.releaseGlobally()
+        }
+        let note = fixture.path("docs/a.md")
+        XCTAssertEqual(fixture.store.sidebarSelectionIDs, [note], "The sidebar selects the open note")
+        let lastRow = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "top.md"))
+        let belowRows = NSPoint(x: lastRow.midX, y: lastRow.minY - 80)
+
+        XCTAssertTrue(fixture.window.makeFirstResponder(fixture.editor))
+        await fixture.drag(from: belowRows, to: belowRows, modifiers: .command)
+        XCTAssertTrue(fixture.treeHasFocus(), "A ⌘-click below the rows takes focus")
+        XCTAssertEqual(fixture.store.sidebarSelectionIDs, [note], "and keeps the selection")
+
+        XCTAssertTrue(fixture.window.makeFirstResponder(fixture.editor))
+        await fixture.drag(from: belowRows, to: belowRows)
+        XCTAssertTrue(fixture.treeHasFocus())
+        let responder = try XCTUnwrap(fixture.window.firstResponder)
+        XCTAssertFalse(MonknotNativePasteboardCommand.monknotIsNativeTextTarget(responder), "Paste goes to the workspace")
+        XCTAssertEqual(fixture.store.sidebarSelectionIDs, [], "A plain click below the rows selects nothing")
+        XCTAssertNil(fixture.store.sidebarTargetFolderURL, "Paste and New go to the top folder")
+        XCTAssertEqual(fixture.store.selectedDocumentID, note, "The note stays open")
+
+        let image = NSImage(size: NSSize(width: 8, height: 8))
+        image.lockFocus()
+        NSColor.systemOrange.setFill()
+        NSRect(x: 0, y: 0, width: 8, height: 8).fill()
+        image.unlockFocus()
+        pasteboard.clearContents()
+        pasteboard.writeObjects([image])
+        XCTAssertTrue(fixture.store.pasteFromPasteboard(pasteboard, into: fixture.store.sidebarTargetFolderURL))
+        let pasted = await waitUntil { fixture.listing().contains { $0.hasSuffix(".png") } && !fixture.store.isBusy }
+        XCTAssertTrue(pasted)
+        XCTAssertEqual(fixture.listing().filter { $0.hasSuffix(".png") }, ["Pasted Image.png"])
+        XCTAssertFalse(fixture.listing().contains("assets"))
+    }
+
     // MARK: - Helpers
 
     private func folder(_ name: String, in parent: URL, children: [SidebarNode]) -> SidebarNode {
@@ -431,6 +475,7 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         let defaultsSuiteName = "Monknot.SidebarDrag.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: defaultsSuiteName)!
         let newItemRequest = NewItemRequestBox()
+        let openLog = OpenedDocumentLog()
         let library = WorkspaceLibraryStore(userDefaults: defaults)
         let search = WorkspaceSearchState()
         let view = SidebarFixtureRoot(requests: newItemRequest) { newItemRequest in
@@ -447,7 +492,10 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
                 manageWorkspaces: {},
                 newMarkdown: {},
                 exportPDF: { _ in },
-                openDocument: { id in _ = store.selectDocument(id: id) },
+                openDocument: { id, focus in
+                    openLog.entries.append((id, focus))
+                    _ = store.selectDocument(id: id)
+                },
                 openWorkspaceSearchResult: { _ in },
                 showWorkspaceSearch: {},
                 dismissWorkspaceSearch: {},
@@ -484,6 +532,7 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
             store: store,
             workspaceURL: root,
             newItemRequest: newItemRequest,
+            openLog: openLog,
             defaultsSuiteName: defaultsSuiteName
         )
     }
@@ -492,6 +541,12 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
 @MainActor
 private final class NewItemRequestBox: ObservableObject {
     @Published var value: SidebarNewItemRequest?
+}
+
+/// The documents the sidebar opened, with where it asked keyboard focus to go.
+@MainActor
+private final class OpenedDocumentLog {
+    var entries: [(id: String, focus: SidebarDocumentOpenFocus)] = []
 }
 
 /// Hosts the sidebar with its New File and New Folder request bound to `requests`.
@@ -512,7 +567,12 @@ private struct SidebarFixture {
     let store: WorkspaceStore
     let workspaceURL: URL
     let newItemRequest: NewItemRequestBox
+    let openLog: OpenedDocumentLog
     let defaultsSuiteName: String
+
+    var openedDocuments: [(id: String, focus: SidebarDocumentOpenFocus)] {
+        openLog.entries
+    }
 
     func close() {
         if let sheet = window.attachedSheet {
@@ -608,14 +668,14 @@ private struct SidebarFixture {
     }
 
     /// Mouse down at `start`, twelve drag steps, mouse up at `end`; equal points make a click.
-    func drag(from start: NSPoint, to end: NSPoint) async {
+    func drag(from start: NSPoint, to end: NSPoint, modifiers: NSEvent.ModifierFlags = []) async {
         var timestamp = ProcessInfo.processInfo.systemUptime
         func event(_ type: NSEvent.EventType, _ point: NSPoint, _ number: Int) -> NSEvent? {
             timestamp += 0.016
             return NSEvent.mouseEvent(
                 with: type,
                 location: point,
-                modifierFlags: [],
+                modifierFlags: modifiers,
                 timestamp: timestamp,
                 windowNumber: window.windowNumber,
                 context: nil,

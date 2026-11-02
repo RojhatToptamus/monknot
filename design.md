@@ -1143,9 +1143,10 @@ pop-up (§5.3).
 **Selection.** The tree's selection is the items it picked — a clicked folder, or files and folders
 picked with the keys, ⇧ or ⌘ — or else the open document. Clicking a
 folder selects it, opens or closes it and gives the tree keyboard focus, without closing the open
-document. Clicking a file opens it; a document shown for typing (Markdown in Source or Preview, text,
-or a source beside its preview) takes keyboard focus, ready for typing, while any other file (an image, a PDF, video,
-audio, a preview) leaves focus in the tree, so ⌘C, ⌘X and ⌘V act on it. New Markdown, New File, New Folder and Paste put items in the
+document. Clicking a file, in the tree or in Recents, opens it and keeps keyboard focus in the tree, so
+⌘C, ⌘X, ⌘V, ⌘D and ⌘⌫ act on the file, never on its text; a click in the document starts typing, and so
+does ⌘↓ (below). A click on the empty space below the rows gives the tree keyboard focus and selects
+nothing (with ⌘ or ⇧ it only takes focus). New Markdown, New File, New Folder and Paste put items in the
 selected folder, or the selected file's folder, or the root when nothing is selected; the empty tree's
 menu and files dropped from another app onto empty space act on the root. A created
 or pasted item is selected and its folder opens; files pasted or dropped in from elsewhere open their
@@ -1175,7 +1176,9 @@ the tree does not show; when none is left, the row that holds the last one picke
 - → opens a folder, then selects its first item; ← closes an open folder, otherwise selects the folder
   holding the item. With ⌥ they open or close the folder and every folder inside it; ⌘← closes every
   folder. ⌘↑ selects the folder holding the item; ⌘↓ opens the selected files, the lead's tab last,
-  and opens the selected folders. ⌘A selects every row shown.
+  and opens the selected folders. A document shown for typing (Markdown in Source or Preview, text,
+  or a source beside its preview) then takes keyboard focus, once it has loaded and shows, unless
+  focus moved meanwhile; any other file leaves it in the tree. ⌘A selects every row shown.
 - Typing a name selects the first row from the lead on whose name starts with what was typed within a
   second (case and accents ignored, Space only once a name has started).
 - Return renames the one selected item, ⌘D duplicates and ⌘⌫ moves to the Trash what is selected,
@@ -1396,9 +1399,13 @@ divider `line2`, its lists the row primitive in the 10 list inset (selection 10 
 or dark. It shows the current one's glyph — `sun.max`, `sun.min` and `moon`, the brightness keys' two
 suns and a moon — and its menu shows the pages in the row it highlights until it closes, as Settings'
 theme preset does (§5.8). View › PDF Pages and Settings › Appearance › PDF pages set the same choice.
-Only the screen changes: the window server composites the pages through colour filters
-(`AnnotatingPDFView.pageAppearanceFilters`, on PDFKit's document view), so the file and every save
-keep its colours (§16). Dim shows every colour at 80 % of its brightness. Dark flips each colour's
+Only the screen changes: the window server shows the pages through colour filters, so the file and
+every save keep its colours (§16). The filters sit on a lens over the document's scroll view, under
+its scroll bars (`PDFPageAppearanceLens`), and act on what is already on screen behind it, so a page
+stays as sharp as the original; on PDFKit's own views they would first draw the pages at 1× and blur
+them (§16). The lens covers the canvas too, so the canvas is painted in the colour the filters show
+as the theme's (`PDFPageColorTransform.preimage`); Dim shows nothing lighter than 80 %, so under Dim a
+light theme's canvas shows slightly darker. Dim shows every colour at 80 % of its brightness. Dark flips each colour's
 grey level and keeps its hue: white paper takes the theme's darker base colour and black ink its
 lighter one (a dark theme's `surface` and `ink`, a light theme's the other way round), and a yellow
 highlight stays yellow, only darker. A photo inside a page flips too; Dim is for those. Dark pages
@@ -1991,4 +1998,8 @@ symptom, so they are worth checking deliberately rather than hoping to notice.
     read as notes. Give each kind its glyph (`WorkspaceFileGlyph`, §8.7).
 25. **A view setting drawn into the document** — PDFKit draws a page the same way to save it as to
     show it, so a page appearance drawn into the page is saved into the file. Change only what the
-    screen composites (content filters, §10.7a).
+    screen composites (§10.7a).
+26. **A filter on PDFKit's views** — PDFKit's pages draw at 1× and leave the screen's resolution to
+    the window server, so a filter on its views, which draws them offscreen first, blurs every page
+    on a 2× screen. Filter what is on screen behind a view above them (`PDFPageAppearanceLens`,
+    §10.7a).

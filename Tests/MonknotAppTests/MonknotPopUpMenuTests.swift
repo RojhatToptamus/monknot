@@ -198,6 +198,11 @@ final class MonknotPopUpMenuTests: XCTestCase {
             window.orderOut(nil)
             window.contentView = nil
         }
+        // The popover opens from a window already on screen, as a click on its control opens it.
+        deliverPendingAppKitEvents()
+        try await Task.sleep(nanoseconds: 200_000_000)
+        deliverPendingAppKitEvents()
+        recorder.showsPopover = true
 
         var popoverWindow: NSWindow?
         let shown = await waitUntil {
@@ -284,12 +289,11 @@ final class MonknotPopUpMenuTests: XCTestCase {
 
     private struct PopoverHostView: View {
         @ObservedObject var recorder: Recorder
-        @State private var isShown = true
 
         var body: some View {
             Color.clear
                 .frame(width: 300, height: 80)
-                .monknotPopover(isPresented: $isShown, label: "Text Style", theme: .defaultLight, zoomScale: 1) {
+                .monknotPopover(isPresented: $recorder.showsPopover, label: "Text Style", theme: .defaultLight, zoomScale: 1) {
                     MonknotPopUpButton(
                         label: "Font Family",
                         selection: $recorder.selection,
@@ -477,6 +481,7 @@ final class MonknotPopUpMenuTests: XCTestCase {
     @MainActor
     private final class Recorder: ObservableObject {
         @Published var selection: String
+        @Published var showsPopover = false
         var previews: [String] = []
         var cancels = 0
 

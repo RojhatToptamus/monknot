@@ -6,12 +6,15 @@ import SwiftUI
 import XCTest
 @testable import MonknotApp
 
-/// The page appearance (design.md §10.7a) changes only what the screen shows of a PDF's pages: the
-/// canvas around them, an image, the document and every save keep their colours.
+/// The page appearance (design.md §10.7a) changes only what the screen shows of a PDF's pages, at the
+/// screen's resolution: the canvas around them, an image, the document and every save keep their
+/// colours.
 final class PDFPageAppearanceViewTests: PDFNavigatorTestCase {
     private static let colorContext = CIContext()
 
-    func testDarkFiltersThePagesAndNotTheCanvas() throws {
+    /// The lens filters what the screen shows behind it, so the pages keep the screen's resolution.
+    /// A filter on PDFKit's own views would render the pages at the 1× their layers draw at first.
+    func testTheLensShowsThePagesAndTheCanvasKeepsTheThemesColour() throws {
         let (window, pdfView) = makeWindow(showing: try makeLectureDocument())
         defer { window.orderOut(nil) }
         let coordinator = PDFKitPreviewRepresentable.Coordinator()
@@ -19,24 +22,84 @@ final class PDFPageAppearanceViewTests: PDFNavigatorTestCase {
         coordinator.applyAppearance(theme: .defaultDark, pageAppearance: .dark, workspaceZoomScale: 1, in: pdfView)
         window.layoutIfNeeded()
 
+        let lens = pdfView.pageAppearanceLens
         let documentView = try XCTUnwrap(pdfView.documentView)
-        try assertShown(documentView, as: .dark, in: .defaultDark, "Dark")
-        XCTAssertFalse(pdfView.pageShadowsEnabled, "A page's shadow would show as a glow of ink")
         let scrollView = try XCTUnwrap(documentView.enclosingScrollView)
-        for canvas in [pdfView, scrollView, scrollView.contentView] {
-            XCTAssertEqual(canvas.contentFilters.count, 0, "\(type(of: canvas)) draws the canvas, which keeps the theme's colour")
+        try assertShown(lens.filters, as: .dark, in: .defaultDark, "Dark")
+        XCTAssertTrue(lens.superview === scrollView)
+        XCTAssertEqual(
+            scrollView.subviews.firstIndex(of: lens),
+            scrollView.subviews.firstIndex(of: scrollView.contentView).map { $0 + 1 },
+            "Right above the clip view, so the scroll bars keep their colours"
+        )
+        XCTAssertEqual(lens.frame, scrollView.bounds)
+        XCTAssertEqual(lens.layer?.backgroundFilters?.count, 3)
+        XCTAssertEqual(lens.layer?.masksToBounds, true, "A backdrop filter reaches past its view unless it clips")
+        XCTAssertNil(lens.hitTest(NSPoint(x: lens.bounds.midX, y: lens.bounds.midY)), "Clicks reach the pages")
+        for view in [pdfView, scrollView, scrollView.contentView, documentView] as [NSView] {
+            XCTAssertEqual(view.contentFilters.count, 0, "A filter on \(type(of: view)) renders the pages at 1×")
         }
+        try assertCanvas(of: pdfView, showsAs: .defaultDark, through: lens.filters)
+        XCTAssertFalse(pdfView.pageShadowsEnabled, "A page's shadow would show as a glow of ink")
 
         coordinator.applyAppearance(theme: .defaultLight, pageAppearance: .dark, workspaceZoomScale: 1, in: pdfView)
-        try assertShown(documentView, as: .dark, in: .defaultLight, "Dark in a light theme")
+        try assertShown(lens.filters, as: .dark, in: .defaultLight, "Dark in a light theme")
+        try assertCanvas(of: pdfView, showsAs: .defaultLight, through: lens.filters)
 
-        coordinator.applyAppearance(theme: .defaultLight, pageAppearance: .dim, workspaceZoomScale: 1, in: pdfView)
-        try assertShown(documentView, as: .dim, in: .defaultLight, "Dim")
+        coordinator.applyAppearance(theme: .defaultDark, pageAppearance: .dim, workspaceZoomScale: 1, in: pdfView)
+        try assertShown(lens.filters, as: .dim, in: .defaultDark, "Dim")
+        try assertCanvas(of: pdfView, showsAs: .defaultDark, through: lens.filters)
         XCTAssertTrue(pdfView.pageShadowsEnabled)
 
-        coordinator.applyAppearance(theme: .defaultLight, pageAppearance: .original, workspaceZoomScale: 1, in: pdfView)
-        XCTAssertEqual(documentView.contentFilters.count, 0)
+        coordinator.applyAppearance(theme: .defaultDark, pageAppearance: .original, workspaceZoomScale: 1, in: pdfView)
+        XCTAssertNil(lens.superview, "The original pages need no lens")
+        try assertCanvas(of: pdfView, showsAs: .defaultDark, through: [])
         XCTAssertTrue(pdfView.pageShadowsEnabled)
+    }
+
+    /// The bug this design avoids: filtering PDFKit's views rendered the pages at 1× and blurred
+    /// their text. What the window server composites must stay as sharp as the original pages, at
+    /// a zoom that puts the page's edges between pixels too.
+    func testTheLensKeepsThePagesAsSharpAsTheOriginal() async throws {
+        for scale in [CGFloat(1.5), 1.37] {
+            var blur: [PDFPageAppearance: Double] = [:]
+            for appearance in PDFPageAppearance.allCases {
+                let size = NSSize(width: 700, height: 500)
+                let window = KeyTestWindow(
+                    contentRect: NSRect(origin: NSPoint(x: 160, y: 160), size: size),
+                    styleMask: [.borderless],
+                    backing: .buffered,
+                    defer: false
+                )
+                window.isReleasedWhenClosed = false
+                window.animationBehavior = .none
+                let pdfView = AnnotatingPDFView(frame: NSRect(origin: .zero, size: size))
+                window.contentView = pdfView
+                pdfView.document = try makeTextPDFDocument(linesByPage: [[
+                    "Take-home exercise: AI DevEX Engineer",
+                    "Midnight Foundation 0123456789",
+                    "The quick brown fox jumps over",
+                ]])
+                pdfView.autoScales = false
+                pdfView.scaleFactor = scale
+                PDFKitPreviewRepresentable.Coordinator()
+                    .applyAppearance(theme: .defaultDark, pageAppearance: appearance, workspaceZoomScale: 1, in: pdfView)
+                window.orderFrontRegardless()
+                defer { window.orderOut(nil) }
+                try await Task.sleep(nanoseconds: 900_000_000)
+                let image = try XCTUnwrap(CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution]))
+                let page = try XCTUnwrap(pdfView.document?.page(at: 0))
+                let pageRect = pdfView.convert(page.bounds(for: .mediaBox), from: page).insetBy(dx: 3, dy: 3)
+                guard let share = greyShare(of: image, in: pageRect, viewSize: size) else {
+                    throw XCTSkip("The window server shows this window blank here (a locked screen)")
+                }
+                blur[appearance] = share
+            }
+            let original = try XCTUnwrap(blur[.original])
+            for appearance in [PDFPageAppearance.dim, .dark] {
+                XCTAssertEqual(try XCTUnwrap(blur[appearance]), original, accuracy: 0.03, "\(appearance) at \(scale): the text blurs")
+            }
+        }
     }
 
     func testTheFiltersShowEachColourAsTheAppearanceSays() throws {
@@ -55,8 +118,8 @@ final class PDFPageAppearanceViewTests: PDFNavigatorTestCase {
         }
     }
 
-    /// The viewer keeps its PDF view when the file changes on disk or another PDF takes its tab,
-    /// and PDFKit shows the new document in a new document view.
+    /// The viewer keeps its PDF view when the file changes on disk or another PDF takes its tab;
+    /// PDFKit then shows the new document in a new document view, in the same scroll view.
     func testAnotherDocumentInTheSameViewKeepsTheAppearance() throws {
         let (window, pdfView) = makeWindow(showing: try makeLectureDocument())
         defer { window.orderOut(nil) }
@@ -65,9 +128,16 @@ final class PDFPageAppearanceViewTests: PDFNavigatorTestCase {
         let first = pdfView.documentView
 
         pdfView.document = try makeTextPDFDocument(linesByPage: [["Another file"]])
+        window.layoutIfNeeded()
 
         XCTAssertFalse(pdfView.documentView === first)
-        try assertShown(try XCTUnwrap(pdfView.documentView), as: .dark, in: .defaultDark, "Another document")
+        let scrollView = try XCTUnwrap(pdfView.documentView?.enclosingScrollView)
+        XCTAssertTrue(pdfView.pageAppearanceLens.superview === scrollView)
+        XCTAssertEqual(
+            scrollView.subviews.firstIndex(of: pdfView.pageAppearanceLens),
+            scrollView.subviews.firstIndex(of: scrollView.contentView).map { $0 + 1 }
+        )
+        try assertShown(pdfView.pageAppearanceLens.filters, as: .dark, in: .defaultDark, "Another document")
     }
 
     func testTheNavigatorShowsItsThumbnailsAsThePagesShow() throws {
@@ -77,18 +147,18 @@ final class PDFPageAppearanceViewTests: PDFNavigatorTestCase {
         let thumbnails = try XCTUnwrap(thumbnailCollection(in: navigator))
 
         coordinator.applyAppearance(theme: .defaultDark, pageAppearance: .dark, workspaceZoomScale: 1, in: pdfView, navigator: navigator)
-        try assertShown(thumbnails, as: .dark, in: .defaultDark, "Thumbnails")
+        try assertShown(thumbnails.contentFilters, as: .dark, in: .defaultDark, "Thumbnails")
         // Dark shows black as the theme's text, so the labels are drawn in the light appearance.
         XCTAssertEqual(thumbnails.appearance?.name, .aqua)
         XCTAssertEqual(navigator.thumbnailView.contentFilters.count, 0, "The scroll bar keeps the theme's colours")
         XCTAssertEqual(navigator.contentFilters.count, 0, "The panel's surface keeps the theme's colour")
 
         coordinator.applyAppearance(theme: .defaultLight, pageAppearance: .dark, workspaceZoomScale: 1, in: pdfView, navigator: navigator)
-        try assertShown(thumbnails, as: .dark, in: .defaultLight, "Thumbnails in a light theme")
+        try assertShown(thumbnails.contentFilters, as: .dark, in: .defaultLight, "Thumbnails in a light theme")
         XCTAssertEqual(thumbnails.appearance?.name, .darkAqua)
 
         coordinator.applyAppearance(theme: .defaultLight, pageAppearance: .dim, workspaceZoomScale: 1, in: pdfView, navigator: navigator)
-        try assertShown(thumbnails, as: .dim, in: .defaultLight, "Dim thumbnails")
+        try assertShown(thumbnails.contentFilters, as: .dim, in: .defaultLight, "Dim thumbnails")
         XCTAssertNil(thumbnails.appearance, "Dim keeps the theme's own labels")
 
         coordinator.applyAppearance(theme: .defaultLight, pageAppearance: .original, workspaceZoomScale: 1, in: pdfView, navigator: navigator)
@@ -110,7 +180,7 @@ final class PDFPageAppearanceViewTests: PDFNavigatorTestCase {
         XCTAssertTrue(pdfView.hasActiveFreeTextEditor)
         let editor = try XCTUnwrap(pdfView.subviews.compactMap { $0 as? NSScrollView }.last)
         XCTAssertFalse(editor === pdfView.documentView?.enclosingScrollView, "The editor is the text box's own view")
-        try assertShown(editor, as: .dark, in: .defaultDark, "The text box being edited")
+        try assertShown(editor.contentFilters, as: .dark, in: .defaultDark, "The text box being edited")
 
         coordinator.applyAppearance(theme: .defaultDark, pageAppearance: .original, workspaceZoomScale: 1, in: pdfView)
         XCTAssertEqual(editor.contentFilters.count, 0)
@@ -143,7 +213,7 @@ final class PDFPageAppearanceViewTests: PDFNavigatorTestCase {
         let dim = await waitUntil { self.isClose((try? self.shownWhite(pdfView)) ?? nil, to: [204, 204, 204]) }
         XCTAssertTrue(dim, "An open PDF follows the setting")
         defaults.set(PDFPageAppearance.original.rawValue, forKey: PDFPageAppearance.preferenceKey)
-        let original = await waitUntil { pdfView.documentView?.contentFilters.isEmpty == true }
+        let original = await waitUntil { pdfView.pageAppearanceLens.superview == nil }
         XCTAssertTrue(original)
 
         defaults.set(PDFPageAppearance.dark.rawValue, forKey: PDFPageAppearance.preferenceKey)
@@ -152,7 +222,7 @@ final class PDFPageAppearanceViewTests: PDFNavigatorTestCase {
         XCTAssertEqual(WorkspaceDocument(url: imageURL, rootURL: root).kind, .image)
         try await Task.sleep(nanoseconds: 300_000_000)
         imageWindow.layoutIfNeeded()
-        XCTAssertEqual(imageView.documentView?.contentFilters.count, 0, "Dark would show a picture as its negative")
+        XCTAssertNil(imageView.pageAppearanceLens.superview, "Dark would show a picture as its negative")
         XCTAssertTrue(imageView.pageShadowsEnabled)
         XCTAssertEqual(barPopUpFrames(in: imageWindow).count, 2, "An image's bar has the colour and the zoom, no page appearance")
     }
@@ -568,7 +638,7 @@ final class PDFPageAppearanceViewTests: PDFNavigatorTestCase {
     // MARK: - Colours
 
     private func assertShown(
-        _ view: NSView,
+        _ filters: [CIFilter],
         as appearance: PDFPageAppearance,
         in theme: AppTheme,
         _ message: String,
@@ -576,15 +646,80 @@ final class PDFPageAppearanceViewTests: PDFNavigatorTestCase {
         line: UInt = #line
     ) throws {
         let transform = try XCTUnwrap(appearance.colorTransform(in: theme), file: file, line: line)
-        XCTAssertEqual(view.contentFilters.count, 3, message, file: file, line: line)
-        for (white, target) in zip(try shown([1, 1, 1], through: view.contentFilters), transform.bias.indices.map { row in
+        XCTAssertEqual(filters.count, 3, message, file: file, line: line)
+        for (white, target) in zip(try shown([1, 1, 1], through: filters), transform.bias.indices.map { row in
             min(max(transform.matrix[row].reduce(transform.bias[row], +), 0), 1)
         }) {
             XCTAssertEqual(white, target, accuracy: 1.5 / 255, "\(message): white paper", file: file, line: line)
         }
-        for (black, target) in zip(try shown([0, 0, 0], through: view.contentFilters), transform.bias) {
+        for (black, target) in zip(try shown([0, 0, 0], through: filters), transform.bias) {
             XCTAssertEqual(black, min(max(target, 0), 1), accuracy: 1.5 / 255, "\(message): black ink", file: file, line: line)
         }
+    }
+
+    /// The canvas the PDF view paints, as `filters` show it, is the card's surface tinted by the
+    /// control track, as the original pages sit on.
+    private func assertCanvas(
+        of pdfView: AnnotatingPDFView,
+        showsAs theme: AppTheme,
+        through filters: [CIFilter],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let painted = try XCTUnwrap(pdfView.backgroundColor.usingColorSpace(.sRGB), file: file, line: line)
+        let shownCanvas = try shown(
+            [Double(painted.redComponent), Double(painted.greenComponent), Double(painted.blueComponent)],
+            through: filters
+        )
+        let track = NSColor(theme.controlTrackFillColor).usingColorSpace(.sRGB)
+        let canvas = try XCTUnwrap(RGBHex(AppTheme.blendHex(
+            theme.background,
+            toward: theme.foreground,
+            amount: Double(track?.alphaComponent ?? 0)
+        )), file: file, line: line)
+        for (value, target) in zip(shownCanvas, [canvas.red, canvas.green, canvas.blue]) {
+            XCTAssertEqual(value, target, accuracy: 2.0 / 255, "\(theme.name): the canvas shows as \(shownCanvas)", file: file, line: line)
+        }
+    }
+
+    /// The share of the text's pixels that are neither paper nor ink: the blur around each glyph.
+    /// Nil when the window shows no text at all.
+    private func greyShare(of image: CGImage, in rect: NSRect, viewSize: NSSize) -> Double? {
+        let width = image.width, height = image.height
+        let scale = CGFloat(width) / viewSize.width
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              )
+        else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        var luminances: [Double] = []
+        for y in Int((viewSize.height - rect.maxY) * scale)..<Int((viewSize.height - rect.minY) * scale) {
+            for x in Int(rect.minX * scale)..<Int(rect.maxX * scale) {
+                let i = (y * width + x) * 4
+                let red = Double(data[i]), green = Double(data[i + 1]), blue = Double(data[i + 2])
+                luminances.append(0.2126 * red + 0.7152 * green + 0.0722 * blue)
+            }
+        }
+        let sorted = luminances.sorted()
+        let paper = sorted[sorted.count / 2]
+        let low = sorted[sorted.count / 1000], high = sorted[sorted.count - 1 - sorted.count / 1000]
+        let ink = abs(low - paper) > abs(high - paper) ? low : high
+        guard abs(ink - paper) > 64 else { return nil }
+        var touched = 0, grey = 0
+        for value in luminances {
+            let share = (value - paper) / (ink - paper)
+            if share > 0.05 { touched += 1 }
+            if share > 0.15 && share < 0.85 { grey += 1 }
+        }
+        return Double(grey) / Double(max(touched, 1))
     }
 
     /// The collection view PDFKit lays the navigator's thumbnails out in.
@@ -602,7 +737,8 @@ final class PDFPageAppearanceViewTests: PDFNavigatorTestCase {
 
     /// White as the pages show it, in 8-bit sRGB.
     private func shownWhite(_ pdfView: AnnotatingPDFView) throws -> [Int]? {
-        guard let filters = pdfView.documentView?.contentFilters, !filters.isEmpty else { return nil }
+        let filters = pdfView.pageAppearanceLens.filters
+        guard pdfView.pageAppearanceLens.superview != nil, !filters.isEmpty else { return nil }
         return try shown([1, 1, 1], through: filters).map { Int(($0 * 255).rounded()) }
     }
 
