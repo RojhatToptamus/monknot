@@ -72,7 +72,7 @@ const VIEWS = [
   { id: "editor", caption: "Edit Markdown and plain text with tabs, document search, and Markdown syntax highlighting." },
   { id: "writing", caption: "Correct spelling and grammar inline. On macOS 26, optional on-device assistance proposes reviewed sentence repairs and short completions." },
   { id: "split", caption: "Edit Markdown or HTML beside its preview, with synchronized scrolling." },
-  { id: "pdf", caption: "Search PDFs and add highlights, underlines, strikeouts, drawings, or text boxes." },
+  { id: "pdf", caption: "Search PDFs, add highlights, underlines, strikeouts, drawings, or text boxes, and read pages dimmed or dark without changing the file." },
   { id: "terminal", caption: "Run multiple terminal sessions in the current document or workspace folder." },
 ];
 
